@@ -4,5 +4,6 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 COPY inspect_database.py .
+COPY audit ./audit
 
 CMD ["python", "inspect_database.py"]
