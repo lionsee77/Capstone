@@ -47,7 +47,9 @@ INSERT INTO sf_categories (id,name,service_id,status) VALUES
 (1035, 'Trade Associations and Chambers', 1, '1'),
 (1036, 'Training and Adult Education', 1, '1'),
 (1037, 'Wholesale Trade', 1, '1'),
-(1038, 'Workplace Safety and Health', 1, '1');
+(1038, 'Workplace Safety and Health', 1, '1'),
+(1039, 'Critical Core Skills', 1, '1'),
+(1040, 'Water Management', 1, '1'); 
 
 INSERT INTO sf_specialities (id,name,category_id,status) VALUES
 (2000, 'Accountant / Senior Accounts Executive', 1000, '1'),
