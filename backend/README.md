@@ -8,12 +8,30 @@ provides Adminer for visual browsing and a Python/MySQL inspection script.
 ```text
 backend/
 ├── sql-files-nus/        # Original SQL dumps
+├── skillsfuture/         # SkillsFuture Excel sources and taxonomy generator
 ├── compose.yaml          # MySQL, Adminer and inspector services
 ├── Dockerfile            # MySQL image and ordered imports
 ├── Dockerfile.python     # Python inspector image
 ├── inspect_database.py   # Schema and integrity report
 └── requirements.txt      # Python MySQL connector
 ```
+
+## Generate a SkillsFuture taxonomy
+
+The `skillsfuture/` folder contains the three SkillsFuture Excel workbooks and
+`generate_skillsfuture_taxonomy.py`. From this directory, install the Python
+dependencies and run:
+
+```bash
+pip install -r requirements.txt
+python skillsfuture/generate_skillsfuture_taxonomy.py
+```
+
+This reads the workbooks and writes `skillsfuture/skillsfuture_taxonomy.sql`.
+It does not connect to MySQL or modify the existing database. The generated SQL
+creates parallel `sf_categories`, `sf_specialities`, `sf_tags`, and
+`sf_speciality_tags` tables, using the existing `services` table. Review the
+generated file before importing it.
 
 ## Start the database
 
