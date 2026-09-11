@@ -6,3 +6,4 @@ COPY sql-files-nus/categories.sql /docker-entrypoint-initdb.d/02-categories.sql
 COPY sql-files-nus/specialities.sql /docker-entrypoint-initdb.d/03-specialities.sql
 COPY sql-files-nus/tags.sql /docker-entrypoint-initdb.d/04-tags.sql
 COPY sql-files-nus/speciality_tags.sql /docker-entrypoint-initdb.d/05-speciality-tags.sql
+COPY skillsfuture/skillsfuture_taxonomy.sql /docker-entrypoint-initdb.d/06-skillsfuture-taxonomy.sql
