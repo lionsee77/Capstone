@@ -1,0 +1,83 @@
+name: CI
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+# This workflow only needs to read repository contents.
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  required-checks:
+    name: Required checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install dependencies
+        run: python -m pip install -r backend/requirements.txt
+
+      - name: Compile Python source
+        run: |
+          python -m py_compile \
+            backend/audit/taxonomy_audit.py \
+            backend/skillsfuture/generate_skillsfuture_taxonomy.py
+
+      - name: Validate audit notebook
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          path = Path("backend/audit/taxonomy_audit.ipynb")
+          notebook = json.loads(path.read_text(encoding="utf-8"))
+
+          if notebook.get("nbformat") != 4:
+              raise SystemExit(f"Unsupported notebook format: {notebook.get('nbformat')}")
+
+          code_cells = 0
+          for index, cell in enumerate(notebook.get("cells", []), start=1):
+              if cell.get("cell_type") == "code":
+                  code_cells += 1
+                  compile("".join(cell.get("source", [])), f"notebook-cell-{index}", "exec")
+
+          if code_cells == 0:
+              raise SystemExit("The audit notebook contains no executable code cells")
+
+          print(f"Validated {code_cells} notebook code cells")
+          PY
+
+      # TEMPORARY PLACEHOLDER: replace this step with the project's chosen linter,
+      # for example Ruff, once its configuration is committed.
+      - name: Lint placeholder
+        run: echo "TODO - configure and run the project linter"
+
+      # TEMPORARY PLACEHOLDER: replace this step with pytest or unittest after a
+      # test suite is added. Keep it in this job so the required check name stays stable.
+      - name: Unit-test placeholder
+        run: echo "TODO - add and run automated unit tests"
+
+      # TEMPORARY PLACEHOLDER: replace this step with a disposable MySQL service
+      # and a live taxonomy-audit test when integration testing is introduced.
+      - name: Database integration placeholder
+        run: echo "TODO - run the audit against a disposable MySQL database"
