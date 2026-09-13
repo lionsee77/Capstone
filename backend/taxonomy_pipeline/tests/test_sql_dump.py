@@ -1,0 +1,62 @@
+from __future__ import annotations
+
+from taxonomy_pipeline.datasets.sql_dump import SqlDumpSource, iter_insert_statements
+from tests.conftest import FIXTURES
+
+
+def test_parses_quoted_semicolon_and_escaped_quote_without_truncating():
+    sql = """
+    INSERT INTO `tags` (`id`, `name`, `note`) VALUES
+    (1, 'Tax Advisory', 'Rate: 8%; applies broadly'),
+    (2, 'O''Brien Law', NULL);
+    """
+    [(table, rows)] = list(iter_insert_statements(sql))
+    assert table == "tags"
+    assert rows[0] == {"id": 1, "name": "Tax Advisory", "note": "Rate: 8%; applies broadly"}
+    assert rows[1] == {"id": 2, "name": "O'Brien Law", "note": None}
+
+
+def test_parses_bare_unquoted_columns_generated_style():
+    sql = "INSERT INTO sf_categories (id,name,service_id,status) VALUES\n(1,'Accountancy',1,'1');"
+    [(table, rows)] = list(iter_insert_statements(sql))
+    assert table == "sf_categories"
+    assert rows == [{"id": 1, "name": "Accountancy", "service_id": 1, "status": "1"}]
+
+
+def test_sql_dump_source_maps_tables_via_table_map():
+    source = SqlDumpSource(
+        name="reference",
+        paths=[FIXTURES / "mini_reference.sql"],
+        table_map={"categories": "sf_categories"},
+    )
+    dataset = source.load()
+    assert dataset.name == "reference"
+    assert [row["name"] for row in dataset.categories] == ["Accountancy", "Retail"]
+    assert dataset.tags == []  # no sf_tags table in this fixture -> empty, not an error
+
+
+def test_sql_dump_source_loads_all_tables_from_one_file():
+    source = SqlDumpSource(name="original", paths=[FIXTURES / "mini_original.sql"])
+    dataset = source.load()
+    assert dataset.counts() == {
+        "services": 0,
+        "categories": 3,
+        "specialities": 3,
+        "tags": 3,
+        "speciality_tags": 3,
+    }
+
+
+def test_sql_dump_source_merges_tables_split_across_files():
+    # sql-files-nus keeps one table per file; loading them all should merge
+    # into a single dataset, as if it were one dump.
+    source = SqlDumpSource(
+        name="original",
+        paths=[FIXTURES / "mini_original.sql", FIXTURES / "mini_reference.sql"],
+        table_map={"categories": "categories"},
+    )
+    dataset = source.load()
+    # mini_reference.sql's rows land under sf_categories, which this
+    # table_map doesn't point "categories" at, so they're simply not pulled
+    # in - merging only combines rows for tables actually mapped.
+    assert dataset.counts()["categories"] == 3

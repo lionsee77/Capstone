@@ -1,0 +1,55 @@
+# Compare Ankit's original taxonomy against the generated SkillsFuture
+# taxonomy. Paths are resolved relative to this file, not the working
+# directory, so `taxonomy-pipeline run --config` works from anywhere.
+datasets:
+  - name: original
+    type: sql_dump
+    paths:
+      - ../../sql-files-nus/services.sql
+      - ../../sql-files-nus/categories.sql
+      - ../../sql-files-nus/specialities.sql
+      - ../../sql-files-nus/tags.sql
+      - ../../sql-files-nus/speciality_tags.sql
+
+  - name: skillsfuture
+    type: sql_dump
+    paths:
+      - ../../skillsfuture/skillsfuture_taxonomy.sql
+    table_map:
+      categories: sf_categories
+      specialities: sf_specialities
+      tags: sf_tags
+      speciality_tags: sf_speciality_tags
+
+metrics:
+  - id: integrity
+    params:
+      dataset: original
+      fuzzy_threshold: 85
+
+  - id: integrity
+    params:
+      dataset: skillsfuture
+      fuzzy_threshold: 85
+
+  - id: depth
+    params:
+      dataset: original
+
+  - id: depth
+    params:
+      dataset: skillsfuture
+
+  - id: breadth
+    params:
+      target: original
+      reference: skillsfuture
+      threshold: 75
+
+  - id: saturation
+    params:
+      dataset: original
+      # No real gig/showcase text yet - set this once it exists (see the
+      # senseigigs-open-blockers project memory); until then this metric
+      # reports itself as "skipped".
+      corpus_path: null
