@@ -1,9 +1,26 @@
 # Taxonomy audit
 
-The audit is read-only and prints its findings in taxonomy_audit.ipynb. 
+`taxonomy_audit.py` is the single source of truth for the read-only database
+inventory and taxonomy quality checks. `taxonomy_audit.ipynb` imports it and
+renders the resulting Markdown report without duplicating audit logic.
 
-Run the notebook from the backend directory, or run:
+From the `backend` directory, either open and run the notebook or use:
 
-    docker compose --profile tools run --rm inspector python audit/audit_taxonomy.py
+```bash
+docker compose --profile tools run --rm inspector
+```
 
-Near-duplicate and semantic-overlap checks are deliberately excluded.
+For a local Python environment connected to the database on port 3307:
+
+```bash
+python audit/taxonomy_audit.py
+python audit/taxonomy_audit.py --output taxonomy-report.md
+```
+
+Connection settings can be overridden with `MYSQL_HOST`, `MYSQL_PORT`,
+`MYSQL_DATABASE`, `MYSQL_USER`, and `MYSQL_PASSWORD`.
+
+The audit covers schema safeguards, hierarchy integrity, names, duplicates,
+formatting, status and timestamp consistency, unused records, metadata coverage,
+and taxonomy distributions. Near-duplicate and semantic-overlap checks remain
+excluded because they require domain judgement.

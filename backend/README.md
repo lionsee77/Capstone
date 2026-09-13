@@ -1,7 +1,7 @@
 # Senseigigs local database
 
 This backend runs the supplied SQL dumps in a local MySQL 8 container. It also
-provides Adminer for visual browsing and a Python/MySQL inspection script.
+provides Adminer for visual browsing and a Python/MySQL taxonomy audit.
 
 ## Project structure
 
@@ -9,10 +9,10 @@ provides Adminer for visual browsing and a Python/MySQL inspection script.
 backend/
 ├── sql-files-nus/        # Original SQL dumps
 ├── skillsfuture/         # SkillsFuture Excel sources and taxonomy generator
-├── compose.yaml          # MySQL, Adminer and inspector services
+├── audit/                # Taxonomy audit module and report notebook
+├── compose.yaml          # MySQL, Adminer and audit services
 ├── Dockerfile            # MySQL image and ordered imports
-├── Dockerfile.python     # Python inspector image
-├── inspect_database.py   # Schema and integrity report
+├── Dockerfile.python     # Python audit image
 └── requirements.txt      # Python MySQL connector
 ```
 
@@ -61,9 +61,9 @@ Open <http://localhost:8080> and sign in with:
 These are local development credentials only. Change them through a `.env`
 file if required; `.env` is excluded from version control.
 
-## Inspect through Python
+## Audit through Python
 
-Run the containerized Python inspector:
+Run the containerized read-only audit:
 
 ```bash
 docker compose --profile tools run --rm inspector
@@ -75,7 +75,7 @@ Alternatively, run it directly from a local Python environment:
 python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install -r requirements.txt
-python inspect_database.py
+python audit/taxonomy_audit.py
 ```
 
 ## Stop or reset
