@@ -41,6 +41,10 @@ python3 -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
 ```
 
+`pip install -e .` makes the package importable and gives you the
+`taxonomy-pipeline` console command; `[dev]` additionally pulls in `pytest`
+and `httpx` (for the FastAPI test client).
+
 ## Run it against the two real datasets already in this repo
 
 ```bash
@@ -96,7 +100,79 @@ Subclass `Metric` (see `metrics/base.py`), implement `run(datasets, params)
 -> MetricResult`, and add one line to `metrics/registry.py`. It's then
 runnable by `id` from any config and shows up in `GET /metrics`.
 
-## Known gaps (see the `senseigigs-*` project memory for the full picture)
+Two things worth reusing rather than reimplementing when you do:
+- `Metric.resolve_params(params)` merges your `default_params` under the
+  caller's `params` - always call it first so a config only needs to
+  override what it actually cares about.
+- `Metric.require_datasets(datasets, {"role": name, ...})` resolves one or
+  more dataset names, returning either `{role: TaxonomyDataset}` or (if any
+  name wasn't loaded for this run) a ready-to-return error `MetricResult` -
+  every metric here uses it instead of hand-rolling the same lookup.
+
+## Config and report reference
+
+**Config** (`config.py`) - what the CLI reads from YAML and what `POST
+/runs` accepts as JSON, same shape either way:
+
+```yaml
+datasets:
+  - name: original          # referenced by name from metric params
+    type: sql_dump
+    paths: [...]
+    table_map: {...}        # optional, see "Plugging in a taxonomy dataset"
+metrics:
+  - id: integrity            # must match a registered Metric.id
+    params: {...}            # merged over that metric's default_params
+```
+
+**Report** (`models.py`) - what every run produces, whether you got it from
+the CLI's stdout, `GET /runs/{run_id}`, or the SQLite `report_json` column:
+
+```jsonc
+{
+  "run_id": "...",
+  "status": "done",          // "queued" | "running" | "done" | "failed"
+  "error": null,              // set only when status == "failed" (e.g. a dataset failed to load)
+  "datasets": [{"name": "original", "counts": {"categories": 110, ...}}],
+  "results": [
+    {
+      "metric_id": "integrity",
+      "status": "ok",         // "ok" | "skipped" (e.g. saturation with no corpus) | "error" (bad params/dataset)
+      "summary": "...",        // one-line, human-readable
+      "details": {...}         // metric-specific structured data - see that metric's module for its shape
+    }
+  ]
+}
+```
+
+A metric erroring (bad params, unknown dataset) does **not** fail the whole
+run - `status` stays `"done"` with that one result marked `"error"`; only a
+dataset that fails to *load* fails the whole run, since nothing downstream
+can run without it. `taxonomy-pipeline run` reflects this in its exit code:
+non-zero if the run failed *or* any individual metric errored.
+
+## Development
+
+```bash
+python -m pytest         # run the whole suite
+python -m pytest -k sql_dump   # just one area
+```
+
+Tests import `taxonomy_pipeline` straight from `src/` via `pyproject.toml`'s
+`tool.pytest.ini_options.pythonpath` - no editable install required to run
+them, though `pip install -e ".[dev]"` gives you the `taxonomy-pipeline`
+command too. `tests/fixtures/` holds tiny synthetic SQL dumps (a handful of
+rows, deliberately including a duplicate/orphan/dead-end/unused-tag of each
+kind) so metric tests don't depend on the real taxonomy data staying stable
+shape-wise. `tests/conftest.py`'s `isolated_db` fixture points `db.py` at a
+throwaway SQLite file per test - use it in any test that calls `db.save_run`
+or hits the API, so runs don't leak into your real `taxonomy_pipeline.sqlite3`
+or across tests.
+
+No linter/formatter is configured yet for this subproject specifically; the
+CI job just runs the test suite (see the root `.github/workflows/ci.yml`).
+
+## Known gaps
 
 - **`saturation`** needs real (or synthetic) gig/showcase text via
   `params.corpus_path`; none exists yet, so every config has it wired up but
