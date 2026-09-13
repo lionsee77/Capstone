@@ -96,6 +96,8 @@ docker compose up -d --build
 The reset command permanently removes only the Docker volume belonging to this
 project. Do not use it if you need to keep local changes made in Adminer.
 
+# Schema Structure
+
 services
 id=1, name=Industry
        │
