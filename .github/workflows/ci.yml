@@ -73,7 +73,9 @@ jobs:
         run: echo "TODO - configure and run the project linter"
 
       # TEMPORARY PLACEHOLDER: replace this step with pytest or unittest after a
-      # test suite is added. Keep it in this job so the required check name stays stable.
+      # test suite is added for audit/ and skillsfuture/. Keep it in this job so
+      # the required check name stays stable. (backend/taxonomy_pipeline/ already
+      # has a real test suite - see the "Taxonomy pipeline" job below.)
       - name: Unit-test placeholder
         run: echo "TODO - add and run automated unit tests"
 
@@ -81,3 +83,28 @@ jobs:
       # and a live taxonomy-audit test when integration testing is introduced.
       - name: Database integration placeholder
         run: echo "TODO - run the audit against a disposable MySQL database"
+
+  taxonomy-pipeline:
+    name: Taxonomy pipeline tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: backend/taxonomy_pipeline
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/taxonomy_pipeline/pyproject.toml
+
+      - name: Install taxonomy_pipeline with dev dependencies
+        run: python -m pip install -e ".[dev]"
+
+      - name: Run tests
+        run: python -m pytest -q

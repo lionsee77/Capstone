@@ -10,6 +10,7 @@ backend/
 ├── sql-files-nus/        # Original SQL dumps
 ├── skillsfuture/         # SkillsFuture Excel sources and taxonomy generator
 ├── audit/                # Taxonomy audit module and report notebook
+├── taxonomy_pipeline/    # Taxonomy quality scoring (CLI + FastAPI) - own README, own deps
 ├── compose.yaml          # MySQL, Adminer and audit services
 ├── Dockerfile            # MySQL image and ordered imports
 ├── Dockerfile.python     # Python audit image
@@ -32,6 +33,16 @@ It does not connect to MySQL or modify the existing database. The generated SQL
 creates parallel `sf_categories`, `sf_specialities`, `sf_tags`, and
 `sf_speciality_tags` tables, using the existing `services` table. Review the
 generated file before importing it.
+
+## Score taxonomy quality
+
+`taxonomy_pipeline/` scores integrity, breadth, depth, and saturation for a
+taxonomy - e.g. to compare the original taxonomy above against the generated
+SkillsFuture one. It's a separate Python package with its own dependencies
+(FastAPI, rapidfuzz, ...) and reads directly from `.sql` dump files, so it
+needs neither the running database nor this folder's `requirements.txt`. See
+[`taxonomy_pipeline/README.md`](taxonomy_pipeline/README.md) for setup and
+usage.
 
 ## Start the database
 
