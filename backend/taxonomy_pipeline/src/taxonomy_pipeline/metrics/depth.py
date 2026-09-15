@@ -7,7 +7,7 @@ import statistics
 from collections import Counter
 from typing import Any
 
-from ..datasets.base import TaxonomyDataset
+from ..datasets.base import LoadedDataset
 from ..models import MetricResult
 from .base import Metric
 
@@ -29,7 +29,7 @@ class DepthMetric(Metric):
     description = "Category -> speciality and speciality -> tag branching factor."
     default_params = {"dataset": None}
 
-    def run(self, datasets: dict[str, TaxonomyDataset], params: dict[str, Any]) -> MetricResult:
+    def run(self, datasets: dict[str, LoadedDataset], params: dict[str, Any]) -> MetricResult:
         p = self.resolve_params(params)
         dataset_name = p.get("dataset")
         resolved = self.require_datasets(datasets, {"dataset": dataset_name})

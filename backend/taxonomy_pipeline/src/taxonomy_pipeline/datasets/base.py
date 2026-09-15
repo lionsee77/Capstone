@@ -2,14 +2,16 @@
 
 Add a new source (a live database, a CSV export, ...) by implementing
 `TaxonomySource.load()` and registering a builder for it in
-`datasets/__init__.py`. Nothing else in the pipeline needs to change - every
-metric only ever sees the canonical `TaxonomyDataset` shape below.
+`datasets/__init__.py`. Sources return either the canonical taxonomy shape
+or a typed classification reference; metrics validate the types they require.
 """
 from __future__ import annotations
 
 from typing import Protocol
 
 from pydantic import BaseModel, Field
+from .ssic import SsicReference
+from .ssoc import SsocReference
 
 CONCEPTS = ("services", "categories", "specialities", "tags", "speciality_tags")
 
@@ -34,7 +36,10 @@ class TaxonomyDataset(BaseModel):
         return {concept: len(getattr(self, concept)) for concept in CONCEPTS}
 
 
-class TaxonomySource(Protocol):
-    """A loader that can produce one named TaxonomyDataset."""
+LoadedDataset = TaxonomyDataset | SsicReference | SsocReference
 
-    def load(self) -> TaxonomyDataset: ...
+
+class TaxonomySource(Protocol):
+    """A loader that produces a taxonomy or classification reference."""
+
+    def load(self) -> LoadedDataset: ...

@@ -53,11 +53,57 @@ taxonomy-pipeline run --config configs/original_vs_skillsfuture.yaml
 
 This loads `backend/sql-files-nus/*.sql` (Ankit's original taxonomy) and
 `backend/skillsfuture/skillsfuture_taxonomy.sql` (the generated SkillsFuture
-taxonomy's `sf_*` tables), runs integrity + depth on each, breadth of
-`original` against `skillsfuture` as the reference, and reports `saturation`
+taxonomy's `sf_*` tables), runs integrity + depth on each, evaluates both
+taxonomies against SSIC 2025 and SSOC 2024 for breadth, and reports `saturation`
 as skipped (no gig/showcase text corpus exists yet). Prints the full JSON
 report to stdout and a one-line-per-metric summary to stderr; pass
 `--output report.json` to write the report to a file instead.
+
+## Industry and occupational breadth
+
+The `breadth` metric returns separate estimated lexical coverage scores:
+SSIC division titles against industry category names (`service_id=1`), and
+SSOC minor-group titles against all named specialities. It retains the
+existing normalisation and RapidFuzz best-name matching. These are estimates,
+not verified semantic coverage: original specialities describe capabilities,
+whereas SkillsFuture specialities typically describe occupations.
+
+Declare references as datasets (paths here are relative to `configs/`):
+
+```yaml
+datasets:
+  # Include your existing taxonomy datasets too.
+  - name: ssic
+    type: ssic
+    paths: [../../reference_data/ssic/ssic2025-classification-structure.xlsx]
+  - name: ssoc
+    type: ssoc
+    paths: [../../reference_data/ssoc/ssoc2024-classification-structure.xlsx]
+metrics:
+  - id: breadth
+    params:
+      target: original
+      ssic_reference: ssic
+      ssoc_reference: ssoc
+      industry_level: division
+      occupational_level: minor_group
+      industry_service_id: 1
+      threshold: 75
+```
+
+Each reference requires exactly one workbook path. The old `reference`
+parameter is no longer accepted; replace it with `ssic_reference` and
+`ssoc_reference`. Other metrics continue accepting taxonomy datasets only.
+
+Results contain `details.target`, `details.industry_service_id`, and separate
+`details.industry` / `details.occupational` objects. Each dimension reports
+reference name, system/version, level, threshold, target-node count,
+matched/total counts, coverage, matched code/title and target ID/name/score,
+and unmatched code/title records. There is no combined score. Each reference
+code counts once; several reference codes may match the same target node.
+Empty target selections score zero; empty reference levels return null coverage.
+Existing CLI, API, and SQLite report interfaces are unchanged; old saved reports
+remain readable.
 
 ## Run it as a service
 
@@ -84,7 +130,7 @@ Datasets are declared in config, not hardcoded:
 ```yaml
 datasets:
   - name: whatever-you-want-to-call-it
-    type: sql_dump          # the only source implemented today
+    type: sql_dump          # taxonomy source; ssic/ssoc load reference workbooks
     paths: [path/to/a.sql, path/to/b.sql]   # one table per file, or all in one - both work
     table_map:               # canonical concept -> actual table name; omit a
       categories: sf_categories  # concept to default it to its own name
@@ -105,8 +151,9 @@ Two things worth reusing rather than reimplementing when you do:
   caller's `params` - always call it first so a config only needs to
   override what it actually cares about.
 - `Metric.require_datasets(datasets, {"role": name, ...})` resolves one or
-  more dataset names, returning either `{role: TaxonomyDataset}` or (if any
-  name wasn't loaded for this run) a ready-to-return error `MetricResult` -
+  more dataset names, returning resolved datasets or an error `MetricResult`
+  for missing names or wrong types. Taxonomy types are the default; breadth
+  supplies reference types through `expected_types` -
   every metric here uses it instead of hand-rolling the same lookup.
 
 ## Config and report reference
@@ -183,6 +230,6 @@ CI job just runs the test suite (see the root `.github/workflows/ci.yml`).
   'M&A' vs 'Mergers and Acquisitions'), used by both this pipeline and the
   FastAPI matching microservice, so "how we proved it's accurate" and "how
   we score it live" don't drift into two implementations.
-- No live-database source yet - only `sql_dump`. `backend/audit/` already
+- No live-database source yet - sources are `sql_dump`, `ssic`, and `ssoc`. `backend/audit/` already
   has a working live-DB connection (env vars `MYSQL_HOST` etc.) worth
   reusing when that source gets built, rather than reinventing it.

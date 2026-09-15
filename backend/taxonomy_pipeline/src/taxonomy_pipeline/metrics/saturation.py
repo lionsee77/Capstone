@@ -21,7 +21,7 @@ from typing import Any
 
 from rapidfuzz import fuzz, process
 
-from ..datasets.base import TaxonomyDataset
+from ..datasets.base import LoadedDataset
 from ..models import MetricResult
 from .base import Metric
 from .integrity import normalize
@@ -43,7 +43,7 @@ class SaturationMetric(Metric):
     )
     default_params = {"dataset": None, "corpus_path": None, "batch_size": 25, "threshold": 80.0}
 
-    def run(self, datasets: dict[str, TaxonomyDataset], params: dict[str, Any]) -> MetricResult:
+    def run(self, datasets: dict[str, LoadedDataset], params: dict[str, Any]) -> MetricResult:
         p = self.resolve_params(params)
         dataset_name = p.get("dataset")
         corpus_path = p.get("corpus_path")

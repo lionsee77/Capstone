@@ -21,6 +21,14 @@ datasets:
       tags: sf_tags
       speciality_tags: sf_speciality_tags
 
+  - name: ssic
+    type: ssic
+    paths: [../../reference_data/ssic/ssic2025-classification-structure.xlsx]
+
+  - name: ssoc
+    type: ssoc
+    paths: [../../reference_data/ssoc/ssoc2024-classification-structure.xlsx]
+
 metrics:
   - id: integrity
     params:
@@ -43,7 +51,15 @@ metrics:
   - id: breadth
     params:
       target: original
-      reference: skillsfuture
+      ssic_reference: ssic
+      ssoc_reference: ssoc
+      threshold: 75
+
+  - id: breadth
+    params:
+      target: skillsfuture
+      ssic_reference: ssic
+      ssoc_reference: ssoc
       threshold: 75
 
   - id: saturation

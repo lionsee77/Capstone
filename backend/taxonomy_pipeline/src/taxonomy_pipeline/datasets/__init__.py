@@ -8,11 +8,21 @@ validation, the pipeline, both metrics and the API - is unaffected.
 from __future__ import annotations
 
 from ..config import DatasetConfig
-from .base import TaxonomyDataset, TaxonomySource
+from .base import LoadedDataset, TaxonomyDataset, TaxonomySource
 from .sql_dump import SqlDumpSource
+from .ssic import SsicSource
+from .ssoc import SsocSource
+
+
+def _classification_source(config: DatasetConfig, source_type):
+    if len(config.paths) != 1:
+        raise ValueError(f"{config.type} requires exactly one workbook path")
+    return source_type(config.paths[0])
 
 _BUILDERS = {
     "sql_dump": lambda cfg: SqlDumpSource(cfg.name, cfg.paths, cfg.table_map),
+    "ssic": lambda cfg: _classification_source(cfg, SsicSource),
+    "ssoc": lambda cfg: _classification_source(cfg, SsocSource),
 }
 
 
@@ -26,7 +36,7 @@ def build_source(config: DatasetConfig) -> TaxonomySource:
     return builder(config)
 
 
-def load_dataset(config: DatasetConfig) -> TaxonomyDataset:
+def load_dataset(config: DatasetConfig) -> LoadedDataset:
     return build_source(config).load()
 
 
