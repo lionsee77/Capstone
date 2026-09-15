@@ -12,7 +12,7 @@ from typing import Any
 
 from rapidfuzz import fuzz, process
 
-from ..datasets.base import TaxonomyDataset
+from ..datasets.base import LoadedDataset
 from ..models import MetricResult
 from .base import Metric
 
@@ -64,7 +64,7 @@ class IntegrityMetric(Metric):
     )
     default_params = {"dataset": None, "fuzzy_threshold": 85.0}
 
-    def run(self, datasets: dict[str, TaxonomyDataset], params: dict[str, Any]) -> MetricResult:
+    def run(self, datasets: dict[str, LoadedDataset], params: dict[str, Any]) -> MetricResult:
         p = self.resolve_params(params)
         dataset_name = p.get("dataset")
         resolved = self.require_datasets(datasets, {"dataset": dataset_name})

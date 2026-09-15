@@ -7,12 +7,12 @@ from __future__ import annotations
 
 from .config import PipelineConfig
 from .datasets import load_dataset
-from .datasets.base import TaxonomyDataset
+from .datasets.base import LoadedDataset
 from .metrics.registry import get_metric
 from .models import DatasetSummary, MetricResult, RunReport, utcnow
 
 
-def load_datasets(config: PipelineConfig) -> dict[str, TaxonomyDataset]:
+def load_datasets(config: PipelineConfig) -> dict[str, LoadedDataset]:
     return {ds_config.name: load_dataset(ds_config) for ds_config in config.datasets}
 
 

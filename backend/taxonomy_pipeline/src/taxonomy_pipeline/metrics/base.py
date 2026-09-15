@@ -9,7 +9,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import Any
 
-from ..datasets.base import TaxonomyDataset
+from ..datasets.base import LoadedDataset, TaxonomyDataset
 from ..models import MetricResult
 
 
@@ -29,12 +29,13 @@ class Metric(ABC):
         return merged
 
     def require_datasets(
-        self, datasets: dict[str, TaxonomyDataset], names: dict[str, str | None]
-    ) -> dict[str, TaxonomyDataset] | MetricResult:
+        self, datasets: dict[str, LoadedDataset], names: dict[str, str | None],
+        expected_types: dict[str, type] | None = None,
+    ) -> dict[str, LoadedDataset] | MetricResult:
         """Resolve each `role -> dataset name` in `names` against loaded
-        `datasets`. Returns `{role: TaxonomyDataset}` on success, or an
-        error `MetricResult` (ready to return straight from `run`) if any
-        name is missing or wasn't loaded for this run.
+        `datasets`. Returns resolved datasets or an error result for missing
+        names or wrong types. Roles require TaxonomyDataset by default;
+        expected_types can specify classification reference types per role.
         """
         missing = [name for name in names.values() if name not in datasets]
         if missing:
@@ -43,9 +44,17 @@ class Metric(ABC):
                 status="error",
                 summary=f"dataset(s) not loaded for this run: {missing}",
             )
-        return {role: datasets[name] for role, name in names.items()}
+        resolved = {role: datasets[name] for role, name in names.items()}
+        for role, dataset in resolved.items():
+            expected = (expected_types or {}).get(role, TaxonomyDataset)
+            if not isinstance(dataset, expected):
+                return MetricResult(
+                    metric_id=self.id, status="error",
+                    summary=f"{role} must be {expected.__name__}; got {type(dataset).__name__}",
+                )
+        return resolved
 
     @abstractmethod
     def run(
-        self, datasets: dict[str, TaxonomyDataset], params: dict[str, Any]
+        self, datasets: dict[str, LoadedDataset], params: dict[str, Any]
     ) -> MetricResult: ...
