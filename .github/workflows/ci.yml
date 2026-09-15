@@ -106,5 +106,8 @@ jobs:
       - name: Install taxonomy_pipeline with dev dependencies
         run: python -m pip install -e ".[dev]"
 
+      - name: Lint
+        run: python -m ruff check .
+
       - name: Run tests
         run: python -m pytest -q

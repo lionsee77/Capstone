@@ -3,8 +3,8 @@ from pathlib import Path
 import pytest
 
 from taxonomy_pipeline.datasets.base import TaxonomyDataset
-from taxonomy_pipeline.datasets.ssic import SsicReference, SsicRecord
-from taxonomy_pipeline.datasets.ssoc import SsocReference, SsocRecord
+from taxonomy_pipeline.datasets.ssic import SsicRecord, SsicReference
+from taxonomy_pipeline.datasets.ssoc import SsocRecord, SsocReference
 from taxonomy_pipeline.metrics.breadth import BreadthMetric
 from taxonomy_pipeline.metrics.depth import DepthMetric
 

@@ -99,11 +99,11 @@ class SaturationMetric(Metric):
                 axis=1
             )
             best_score_per_text = [0.0] * len(batch)
-            for owner, score in zip(owners, best_score_per_candidate):
+            for owner, score in zip(owners, best_score_per_candidate, strict=True):
                 best_score_per_text[owner] = max(best_score_per_text[owner], score)
 
             batch_new = 0
-            for text, score in zip(batch, best_score_per_text):
+            for text, score in zip(batch, best_score_per_text, strict=True):
                 if score < threshold:
                     batch_new += 1
                     uncovered_samples.add(normalize(text)[:80])
