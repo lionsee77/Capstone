@@ -56,3 +56,21 @@ def test_finds_dead_end_category_and_speciality():
 def test_unknown_dataset_reports_error_not_exception():
     result = IntegrityMetric().run({}, {"dataset": "missing"})
     assert result.status == "error"
+
+
+def test_normalize_matches_taxonomy_audit_baseline_folding():
+    # Same folding steps as backend/audit/taxonomy_audit.py's normalized()
+    # (NFKC, casefold, dash-variant folding, trailing-punctuation strip) -
+    # duplicated on purpose (see integrity.py's normalize() docstring), so
+    # this pipeline's dup counts stay comparable to that original baseline.
+    dataset = TaxonomyDataset(
+        name="original",
+        categories=[
+            {"id": 1, "name": "Mergers–Acquisitions"},  # en dash
+            {"id": 2, "name": "Mergers-Acquisitions."},  # hyphen + trailing period
+        ],
+    )
+    result = IntegrityMetric().run({"original": dataset}, {"dataset": "original"})
+    clusters = result.details["exact_duplicates"]["categories"]
+    assert len(clusters) == 1
+    assert set(clusters[0]["ids"]) == {1, 2}

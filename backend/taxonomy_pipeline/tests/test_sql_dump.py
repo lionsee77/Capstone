@@ -47,6 +47,22 @@ def test_sql_dump_source_loads_all_tables_from_one_file():
     }
 
 
+def test_escaped_backslash_followed_by_literal_n_is_not_corrupted_into_a_newline():
+    # Raw dump bytes: \\n -- an escaped backslash (\\) immediately followed
+    # by a literal 'n', which must decode to the two literal characters
+    # '\' + 'n', not a real newline (regression for the old sequential
+    # .replace() decoding, which mangled this case).
+    sql = r"INSERT INTO `tags` (`id`, `name`) VALUES (1, 'C:\\new');"
+    [(_, rows)] = list(iter_insert_statements(sql))
+    assert rows[0]["name"] == "C:\\new"
+
+
+def test_real_escaped_newline_still_decodes_to_a_newline_character():
+    sql = r"INSERT INTO `tags` (`id`, `name`) VALUES (1, 'line one\nline two');"
+    [(_, rows)] = list(iter_insert_statements(sql))
+    assert rows[0]["name"] == "line one\nline two"
+
+
 def test_sql_dump_source_merges_tables_split_across_files():
     # sql-files-nus keeps one table per file; loading them all should merge
     # into a single dataset, as if it were one dump.
