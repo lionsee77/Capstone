@@ -67,6 +67,9 @@ metrics:
       baseline: original
       incoming: skillsfuture
       # Names are compared with normalized exact matching first, then the
-      # existing RapidFuzz lexical matcher. Candidate-new concepts must be
-      # reviewed before they are treated as confirmed taxonomy additions.
+      # RapidFuzz lexical matcher. The optional local sentence model then
+      # identifies semantic candidate equivalents among lexical non-matches.
+      # All semantic results still require human review before adoption.
       threshold: 90
+      semantic_model: all-MiniLM-L6-v2
+      semantic_threshold: 0.70

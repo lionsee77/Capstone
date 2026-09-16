@@ -1,4 +1,5 @@
 from taxonomy_pipeline.datasets.base import TaxonomyDataset
+from taxonomy_pipeline.metrics import saturation
 from taxonomy_pipeline.metrics.saturation import SaturationMetric
 
 
@@ -57,5 +58,50 @@ def test_missing_datasets_report_an_error():
 def test_invalid_threshold_reports_an_error():
     result = SaturationMetric().run(
         _datasets(), {"baseline": "original", "incoming": "skillsfuture", "threshold": 101}
+    )
+    assert result.status == "error"
+
+
+def test_semantic_candidates_are_reported_separately_from_lexical_matches(monkeypatch):
+    class FakeSemanticMatcher:
+        def __init__(self, model_name):
+            assert model_name == "test-model"
+
+        def best_matches(self, queries, choices):
+            assert choices
+            results = {
+                "marine services": ("financial services", 0.20),
+                "payroll process": ("payroll processing", 0.91),
+                "carbon accounting": ("payroll processing", 0.50),
+                "carbon reporting": ("accounting", 0.81),
+            }
+            return [results[query] for query in queries]
+
+    monkeypatch.setattr(saturation, "SemanticMatcher", FakeSemanticMatcher)
+    result = SaturationMetric().run(
+        _datasets(),
+        {
+            "baseline": "original",
+            "incoming": "skillsfuture",
+            "threshold": 95,
+            "semantic_model": "test-model",
+            "semantic_threshold": 0.8,
+        },
+    )
+
+    assert result.status == "ok"
+    overall = result.details["overall"]
+    # The two semantic candidates are represented in the review result;
+    # Marine Services and Carbon Accounting remain candidate-new.
+    assert overall == {"relevant_concepts_reviewed": 6, "candidate_new": 2, "new_concept_rate": 0.333}
+    levels = result.details["by_concept_level"]
+    assert levels["specialities"]["semantic_candidate_matches"] == 1
+    assert levels["tags"]["semantic_match_details"][0]["incoming_name"] == "Carbon Reporting"
+
+
+def test_invalid_semantic_threshold_reports_an_error():
+    result = SaturationMetric().run(
+        _datasets(),
+        {"baseline": "original", "incoming": "skillsfuture", "semantic_threshold": 1.1},
     )
     assert result.status == "error"

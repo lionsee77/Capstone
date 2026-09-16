@@ -45,6 +45,12 @@ pip install -e ".[dev]"
 `taxonomy-pipeline` console command; `[dev]` additionally pulls in `pytest`
 and `httpx` (for the FastAPI test client).
 
+The supplied SkillsFuture comparison also enables optional semantic matching.
+Install it once with `pip install -e ".[dev,semantic]"`. The first semantic
+run downloads the configured model (`all-MiniLM-L6-v2`). If you only need the
+fast exact/lexical checks, remove `semantic_model` from the saturation section
+of the config.
+
 ## Run it against the two real datasets already in this repo
 
 ```bash
@@ -56,8 +62,11 @@ This loads `backend/sql-files-nus/*.sql` (Ankit's original taxonomy) and
 taxonomy's `sf_*` tables), runs integrity + depth on each, evaluates both
 taxonomies against SSIC 2025 and SSOC 2024 for breadth, and compares
 SkillsFuture concepts against the original taxonomy for `saturation`. Its
-unmatched concepts are candidate new concepts for human review. Prints the full JSON
-report to stdout and a one-line-per-metric summary to stderr; pass
+exact matches are found first, then lexical candidates, then optional semantic
+candidate equivalents at the same concept level. Semantic candidates are
+review evidence, not automatic additions. Concepts unmatched by all stages are
+candidate new concepts for human review. Prints the full JSON report to stdout
+and a one-line-per-metric summary to stderr; pass
 `--output report.json` to write the report to a file instead.
 
 ## Industry and occupational breadth
