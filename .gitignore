@@ -86,3 +86,6 @@ compose.override.yaml
 compose.override.yml
 docker-compose.override.yaml
 docker-compose.override.yml
+
+# Generated taxonomy pipeline output
+backend/taxonomy_pipeline/report.json
