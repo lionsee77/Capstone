@@ -81,7 +81,7 @@ def _compare_level(
     fuzzy_matches: list[dict[str, Any]] = []
     semantic_matches: list[dict[str, Any]] = []
     ambiguous: list[dict[str, Any]] = []
-    lexical_unmatched: list[tuple[dict[str, Any], tuple[str, float, int] | None]] = []
+    lexical_unmatched: list[tuple[dict[str, Any], str]] = []
 
     for row in incoming:
         original_name = str(row["name"])
@@ -99,30 +99,49 @@ def _compare_level(
             )
             continue
 
-        best = process.extractOne(normalized_name, baseline_names, scorer=fuzz.ratio) if baseline_names else None
-        if best and best[1] >= threshold:
-            matched = baseline_by_name[best[0]]
+        lexical_unmatched.append((row, normalized_name))
+
+    lexical_matches: list[tuple[str | None, float | None]]
+    if lexical_unmatched:
+        scores = process.cdist(
+            [normalized_name for _, normalized_name in lexical_unmatched],
+            baseline_names,
+            scorer=fuzz.ratio,
+        )
+        best_indexes = np.argmax(scores, axis=1)
+        lexical_matches = [
+            (baseline_names[index], float(scores[row_index, index]))
+            for row_index, index in enumerate(best_indexes)
+        ]
+    else:
+        lexical_matches = []
+
+    semantic_unmatched: list[tuple[dict[str, Any], tuple[str | None, float | None]]] = []
+    for (row, _), (lexical_name, lexical_score) in zip(lexical_unmatched, lexical_matches, strict=True):
+        original_name = str(row["name"])
+        if lexical_name is not None and lexical_score is not None and lexical_score >= threshold:
+            matched = baseline_by_name[lexical_name]
             fuzzy_matches.append(
                 {
                     "incoming_id": row.get("id"),
                     "incoming_name": original_name,
                     "baseline_id": matched.get("id"),
                     "baseline_name": matched.get("name"),
-                    "score": round(float(best[1]), 1),
+                    "score": round(lexical_score, 1),
                 }
             )
         else:
-            lexical_unmatched.append((row, best))
+            semantic_unmatched.append((row, (lexical_name, lexical_score)))
 
     semantic_results = (
         semantic_matcher.best_matches(
-            [normalize(str(row["name"])) for row, _ in lexical_unmatched], baseline_names
+            [normalize(str(row["name"])) for row, _ in semantic_unmatched], baseline_names
         )
         if semantic_matcher
-        else [(None, None)] * len(lexical_unmatched)
+        else [(None, None)] * len(semantic_unmatched)
     )
     for (row, lexical_best), (semantic_name, semantic_score) in zip(
-        lexical_unmatched, semantic_results, strict=True
+        semantic_unmatched, semantic_results, strict=True
     ):
         original_name = str(row["name"])
         if semantic_name is not None and semantic_score is not None and semantic_score >= semantic_threshold:
@@ -202,6 +221,20 @@ class SaturationMetric(Metric):
             return MetricResult(metric_id=self.id, status="error", summary=str(exc))
 
         baseline, incoming = resolved["baseline"], resolved["incoming"]
+        empty_baseline_levels = [
+            level
+            for level in CONCEPT_LEVELS
+            if _unique_named_rows(getattr(incoming, level)) and not _unique_named_rows(getattr(baseline, level))
+        ]
+        if empty_baseline_levels:
+            return MetricResult(
+                metric_id=self.id,
+                status="error",
+                summary=(
+                    f"{baseline.name} has no named records for {', '.join(empty_baseline_levels)} while "
+                    f"{incoming.name} does; check the dataset source or table_map."
+                ),
+            )
         try:
             semantic_matcher = SemanticMatcher(str(p["semantic_model"])) if p["semantic_model"] else None
         except ValueError as exc:
@@ -217,13 +250,25 @@ class SaturationMetric(Metric):
             for level in CONCEPT_LEVELS
         }
         reviewed = sum(result["relevant_concepts_reviewed"] for result in by_level.values())
+        if reviewed == 0:
+            return MetricResult(
+                metric_id=self.id,
+                status="error",
+                summary=(
+                    f"{incoming.name} has no named categories, specialities, or tags to compare; "
+                    "check the dataset source or table_map."
+                ),
+                details={
+                    "baseline": baseline.name,
+                    "incoming": incoming.name,
+                    "by_concept_level": by_level,
+                },
+            )
         ambiguous = sum(result["ambiguous"] for result in by_level.values())
-        rate = round(ambiguous / reviewed, 3) if reviewed else None
+        rate = round(ambiguous / reviewed, 3)
         summary = (
             f"{incoming.name} against {baseline.name}: {ambiguous}/{reviewed} "
             f"({rate:.1%}) concepts have no high-confidence match and require review."
-            if rate is not None
-            else f"{incoming.name} has no named categories, specialities, or tags to compare."
         )
         return MetricResult(
             metric_id=self.id,

@@ -105,3 +105,45 @@ def test_invalid_semantic_threshold_reports_an_error():
         {"baseline": "original", "incoming": "skillsfuture", "semantic_threshold": 1.1},
     )
     assert result.status == "error"
+
+
+def test_empty_incoming_taxonomy_reports_an_error():
+    datasets = _datasets()
+    datasets["skillsfuture"] = TaxonomyDataset(name="skillsfuture")
+
+    result = SaturationMetric().run(datasets, {"baseline": "original", "incoming": "skillsfuture"})
+
+    assert result.status == "error"
+    assert "no named categories" in result.summary
+
+
+def test_empty_baseline_level_with_incoming_records_reports_an_error():
+    datasets = _datasets()
+    datasets["original"] = TaxonomyDataset(
+        name="original",
+        specialities=[{"id": 10, "name": "Payroll Processing"}],
+        tags=[{"id": 100, "name": "accounting"}],
+    )
+
+    result = SaturationMetric().run(datasets, {"baseline": "original", "incoming": "skillsfuture"})
+
+    assert result.status == "error"
+    assert "categories" in result.summary
+    assert "table_map" in result.summary
+
+
+def test_batches_lexical_comparisons_with_cdist(monkeypatch):
+    original_cdist = saturation.process.cdist
+    calls = []
+
+    def recording_cdist(*args, **kwargs):
+        calls.append((args, kwargs))
+        return original_cdist(*args, **kwargs)
+
+    monkeypatch.setattr(saturation.process, "cdist", recording_cdist)
+    result = SaturationMetric().run(
+        _datasets(), {"baseline": "original", "incoming": "skillsfuture", "threshold": 90}
+    )
+
+    assert result.status == "ok"
+    assert len(calls) == 3
