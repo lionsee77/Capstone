@@ -76,3 +76,36 @@ def test_sql_dump_source_merges_tables_split_across_files():
     # table_map doesn't point "categories" at, so they're simply not pulled
     # in - merging only combines rows for tables actually mapped.
     assert dataset.counts()["categories"] == 3
+
+
+def test_ignores_insert_like_text_inside_a_quoted_field():
+    sql = """
+    INSERT INTO `tags` (`id`, `name`) VALUES
+    (1, 'Example SQL: ; INSERT INTO fake_table (id, name) VALUES (99, ''not a row'')'),
+    (2, 'Real tag');
+    """
+
+    statements = list(iter_insert_statements(sql))
+
+    assert statements == [
+        (
+            "tags",
+            [
+                {"id": 1, "name": "Example SQL: ; INSERT INTO fake_table (id, name) VALUES (99, 'not a row')"},
+                {"id": 2, "name": "Real tag"},
+            ],
+        )
+    ]
+
+
+def test_ignores_insert_like_text_inside_sql_comments():
+    sql = """
+    -- INSERT INTO fake_table (id, name) VALUES (1, 'not a row');
+    /* INSERT INTO another_fake_table (id, name) VALUES (2, 'not a row'); */
+    # INSERT INTO third_fake_table (id, name) VALUES (3, 'not a row');
+    INSERT INTO `tags` (`id`, `name`) VALUES (1, 'Real tag');
+    """
+
+    statements = list(iter_insert_statements(sql))
+
+    assert statements == [("tags", [{"id": 1, "name": "Real tag"}])]
