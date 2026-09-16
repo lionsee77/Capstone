@@ -17,6 +17,11 @@ _INSERT_HEADER = re.compile(
     re.IGNORECASE,
 )
 
+# Maps a single escaped character (the char after a backslash in a SQL
+# string literal) to what it decodes to. Anything not listed here just
+# drops the backslash (MySQL's own behaviour for an unrecognized escape).
+_ESCAPE_MAP = {"0": "\0", "b": "\b", "n": "\n", "r": "\r", "t": "\t", "Z": "\x1a"}
+
 
 def _split_top_level(text: str, sep: str = ",") -> list[str]:
     """Split `text` on `sep`, ignoring separators inside quoted strings or
@@ -65,6 +70,30 @@ def _split_top_level(text: str, sep: str = ",") -> list[str]:
     return parts
 
 
+def _unescape_sql_string(inner: str, quote: str) -> str:
+    """Decode a SQL string literal's body in a single left-to-right pass.
+
+    Doing this as sequential `.replace()` calls (the previous approach) is
+    wrong: replacing `\\\\` -> `\\` first can manufacture a fresh `\\n` or
+    `\\r` two-char sequence out of a literal backslash that was immediately
+    followed by a literal 'n'/'r', which the next `.replace()` call then
+    corrupts into a real newline/carriage-return. A single regex pass never
+    re-scans output it has already produced, so that can't happen.
+    """
+    pattern = re.compile(re.escape(quote * 2) + "|\\\\.", re.DOTALL)
+
+    def repl(match: re.Match[str]) -> str:
+        token = match.group(0)
+        if token == quote * 2:
+            return quote
+        escaped = token[1]
+        if escaped == quote:
+            return quote
+        return _ESCAPE_MAP.get(escaped, escaped)
+
+    return pattern.sub(repl, inner)
+
+
 def _convert_field(raw: str) -> Any:
     value = raw.strip()
     if value.upper() == "NULL":
@@ -72,9 +101,7 @@ def _convert_field(raw: str) -> Any:
     if len(value) >= 2 and value[0] == value[-1] and value[0] in ("'", '"'):
         quote = value[0]
         inner = value[1:-1]
-        inner = inner.replace(f"\\{quote}", quote).replace(quote * 2, quote)
-        inner = inner.replace("\\\\", "\\").replace("\\n", "\n").replace("\\r", "\r")
-        return inner
+        return _unescape_sql_string(inner, quote)
     try:
         return int(value)
     except ValueError:

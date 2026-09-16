@@ -7,6 +7,7 @@ dead-end categories, etc.) so results are comparable to that baseline.
 from __future__ import annotations
 
 import re
+import unicodedata
 from collections import defaultdict
 from typing import Any
 
@@ -16,9 +17,21 @@ from ..datasets.base import LoadedDataset
 from ..models import MetricResult
 from .base import Metric
 
+_DASH_VARIANTS = re.compile(r"[‐‑‒–—―]")
+_TRAILING_PUNCT = re.compile(r"[.,;:!?]+$")
+
 
 def normalize(name: str | None) -> str:
-    return re.sub(r"\s+", " ", (name or "").strip().lower())
+    """Duplicated from (not imported from) `backend/audit/taxonomy_audit.py`'s
+    `normalized()`, step for step - that module pulls in `mysql.connector` as
+    a live-DB dependency this pipeline deliberately doesn't take on, but the
+    steps must still match exactly or duplicate counts stop being comparable
+    to that baseline, which is this module's whole point.
+    """
+    value = unicodedata.normalize("NFKC", name or "").strip().casefold()
+    value = _DASH_VARIANTS.sub("-", value)
+    value = re.sub(r"\s+", " ", value)
+    return _TRAILING_PUNCT.sub("", value)
 
 
 def _exact_duplicate_clusters(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
