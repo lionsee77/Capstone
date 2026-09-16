@@ -23,7 +23,7 @@ taxonomy_pipeline/
 │   │   ├── integrity.py              #   duplicates, orphans, dead ends
 │   │   ├── depth.py                  #   branching factor
 │   │   ├── breadth.py                #   coverage vs. a reference dataset
-│   │   ├── saturation.py             #   discovery-curve vs. real gig/showcase text
+│   │   ├── saturation.py             #   candidate-new concepts from an incoming taxonomy
 │   │   └── registry.py               #   METRICS dict - register new metrics here
 │   ├── config.py                     # YAML/JSON pipeline config (datasets + metrics)
 │   ├── pipeline.py                   # run_pipeline(config) -> RunReport
@@ -54,8 +54,9 @@ taxonomy-pipeline run --config configs/original_vs_skillsfuture.yaml
 This loads `backend/sql-files-nus/*.sql` (Ankit's original taxonomy) and
 `backend/skillsfuture/skillsfuture_taxonomy.sql` (the generated SkillsFuture
 taxonomy's `sf_*` tables), runs integrity + depth on each, evaluates both
-taxonomies against SSIC 2025 and SSOC 2024 for breadth, and reports `saturation`
-as skipped (no gig/showcase text corpus exists yet). Prints the full JSON
+taxonomies against SSIC 2025 and SSOC 2024 for breadth, and compares
+SkillsFuture concepts against the original taxonomy for `saturation`. Its
+unmatched concepts are candidate new concepts for human review. Prints the full JSON
 report to stdout and a one-line-per-metric summary to stderr; pass
 `--output report.json` to write the report to a file instead.
 
@@ -184,7 +185,7 @@ the CLI's stdout, `GET /runs/{run_id}`, or the SQLite `report_json` column:
   "results": [
     {
       "metric_id": "integrity",
-      "status": "ok",         // "ok" | "skipped" (e.g. saturation with no corpus) | "error" (bad params/dataset)
+      "status": "ok",         // "ok" | "error" (bad params/dataset)
       "summary": "...",        // one-line, human-readable
       "details": {...}         // metric-specific structured data - see that metric's module for its shape
     }
@@ -221,9 +222,9 @@ CI job just runs the test suite (see the root `.github/workflows/ci.yml`).
 
 ## Known gaps
 
-- **`saturation`** needs real (or synthetic) gig/showcase text via
-  `params.corpus_path`; none exists yet, so every config has it wired up but
-  reporting "skipped" until a corpus does.
+- **`saturation`** identifies candidate new concepts from one incoming
+  taxonomy. It cannot confirm semantic equivalence such as `M&A` and
+  `Mergers and Acquisitions` without aliases or human review.
 - **`breadth`**, **`saturation`**, and the fuzzy layer of `integrity` use
   lexical (rapidfuzz) matching only - deliberate baselines. The plan is a
   shared `sentence-transformers` embedding layer for semantic matches (e.g.

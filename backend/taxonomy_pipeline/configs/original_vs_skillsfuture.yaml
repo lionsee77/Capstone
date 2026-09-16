@@ -64,8 +64,9 @@ metrics:
 
   - id: saturation
     params:
-      dataset: original
-      # No real gig/showcase text yet - set this once it exists (see the
-      # senseigigs-open-blockers project memory); until then this metric
-      # reports itself as "skipped".
-      corpus_path: null
+      baseline: original
+      incoming: skillsfuture
+      # Names are compared with normalized exact matching first, then the
+      # existing RapidFuzz lexical matcher. Candidate-new concepts must be
+      # reviewed before they are treated as confirmed taxonomy additions.
+      threshold: 90
