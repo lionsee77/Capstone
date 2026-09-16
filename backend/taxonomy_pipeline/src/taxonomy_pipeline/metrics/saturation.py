@@ -24,6 +24,10 @@ from .base import Metric
 from .integrity import normalize
 
 CONCEPT_LEVELS = ("categories", "specialities", "tags")
+SKIP_DUPLICATE = "SKIP_DUPLICATE"
+SKIP_SEMANTIC_DUPLICATE = "SKIP_SEMANTIC_DUPLICATE"
+ADD_CANDIDATE = "ADD_CANDIDATE"
+REVIEW_AMBIGUOUS = "REVIEW_AMBIGUOUS"
 
 
 class SemanticMatcher:
@@ -71,6 +75,8 @@ def _compare_level(
     threshold: float,
     semantic_matcher: SemanticMatcher | None,
     semantic_threshold: float,
+    add_candidate_lexical_threshold: float,
+    add_candidate_semantic_threshold: float,
 ) -> dict[str, Any]:
     baseline = _unique_named_rows(baseline_rows)
     incoming = _unique_named_rows(incoming_rows)
@@ -95,6 +101,7 @@ def _compare_level(
                     "baseline_id": exact.get("id"),
                     "baseline_name": exact.get("name"),
                     "score": 100.0,
+                    "recommended_action": SKIP_DUPLICATE,
                 }
             )
             continue
@@ -128,6 +135,7 @@ def _compare_level(
                     "baseline_id": matched.get("id"),
                     "baseline_name": matched.get("name"),
                     "score": round(lexical_score, 1),
+                    "recommended_action": SKIP_DUPLICATE,
                 }
             )
         else:
@@ -155,9 +163,16 @@ def _compare_level(
                     "semantic_score": semantic_score,
                     "closest_lexical_baseline_name": lexical_best[0] if lexical_best else None,
                     "closest_lexical_score": round(float(lexical_best[1]), 1) if lexical_best else None,
+                    "recommended_action": SKIP_SEMANTIC_DUPLICATE,
                 }
             )
         else:
+            low_lexical = (
+                lexical_best[1] is not None and lexical_best[1] < add_candidate_lexical_threshold
+            )
+            low_semantic = (
+                semantic_score is not None and semantic_score < add_candidate_semantic_threshold
+            )
             ambiguous.append(
                 {
                     "incoming_id": row.get("id"),
@@ -166,11 +181,18 @@ def _compare_level(
                     "closest_baseline_score": round(float(lexical_best[1]), 1) if lexical_best else None,
                     "closest_semantic_baseline_name": semantic_name,
                     "closest_semantic_score": semantic_score,
+                    "recommended_action": ADD_CANDIDATE if low_lexical and low_semantic else REVIEW_AMBIGUOUS,
                 }
             )
 
     reviewed = len(incoming)
     ambiguous_count = len(ambiguous)
+    action_counts = {
+        SKIP_DUPLICATE: len(exact_matches) + len(fuzzy_matches),
+        SKIP_SEMANTIC_DUPLICATE: len(semantic_matches),
+        ADD_CANDIDATE: sum(item["recommended_action"] == ADD_CANDIDATE for item in ambiguous),
+        REVIEW_AMBIGUOUS: sum(item["recommended_action"] == REVIEW_AMBIGUOUS for item in ambiguous),
+    }
     return {
         "relevant_concepts_reviewed": reviewed,
         "exact_matches": len(exact_matches),
@@ -178,6 +200,7 @@ def _compare_level(
         "semantic_candidate_matches": len(semantic_matches),
         "ambiguous": ambiguous_count,
         "ambiguous_rate": round(ambiguous_count / reviewed, 3) if reviewed else None,
+        "recommended_action_counts": action_counts,
         "exact_match_details": exact_matches,
         "fuzzy_match_details": fuzzy_matches,
         "semantic_match_details": semantic_matches,
@@ -198,6 +221,8 @@ class SaturationMetric(Metric):
         "threshold": 90.0,
         "semantic_model": None,
         "semantic_threshold": 0.7,
+        "add_candidate_lexical_threshold": 60.0,
+        "add_candidate_semantic_threshold": 0.5,
     }
 
     def run(self, datasets: dict[str, LoadedDataset], params: dict[str, Any]) -> MetricResult:
@@ -217,6 +242,12 @@ class SaturationMetric(Metric):
             semantic_threshold = float(p["semantic_threshold"])
             if not math.isfinite(semantic_threshold) or not -1 <= semantic_threshold <= 1:
                 raise ValueError("semantic_threshold must be finite and between -1 and 1")
+            add_candidate_lexical_threshold = float(p["add_candidate_lexical_threshold"])
+            if not math.isfinite(add_candidate_lexical_threshold) or not 0 <= add_candidate_lexical_threshold <= 100:
+                raise ValueError("add_candidate_lexical_threshold must be finite and between 0 and 100")
+            add_candidate_semantic_threshold = float(p["add_candidate_semantic_threshold"])
+            if not math.isfinite(add_candidate_semantic_threshold) or not -1 <= add_candidate_semantic_threshold <= 1:
+                raise ValueError("add_candidate_semantic_threshold must be finite and between -1 and 1")
         except (TypeError, ValueError) as exc:
             return MetricResult(metric_id=self.id, status="error", summary=str(exc))
 
@@ -246,6 +277,8 @@ class SaturationMetric(Metric):
                 threshold,
                 semantic_matcher,
                 semantic_threshold,
+                add_candidate_lexical_threshold,
+                add_candidate_semantic_threshold,
             )
             for level in CONCEPT_LEVELS
         }
@@ -277,8 +310,12 @@ class SaturationMetric(Metric):
                 "baseline": baseline.name,
                 "incoming": incoming.name,
                 "threshold": threshold,
-                "semantic_model": p["semantic_model"],
-                "semantic_threshold": semantic_threshold if semantic_matcher else None,
+                    "semantic_model": p["semantic_model"],
+                    "semantic_threshold": semantic_threshold if semantic_matcher else None,
+                    "add_candidate_lexical_threshold": add_candidate_lexical_threshold,
+                    "add_candidate_semantic_threshold": (
+                        add_candidate_semantic_threshold if semantic_matcher else None
+                    ),
                 "overall": {
                     "relevant_concepts_reviewed": reviewed,
                     "ambiguous": ambiguous,

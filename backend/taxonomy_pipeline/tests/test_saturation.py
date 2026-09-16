@@ -42,10 +42,13 @@ def test_compares_incoming_taxonomy_and_reports_ambiguous_concepts():
 
     levels = result.details["by_concept_level"]
     assert levels["categories"]["exact_matches"] == 1
+    assert levels["categories"]["exact_match_details"][0]["recommended_action"] == "SKIP_DUPLICATE"
     assert levels["specialities"]["fuzzy_candidate_matches"] == 1
+    assert levels["specialities"]["fuzzy_match_details"][0]["recommended_action"] == "SKIP_DUPLICATE"
     assert [concept["incoming_name"] for concept in levels["tags"]["ambiguous_concepts"]] == [
         "Carbon Reporting"
     ]
+    assert levels["tags"]["ambiguous_concepts"][0]["recommended_action"] == "REVIEW_AMBIGUOUS"
 
 
 def test_missing_datasets_report_an_error():
@@ -86,6 +89,7 @@ def test_semantic_candidates_are_reported_separately_from_lexical_matches(monkey
             "threshold": 95,
             "semantic_model": "test-model",
             "semantic_threshold": 0.8,
+            "add_candidate_lexical_threshold": 70,
         },
     )
 
@@ -96,7 +100,10 @@ def test_semantic_candidates_are_reported_separately_from_lexical_matches(monkey
     assert overall == {"relevant_concepts_reviewed": 6, "ambiguous": 2, "ambiguous_rate": 0.333}
     levels = result.details["by_concept_level"]
     assert levels["specialities"]["semantic_candidate_matches"] == 1
+    assert levels["specialities"]["semantic_match_details"][0]["recommended_action"] == "SKIP_SEMANTIC_DUPLICATE"
     assert levels["tags"]["semantic_match_details"][0]["incoming_name"] == "Carbon Reporting"
+    assert levels["categories"]["ambiguous_concepts"][0]["recommended_action"] == "ADD_CANDIDATE"
+    assert levels["specialities"]["ambiguous_concepts"][0]["recommended_action"] == "REVIEW_AMBIGUOUS"
 
 
 def test_invalid_semantic_threshold_reports_an_error():
@@ -147,3 +154,12 @@ def test_batches_lexical_comparisons_with_cdist(monkeypatch):
 
     assert result.status == "ok"
     assert len(calls) == 3
+
+
+def test_invalid_add_candidate_threshold_reports_an_error():
+    result = SaturationMetric().run(
+        _datasets(),
+        {"baseline": "original", "incoming": "skillsfuture", "add_candidate_lexical_threshold": 101},
+    )
+
+    assert result.status == "error"

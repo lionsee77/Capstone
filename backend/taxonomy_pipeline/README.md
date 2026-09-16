@@ -226,20 +226,20 @@ throwaway SQLite file per test - use it in any test that calls `db.save_run`
 or hits the API, so runs don't leak into your real `taxonomy_pipeline.sqlite3`
 or across tests.
 
-No linter/formatter is configured yet for this subproject specifically; the
-CI job just runs the test suite (see the root `.github/workflows/ci.yml`).
+Ruff linting and the test suite run in CI (see the root
+`.github/workflows/ci.yml`).
 
 ## Known gaps
 
-- **`saturation`** identifies ambiguous concepts from one incoming
-  taxonomy. It cannot confirm semantic equivalence such as `M&A` and
-  `Mergers and Acquisitions` without aliases or human review.
-- **`breadth`**, **`saturation`**, and the fuzzy layer of `integrity` use
-  lexical (rapidfuzz) matching only - deliberate baselines. The plan is a
-  shared `sentence-transformers` embedding layer for semantic matches (e.g.
-  'M&A' vs 'Mergers and Acquisitions'), used by both this pipeline and the
-  FastAPI matching microservice, so "how we proved it's accurate" and "how
-  we score it live" don't drift into two implementations.
+- **`saturation`** makes recommendations for each incoming concept: exact and
+  high-lexical matches become `SKIP_DUPLICATE`, high-semantic matches become
+  `SKIP_SEMANTIC_DUPLICATE`, low lexical and semantic scores become
+  `ADD_CANDIDATE`, and all other non-matches become `REVIEW_AMBIGUOUS`.
+  These are review recommendations, not database operations; semantic
+  equivalence still requires administrator confirmation.
+- **`breadth`** and the fuzzy layer of **`integrity`** use lexical
+  (RapidFuzz) matching only. Saturation additionally supports an optional
+  `sentence-transformers` embedding model for semantic candidates.
 - No live-database source yet - sources are `sql_dump`, `ssic`, and `ssoc`. `backend/audit/` already
   has a working live-DB connection (env vars `MYSQL_HOST` etc.) worth
   reusing when that source gets built, rather than reinventing it.
