@@ -30,7 +30,7 @@ def _datasets() -> dict[str, TaxonomyDataset]:
     }
 
 
-def test_compares_incoming_taxonomy_and_reports_candidate_new_concepts():
+def test_compares_incoming_taxonomy_and_reports_ambiguous_concepts():
     result = SaturationMetric().run(
         _datasets(), {"baseline": "original", "incoming": "skillsfuture", "threshold": 90}
     )
@@ -38,12 +38,12 @@ def test_compares_incoming_taxonomy_and_reports_candidate_new_concepts():
     assert result.status == "ok"
     overall = result.details["overall"]
     # Six distinct incoming concepts: 2 categories, 2 specialities, 2 tags.
-    assert overall == {"relevant_concepts_reviewed": 6, "candidate_new": 3, "new_concept_rate": 0.5}
+    assert overall == {"relevant_concepts_reviewed": 6, "ambiguous": 3, "ambiguous_rate": 0.5}
 
     levels = result.details["by_concept_level"]
     assert levels["categories"]["exact_matches"] == 1
     assert levels["specialities"]["fuzzy_candidate_matches"] == 1
-    assert [concept["incoming_name"] for concept in levels["tags"]["candidate_new_concepts"]] == [
+    assert [concept["incoming_name"] for concept in levels["tags"]["ambiguous_concepts"]] == [
         "Carbon Reporting"
     ]
 
@@ -92,8 +92,8 @@ def test_semantic_candidates_are_reported_separately_from_lexical_matches(monkey
     assert result.status == "ok"
     overall = result.details["overall"]
     # The two semantic candidates are represented in the review result;
-    # Marine Services and Carbon Accounting remain candidate-new.
-    assert overall == {"relevant_concepts_reviewed": 6, "candidate_new": 2, "new_concept_rate": 0.333}
+    # Marine Services and Carbon Accounting remain ambiguous.
+    assert overall == {"relevant_concepts_reviewed": 6, "ambiguous": 2, "ambiguous_rate": 0.333}
     levels = result.details["by_concept_level"]
     assert levels["specialities"]["semantic_candidate_matches"] == 1
     assert levels["tags"]["semantic_match_details"][0]["incoming_name"] == "Carbon Reporting"

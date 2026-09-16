@@ -65,7 +65,7 @@ SkillsFuture concepts against the original taxonomy for `saturation`. Its
 exact matches are found first, then lexical candidates, then optional semantic
 candidate equivalents at the same concept level. Semantic candidates are
 review evidence, not automatic additions. Concepts unmatched by all stages are
-candidate new concepts for human review. Prints the full JSON report to stdout
+ambiguous concepts for human review. Prints the full JSON report to stdout
 and a one-line-per-metric summary to stderr; pass
 `--output report.json` to write the report to a file instead.
 
@@ -231,7 +231,7 @@ CI job just runs the test suite (see the root `.github/workflows/ci.yml`).
 
 ## Known gaps
 
-- **`saturation`** identifies candidate new concepts from one incoming
+- **`saturation`** identifies ambiguous concepts from one incoming
   taxonomy. It cannot confirm semantic equivalence such as `M&A` and
   `Mergers and Acquisitions` without aliases or human review.
 - **`breadth`**, **`saturation`**, and the fuzzy layer of `integrity` use

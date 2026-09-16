@@ -69,7 +69,8 @@ metrics:
       # Names are compared with normalized exact matching first, then the
       # RapidFuzz lexical matcher. The optional local sentence model then
       # identifies semantic candidate equivalents among lexical non-matches.
-      # All semantic results still require human review before adoption.
+      # All results without a high-confidence match are ambiguous and require
+      # human review before an administrator adds, maps, or excludes them.
       threshold: 90
       semantic_model: all-MiniLM-L6-v2
       semantic_threshold: 0.70

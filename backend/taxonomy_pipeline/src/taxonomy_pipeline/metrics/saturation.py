@@ -5,7 +5,7 @@ the closest concept at the same level in a baseline taxonomy. Exact normalized
 names are treated as represented; otherwise RapidFuzz supplies a lexical
 candidate. Optionally, a sentence-embedding model supplies a semantic
 candidate for concepts that remain unmatched. Concepts below both thresholds
-are *candidate new*, not automatically confirmed additions: a reviewer decides
+are *ambiguous*, not automatically confirmed additions: a reviewer decides
 whether they are truly new, out of scope, or semantic equivalents with
 different names.
 """
@@ -80,7 +80,7 @@ def _compare_level(
     exact_matches: list[dict[str, Any]] = []
     fuzzy_matches: list[dict[str, Any]] = []
     semantic_matches: list[dict[str, Any]] = []
-    candidate_new: list[dict[str, Any]] = []
+    ambiguous: list[dict[str, Any]] = []
     lexical_unmatched: list[tuple[dict[str, Any], tuple[str, float, int] | None]] = []
 
     for row in incoming:
@@ -139,7 +139,7 @@ def _compare_level(
                 }
             )
         else:
-            candidate_new.append(
+            ambiguous.append(
                 {
                     "incoming_id": row.get("id"),
                     "incoming_name": original_name,
@@ -151,18 +151,18 @@ def _compare_level(
             )
 
     reviewed = len(incoming)
-    new_count = len(candidate_new)
+    ambiguous_count = len(ambiguous)
     return {
         "relevant_concepts_reviewed": reviewed,
         "exact_matches": len(exact_matches),
         "fuzzy_candidate_matches": len(fuzzy_matches),
         "semantic_candidate_matches": len(semantic_matches),
-        "candidate_new": new_count,
-        "new_concept_rate": round(new_count / reviewed, 3) if reviewed else None,
+        "ambiguous": ambiguous_count,
+        "ambiguous_rate": round(ambiguous_count / reviewed, 3) if reviewed else None,
         "exact_match_details": exact_matches,
         "fuzzy_match_details": fuzzy_matches,
         "semantic_match_details": semantic_matches,
-        "candidate_new_concepts": candidate_new,
+        "ambiguous_concepts": ambiguous,
     }
 
 
@@ -171,7 +171,7 @@ class SaturationMetric(Metric):
     description = (
         "Incoming-source novelty against a baseline taxonomy. Uses normalized exact matches and "
         "RapidFuzz lexical matches, plus optional sentence-embedding semantic candidates; unmatched "
-        "concepts are candidate new concepts for review."
+        "concepts with no high-confidence match are ambiguous and require review."
     )
     default_params = {
         "baseline": None,
@@ -217,11 +217,11 @@ class SaturationMetric(Metric):
             for level in CONCEPT_LEVELS
         }
         reviewed = sum(result["relevant_concepts_reviewed"] for result in by_level.values())
-        candidate_new = sum(result["candidate_new"] for result in by_level.values())
-        rate = round(candidate_new / reviewed, 3) if reviewed else None
+        ambiguous = sum(result["ambiguous"] for result in by_level.values())
+        rate = round(ambiguous / reviewed, 3) if reviewed else None
         summary = (
-            f"{incoming.name} against {baseline.name}: {candidate_new}/{reviewed} "
-            f"({rate:.1%}) candidate new concepts require review."
+            f"{incoming.name} against {baseline.name}: {ambiguous}/{reviewed} "
+            f"({rate:.1%}) concepts have no high-confidence match and require review."
             if rate is not None
             else f"{incoming.name} has no named categories, specialities, or tags to compare."
         )
@@ -236,8 +236,8 @@ class SaturationMetric(Metric):
                 "semantic_threshold": semantic_threshold if semantic_matcher else None,
                 "overall": {
                     "relevant_concepts_reviewed": reviewed,
-                    "candidate_new": candidate_new,
-                    "new_concept_rate": rate,
+                    "ambiguous": ambiguous,
+                    "ambiguous_rate": rate,
                 },
                 "by_concept_level": by_level,
             },
