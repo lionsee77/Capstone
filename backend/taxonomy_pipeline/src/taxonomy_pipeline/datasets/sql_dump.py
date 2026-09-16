@@ -7,8 +7,9 @@ statements with an explicit column list, which is all this parser assumes.
 from __future__ import annotations
 
 import re
+from collections.abc import Iterator
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any
 
 from .base import CONCEPTS, TaxonomyDataset
 
@@ -163,7 +164,7 @@ def iter_insert_statements(sql_text: str) -> Iterator[tuple[str, list[dict[str, 
                 else tuple_text
             )
             fields = _split_top_level(inner, ",")
-            rows.append({col: _convert_field(val) for col, val in zip(columns, fields)})
+            rows.append({col: _convert_field(val) for col, val in zip(columns, fields, strict=True)})
         yield table, rows
 
 

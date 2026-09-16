@@ -10,6 +10,7 @@ from __future__ import annotations
 from typing import Protocol
 
 from pydantic import BaseModel, Field
+
 from .ssic import SsicReference
 from .ssoc import SsocReference
 

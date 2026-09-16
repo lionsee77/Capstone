@@ -6,7 +6,7 @@ it (see the project's "don't add infra before it's needed" call).
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 from sqlmodel import Field, Session, SQLModel, create_engine, select
 
@@ -21,10 +21,10 @@ class RunRecord(SQLModel, table=True):
     run_id: str = Field(primary_key=True)
     status: str
     created_at: str
-    finished_at: Optional[str] = None
+    finished_at: str | None = None
     config_json: str
     report_json: str
-    error: Optional[str] = None
+    error: str | None = None
 
 
 def get_engine(db_path: Path | str | None = None):
@@ -56,7 +56,7 @@ def save_run(report: RunReport, config_json: str, db_path: Path | str | None = N
         session.commit()
 
 
-def get_run(run_id: str, db_path: Path | str | None = None) -> Optional[RunRecord]:
+def get_run(run_id: str, db_path: Path | str | None = None) -> RunRecord | None:
     engine = get_engine(db_path)
     with Session(engine) as session:
         return session.get(RunRecord, run_id)
