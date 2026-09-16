@@ -7,6 +7,8 @@ report. This is also the seam a future admin dashboard talks to.
 """
 from __future__ import annotations
 
+from pathlib import Path
+
 from fastapi import BackgroundTasks, FastAPI, HTTPException
 
 from .. import db
@@ -28,6 +30,24 @@ def _execute_and_save(run_id: str, config: PipelineConfig) -> None:
     db.save_run(report, config_json=config.model_dump_json())
 
 
+def _require_absolute_dataset_paths(config: PipelineConfig) -> None:
+    """Reject API paths without a config-file directory to resolve them from."""
+    relative_paths = [
+        {"dataset": dataset.name, "path": path}
+        for dataset in config.datasets
+        for path in dataset.paths
+        if not Path(path).is_absolute()
+    ]
+    if relative_paths:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "message": "API dataset paths must be absolute server-side paths.",
+                "relative_paths": relative_paths,
+            },
+        )
+
+
 @app.get("/metrics")
 def list_metrics() -> dict:
     """Self-describing metric catalogue, so a dashboard can build a
@@ -40,6 +60,7 @@ def list_metrics() -> dict:
 
 @app.post("/runs", status_code=202)
 def create_run(config: PipelineConfig, background_tasks: BackgroundTasks) -> dict:
+    _require_absolute_dataset_paths(config)
     report = RunReport(status="queued")
     db.save_run(report, config_json=config.model_dump_json())
     background_tasks.add_task(_execute_and_save, report.run_id, config)
