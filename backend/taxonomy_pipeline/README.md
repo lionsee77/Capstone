@@ -23,7 +23,7 @@ taxonomy_pipeline/
 │   │   ├── integrity.py              #   duplicates, orphans, dead ends
 │   │   ├── depth.py                  #   branching factor
 │   │   ├── breadth.py                #   coverage vs. a reference dataset
-│   │   ├── saturation.py             #   discovery-curve vs. real gig/showcase text
+│   │   ├── saturation.py             #   candidate-new concepts from an incoming taxonomy
 │   │   └── registry.py               #   METRICS dict - register new metrics here
 │   ├── config.py                     # YAML/JSON pipeline config (datasets + metrics)
 │   ├── pipeline.py                   # run_pipeline(config) -> RunReport
@@ -45,6 +45,12 @@ pip install -e ".[dev]"
 `taxonomy-pipeline` console command; `[dev]` additionally pulls in `pytest`
 and `httpx` (for the FastAPI test client).
 
+The supplied SkillsFuture comparison also enables optional semantic matching.
+Install it once with `pip install -e ".[dev,semantic]"`. The first semantic
+run downloads the configured model (`all-MiniLM-L6-v2`). If you only need the
+fast exact/lexical checks, remove `semantic_model` from the saturation section
+of the config.
+
 ## Run it against the two real datasets already in this repo
 
 ```bash
@@ -54,9 +60,13 @@ taxonomy-pipeline run --config configs/original_vs_skillsfuture.yaml
 This loads `backend/sql-files-nus/*.sql` (Ankit's original taxonomy) and
 `backend/skillsfuture/skillsfuture_taxonomy.sql` (the generated SkillsFuture
 taxonomy's `sf_*` tables), runs integrity + depth on each, evaluates both
-taxonomies against SSIC 2025 and SSOC 2024 for breadth, and reports `saturation`
-as skipped (no gig/showcase text corpus exists yet). Prints the full JSON
-report to stdout and a one-line-per-metric summary to stderr; pass
+taxonomies against SSIC 2025 and SSOC 2024 for breadth, and compares
+SkillsFuture concepts against the original taxonomy for `saturation`. Its
+exact matches are found first, then lexical candidates, then optional semantic
+candidate equivalents at the same concept level. Semantic candidates are
+review evidence, not automatic additions. Concepts unmatched by all stages are
+ambiguous concepts for human review. Prints the full JSON report to stdout
+and a one-line-per-metric summary to stderr; pass
 `--output report.json` to write the report to a file instead.
 
 ## Industry and occupational breadth
@@ -184,7 +194,7 @@ the CLI's stdout, `GET /runs/{run_id}`, or the SQLite `report_json` column:
   "results": [
     {
       "metric_id": "integrity",
-      "status": "ok",         // "ok" | "skipped" (e.g. saturation with no corpus) | "error" (bad params/dataset)
+      "status": "ok",         // "ok" | "error" (bad params/dataset)
       "summary": "...",        // one-line, human-readable
       "details": {...}         // metric-specific structured data - see that metric's module for its shape
     }
@@ -216,20 +226,20 @@ throwaway SQLite file per test - use it in any test that calls `db.save_run`
 or hits the API, so runs don't leak into your real `taxonomy_pipeline.sqlite3`
 or across tests.
 
-No linter/formatter is configured yet for this subproject specifically; the
-CI job just runs the test suite (see the root `.github/workflows/ci.yml`).
+Ruff linting and the test suite run in CI (see the root
+`.github/workflows/ci.yml`).
 
 ## Known gaps
 
-- **`saturation`** needs real (or synthetic) gig/showcase text via
-  `params.corpus_path`; none exists yet, so every config has it wired up but
-  reporting "skipped" until a corpus does.
-- **`breadth`**, **`saturation`**, and the fuzzy layer of `integrity` use
-  lexical (rapidfuzz) matching only - deliberate baselines. The plan is a
-  shared `sentence-transformers` embedding layer for semantic matches (e.g.
-  'M&A' vs 'Mergers and Acquisitions'), used by both this pipeline and the
-  FastAPI matching microservice, so "how we proved it's accurate" and "how
-  we score it live" don't drift into two implementations.
+- **`saturation`** makes recommendations for each incoming concept: exact and
+  high-lexical matches become `SKIP_DUPLICATE`, high-semantic matches become
+  `SKIP_SEMANTIC_DUPLICATE`, low lexical and semantic scores become
+  `ADD_CANDIDATE`, and all other non-matches become `REVIEW_AMBIGUOUS`.
+  These are review recommendations, not database operations; semantic
+  equivalence still requires administrator confirmation.
+- **`breadth`** and the fuzzy layer of **`integrity`** use lexical
+  (RapidFuzz) matching only. Saturation additionally supports an optional
+  `sentence-transformers` embedding model for semantic candidates.
 - No live-database source yet - sources are `sql_dump`, `ssic`, and `ssoc`. `backend/audit/` already
   has a working live-DB connection (env vars `MYSQL_HOST` etc.) worth
   reusing when that source gets built, rather than reinventing it.

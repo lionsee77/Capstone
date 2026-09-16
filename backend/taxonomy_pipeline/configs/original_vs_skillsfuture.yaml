@@ -64,8 +64,17 @@ metrics:
 
   - id: saturation
     params:
-      dataset: original
-      # No real gig/showcase text yet - set this once it exists (see the
-      # senseigigs-open-blockers project memory); until then this metric
-      # reports itself as "skipped".
-      corpus_path: null
+      baseline: original
+      incoming: skillsfuture
+      # Names are compared with normalized exact matching first, then the
+      # RapidFuzz lexical matcher. The optional local sentence model then
+      # identifies semantic candidate equivalents among lexical non-matches.
+      # All results without a high-confidence match are ambiguous and require
+      # human review before an administrator adds, maps, or excludes them.
+      threshold: 90
+      semantic_model: all-MiniLM-L6-v2
+      semantic_threshold: 0.70
+      # An ADD_CANDIDATE recommendation needs low evidence from both matchers.
+      # Other non-matches remain REVIEW_AMBIGUOUS for administrator review.
+      add_candidate_lexical_threshold: 60
+      add_candidate_semantic_threshold: 0.50

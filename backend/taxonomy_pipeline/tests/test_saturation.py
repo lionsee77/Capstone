@@ -1,30 +1,165 @@
-from __future__ import annotations
-
-import json
-
 from taxonomy_pipeline.datasets.base import TaxonomyDataset
+from taxonomy_pipeline.metrics import saturation
 from taxonomy_pipeline.metrics.saturation import SaturationMetric
 
 
-def _dataset() -> TaxonomyDataset:
-    return TaxonomyDataset(name="original", tags=[{"id": 1, "name": "accounting"}])
+def _datasets() -> dict[str, TaxonomyDataset]:
+    return {
+        "original": TaxonomyDataset(
+            name="original",
+            categories=[{"id": 1, "name": "Financial Services"}],
+            specialities=[{"id": 10, "name": "Payroll Processing"}],
+            tags=[{"id": 100, "name": "accounting"}],
+        ),
+        "skillsfuture": TaxonomyDataset(
+            name="skillsfuture",
+            categories=[
+                {"id": 1, "name": "Financial Services"},
+                {"id": 2, "name": "Marine Services"},
+            ],
+            specialities=[
+                {"id": 10, "name": "Payroll Process"},
+                {"id": 11, "name": "Carbon Accounting"},
+            ],
+            tags=[
+                {"id": 100, "name": "Accounting"},
+                {"id": 101, "name": "Carbon Reporting"},
+                {"id": 102, "name": "Carbon Reporting"},
+            ],
+        ),
+    }
 
 
-def test_skips_cleanly_without_a_corpus():
-    result = SaturationMetric().run({"original": _dataset()}, {"dataset": "original"})
-    assert result.status == "skipped"
-
-
-def test_runs_discovery_curve_against_a_provided_corpus(tmp_path):
-    corpus_path = tmp_path / "corpus.json"
-    corpus_path.write_text(json.dumps(["accounting help needed", "underwater basket weaving"]))
-
+def test_compares_incoming_taxonomy_and_reports_ambiguous_concepts():
     result = SaturationMetric().run(
-        {"original": _dataset()},
-        {"dataset": "original", "corpus_path": str(corpus_path), "batch_size": 2},
+        _datasets(), {"baseline": "original", "incoming": "skillsfuture", "threshold": 90}
     )
+
     assert result.status == "ok"
-    assert result.details["total_texts"] == 2
-    # "accounting" is covered by the taxonomy; the second text has no match.
-    assert "underwater basket weaving" in result.details["sample_uncovered"]
-    assert result.details["curve"][-1]["new_in_batch"] == 1
+    overall = result.details["overall"]
+    # Six distinct incoming concepts: 2 categories, 2 specialities, 2 tags.
+    assert overall == {"relevant_concepts_reviewed": 6, "ambiguous": 3, "ambiguous_rate": 0.5}
+
+    levels = result.details["by_concept_level"]
+    assert levels["categories"]["exact_matches"] == 1
+    assert levels["categories"]["exact_match_details"][0]["recommended_action"] == "SKIP_DUPLICATE"
+    assert levels["specialities"]["fuzzy_candidate_matches"] == 1
+    assert levels["specialities"]["fuzzy_match_details"][0]["recommended_action"] == "SKIP_DUPLICATE"
+    assert [concept["incoming_name"] for concept in levels["tags"]["ambiguous_concepts"]] == [
+        "Carbon Reporting"
+    ]
+    assert levels["tags"]["ambiguous_concepts"][0]["recommended_action"] == "REVIEW_AMBIGUOUS"
+
+
+def test_missing_datasets_report_an_error():
+    result = SaturationMetric().run(
+        _datasets(), {"baseline": "original", "incoming": "not-loaded"}
+    )
+    assert result.status == "error"
+
+
+def test_invalid_threshold_reports_an_error():
+    result = SaturationMetric().run(
+        _datasets(), {"baseline": "original", "incoming": "skillsfuture", "threshold": 101}
+    )
+    assert result.status == "error"
+
+
+def test_semantic_candidates_are_reported_separately_from_lexical_matches(monkeypatch):
+    class FakeSemanticMatcher:
+        def __init__(self, model_name):
+            assert model_name == "test-model"
+
+        def best_matches(self, queries, choices):
+            assert choices
+            results = {
+                "marine services": ("financial services", 0.20),
+                "payroll process": ("payroll processing", 0.91),
+                "carbon accounting": ("payroll processing", 0.50),
+                "carbon reporting": ("accounting", 0.81),
+            }
+            return [results[query] for query in queries]
+
+    monkeypatch.setattr(saturation, "SemanticMatcher", FakeSemanticMatcher)
+    result = SaturationMetric().run(
+        _datasets(),
+        {
+            "baseline": "original",
+            "incoming": "skillsfuture",
+            "threshold": 95,
+            "semantic_model": "test-model",
+            "semantic_threshold": 0.8,
+            "add_candidate_lexical_threshold": 70,
+        },
+    )
+
+    assert result.status == "ok"
+    overall = result.details["overall"]
+    # The two semantic candidates are represented in the review result;
+    # Marine Services and Carbon Accounting remain ambiguous.
+    assert overall == {"relevant_concepts_reviewed": 6, "ambiguous": 2, "ambiguous_rate": 0.333}
+    levels = result.details["by_concept_level"]
+    assert levels["specialities"]["semantic_candidate_matches"] == 1
+    assert levels["specialities"]["semantic_match_details"][0]["recommended_action"] == "SKIP_SEMANTIC_DUPLICATE"
+    assert levels["tags"]["semantic_match_details"][0]["incoming_name"] == "Carbon Reporting"
+    assert levels["categories"]["ambiguous_concepts"][0]["recommended_action"] == "ADD_CANDIDATE"
+    assert levels["specialities"]["ambiguous_concepts"][0]["recommended_action"] == "REVIEW_AMBIGUOUS"
+
+
+def test_invalid_semantic_threshold_reports_an_error():
+    result = SaturationMetric().run(
+        _datasets(),
+        {"baseline": "original", "incoming": "skillsfuture", "semantic_threshold": 1.1},
+    )
+    assert result.status == "error"
+
+
+def test_empty_incoming_taxonomy_reports_an_error():
+    datasets = _datasets()
+    datasets["skillsfuture"] = TaxonomyDataset(name="skillsfuture")
+
+    result = SaturationMetric().run(datasets, {"baseline": "original", "incoming": "skillsfuture"})
+
+    assert result.status == "error"
+    assert "no named categories" in result.summary
+
+
+def test_empty_baseline_level_with_incoming_records_reports_an_error():
+    datasets = _datasets()
+    datasets["original"] = TaxonomyDataset(
+        name="original",
+        specialities=[{"id": 10, "name": "Payroll Processing"}],
+        tags=[{"id": 100, "name": "accounting"}],
+    )
+
+    result = SaturationMetric().run(datasets, {"baseline": "original", "incoming": "skillsfuture"})
+
+    assert result.status == "error"
+    assert "categories" in result.summary
+    assert "table_map" in result.summary
+
+
+def test_batches_lexical_comparisons_with_cdist(monkeypatch):
+    original_cdist = saturation.process.cdist
+    calls = []
+
+    def recording_cdist(*args, **kwargs):
+        calls.append((args, kwargs))
+        return original_cdist(*args, **kwargs)
+
+    monkeypatch.setattr(saturation.process, "cdist", recording_cdist)
+    result = SaturationMetric().run(
+        _datasets(), {"baseline": "original", "incoming": "skillsfuture", "threshold": 90}
+    )
+
+    assert result.status == "ok"
+    assert len(calls) == 3
+
+
+def test_invalid_add_candidate_threshold_reports_an_error():
+    result = SaturationMetric().run(
+        _datasets(),
+        {"baseline": "original", "incoming": "skillsfuture", "add_candidate_lexical_threshold": 101},
+    )
+
+    assert result.status == "error"
