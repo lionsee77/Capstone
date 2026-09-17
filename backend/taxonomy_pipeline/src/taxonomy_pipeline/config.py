@@ -1,6 +1,7 @@
 """Pipeline configuration: which taxonomy datasets to load and which metrics
-to run against them. Loaded from YAML for the CLI, or accepted as the same
-shape over JSON by the FastAPI `/runs` route - one schema, two entry points.
+to run against them. The CLI loads YAML configs and resolves their relative
+paths; the FastAPI route accepts the same schema over JSON but requires
+absolute server-side dataset paths.
 """
 from __future__ import annotations
 

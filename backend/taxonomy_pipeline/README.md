@@ -122,9 +122,10 @@ taxonomy-pipeline serve --reload
 ```
 
 - `GET /metrics` - self-describing catalogue of what's runnable.
-- `POST /runs` - body is a `PipelineConfig` (the same shape as the YAML
-  configs, as JSON); returns `{run_id, status: "queued"}` immediately and
-  runs the pipeline in the background.
+- `POST /runs` - body is a `PipelineConfig` (the same schema as the YAML
+  configs, as JSON); dataset paths must be absolute paths on the server. It
+  returns `{run_id, status: "queued"}` immediately and runs the pipeline in
+  the background.
 - `GET /runs/{run_id}` - poll for status; once `"done"` or `"failed"`, the
   full report is in the response.
 - `GET /runs` - recent run history.
@@ -169,7 +170,8 @@ Two things worth reusing rather than reimplementing when you do:
 ## Config and report reference
 
 **Config** (`config.py`) - what the CLI reads from YAML and what `POST
-/runs` accepts as JSON, same shape either way:
+/runs` accepts as JSON. YAML paths can be relative to the YAML file; API
+paths must be absolute server-side paths:
 
 ```yaml
 datasets:

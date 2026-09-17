@@ -50,6 +50,19 @@ def test_create_and_poll_a_run(isolated_db):
     assert report["results"][0]["metric_id"] == "integrity"
 
 
+def test_create_run_rejects_relative_dataset_paths(isolated_db):
+    payload = _config_payload()
+    payload["datasets"][0]["paths"] = ["../../sql-files-nus/categories.sql"]
+
+    response = TestClient(app).post("/runs", json=payload)
+
+    assert response.status_code == 422
+    assert response.json()["detail"]["message"] == "API dataset paths must be absolute server-side paths."
+    assert response.json()["detail"]["relative_paths"] == [
+        {"dataset": "original", "path": "../../sql-files-nus/categories.sql"}
+    ]
+
+
 def test_get_unknown_run_is_404(isolated_db):
     client = TestClient(app)
     response = client.get("/runs/does-not-exist")
