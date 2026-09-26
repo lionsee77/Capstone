@@ -364,6 +364,9 @@ def _compare_level(
     seen_in_source: dict[str, str],
 ) -> dict[str, Any]:
     groups, invalid = _group_concepts(incoming_rows)
+    # Concept matching may use a stricter per-level meaning threshold (e.g.
+    # job titles vs skills); the parent check keeps the global one.
+    level_p = {**p, "semantic_threshold": p["semantic_threshold_by_level"].get(level, p["semantic_threshold"])}
     # A name already counted at an earlier level of this same source is the
     # same concept; count it once.
     repeated = [
@@ -394,10 +397,10 @@ def _compare_level(
     other_candidates = pool.candidates(level, other_levels=True) if p["cross_level"] else {}
     other_evidence = _gather_evidence(remaining, other_candidates, semantic_matcher)
     for (_, rows), same, other in zip(remaining, same_evidence, other_evidence, strict=True):
-        winner = _winning_match(same, other, p)
+        winner = _winning_match(same, other, level_p)
         if winner is None:
             ambiguous.append(_ambiguous_entry(
-                rows[0], [r.get("id") for r in rows], same, other, parents.classify(level, rows), p
+                rows[0], [r.get("id") for r in rows], same, other, parents.classify(level, rows), level_p
             ))
         else:
             matched.append((rows, *winner))
@@ -490,6 +493,17 @@ def _validated_float(p: dict[str, Any], name: str, low: float, high: float) -> f
     return value
 
 
+def _level_thresholds(value: Any) -> dict[str, float]:
+    if not isinstance(value, dict):
+        raise ValueError("semantic_threshold_by_level must map concept levels to thresholds")
+    unknown = sorted(set(value) - set(CONCEPT_LEVELS))
+    if unknown:
+        raise ValueError(f"semantic_threshold_by_level has unknown levels {unknown}; expected {CONCEPT_LEVELS}")
+    return {
+        level: _validated_float(value, level, -1, 1) for level in CONCEPT_LEVELS if level in value
+    }
+
+
 def _incoming_names(value: Any, baseline: Any) -> list[str]:
     names = [value] if isinstance(value, str) else value
     if not isinstance(names, list) or not names or not all(isinstance(n, str) and n for n in names):
@@ -517,6 +531,7 @@ class SaturationMetric(Metric):
         "add_candidate_lexical_threshold": 60.0,
         "add_candidate_semantic_threshold": 0.5,
         "cross_level": True,
+        "semantic_threshold_by_level": {},
     }
 
     def run(self, datasets: dict[str, LoadedDataset], params: dict[str, Any]) -> MetricResult:
@@ -542,6 +557,10 @@ class SaturationMetric(Metric):
         if not isinstance(p["cross_level"], bool):
             return MetricResult(metric_id=self.id, status="error", summary="cross_level must be true or false")
         settings["cross_level"] = p["cross_level"]
+        try:
+            settings["semantic_threshold_by_level"] = _level_thresholds(p["semantic_threshold_by_level"])
+        except (TypeError, ValueError) as exc:
+            return MetricResult(metric_id=self.id, status="error", summary=str(exc))
 
         baseline = resolved["baseline"]
         incoming = [resolved[f"incoming[{i}]"] for i in range(len(incoming_names))]
@@ -634,6 +653,9 @@ class SaturationMetric(Metric):
                 "overall": steps[-1]["overall"],
                 "by_concept_level": steps[-1]["by_concept_level"],
                 "cross_level": p["cross_level"],
+                "semantic_threshold_by_level": (
+                    settings["semantic_threshold_by_level"] if semantic_matcher else None
+                ),
                 "curve": curve,
                 "steps": steps,
             },

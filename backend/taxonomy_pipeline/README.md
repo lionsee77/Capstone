@@ -119,6 +119,11 @@ counted once, at the first level; the repeat is listed in
 `repeated_in_source_other_level`. Set `cross_level: false` for a strict
 level-by-level comparison.
 
+`semantic_threshold_by_level` overrides `semantic_threshold` for matching
+concepts of one incoming level, e.g. `{specialities: 0.80}`: SkillsFuture
+job titles scored 0.70-0.75 against loosely related skills ("Head of Sales"
+-> "sales"). The parent check always uses `semantic_threshold`.
+
 Per step, `new_rate_min` = add candidates / concepts reviewed and
 `new_rate_max` = (add candidates + review items) / concepts reviewed.
 

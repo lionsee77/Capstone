@@ -504,3 +504,25 @@ def test_name_repeated_at_two_levels_of_one_source_counts_once():
         {"incoming_ids": [9], "incoming_name": "Workplace Safety & Health", "first_counted_level": "categories"}
     ]
     assert result.details["overall"]["relevant_concepts_reviewed"] == 1
+
+
+def test_stricter_meaning_threshold_for_one_level(monkeypatch):
+    baseline = {**_BASE, "specialities": [{"id": 10, "name": "Risk Management", "category_id": 1}]}
+    incoming = _sf_roles(("Risk Manager", "Finance"))
+    _fake_matcher(monkeypatch, {"risk manager": ("risk management", 0.75)})
+
+    loose = _run(_pair(baseline, incoming), semantic_model="m").details["by_concept_level"]["specialities"]
+    assert loose["semantic_candidate_matches"] == 1
+
+    strict = _run(
+        _pair(baseline, incoming), semantic_model="m", semantic_threshold_by_level={"specialities": 0.8}
+    ).details
+    level = strict["by_concept_level"]["specialities"]
+    assert level["semantic_candidate_matches"] == 0
+    assert _ambiguous(level, "Risk Manager")["recommended_action"] == "REVIEW_AMBIGUOUS"
+    assert strict["semantic_threshold_by_level"] == {"specialities": 0.8}
+
+
+@pytest.mark.parametrize("value", [{"roles": 0.8}, {"specialities": 1.5}, [0.8], {"tags": "high"}])
+def test_invalid_semantic_threshold_by_level_reports_an_error(value):
+    assert _run(_datasets(), semantic_threshold_by_level=value).status == "error"

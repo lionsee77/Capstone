@@ -76,6 +76,11 @@ metrics:
       threshold: 90
       semantic_model: all-MiniLM-L6-v2
       semantic_threshold: 0.70
+      # SkillsFuture job roles are titles ("Risk Manager") while original
+      # specialities are skills ("Risk Management"); low meaning scores between
+      # them are mostly loose associations, so job roles need a stronger match.
+      semantic_threshold_by_level:
+        specialities: 0.80
       # ADD_CANDIDATE needs a low lexical score and, when the model is
       # installed, a low semantic score. Other non-matches are REVIEW_AMBIGUOUS.
       add_candidate_lexical_threshold: 60
