@@ -23,7 +23,7 @@ taxonomy_pipeline/
 │   │   ├── integrity.py              #   duplicates, orphans, dead ends
 │   │   ├── depth.py                  #   branching factor
 │   │   ├── breadth.py                #   coverage vs. a reference dataset
-│   │   ├── saturation.py             #   candidate-new concepts from an incoming taxonomy
+│   │   ├── saturation.py             #   new-items curve across ordered incoming sources
 │   │   └── registry.py               #   METRICS dict - register new metrics here
 │   ├── config.py                     # YAML/JSON pipeline config (datasets + metrics)
 │   ├── pipeline.py                   # run_pipeline(config) -> RunReport
@@ -61,13 +61,52 @@ This loads `backend/sql-files-nus/*.sql` (Ankit's original taxonomy) and
 `backend/skillsfuture/skillsfuture_taxonomy.sql` (the generated SkillsFuture
 taxonomy's `sf_*` tables), runs integrity + depth on each, evaluates both
 taxonomies against SSIC 2025 and SSOC 2024 for breadth, and compares
-SkillsFuture concepts against the original taxonomy for `saturation`. Its
-exact matches are found first, then lexical candidates, then optional semantic
-candidate equivalents at the same concept level. Semantic candidates are
-review evidence, not automatic additions. Concepts unmatched by all stages are
-ambiguous concepts for human review. Prints the full JSON report to stdout
+SkillsFuture concepts against the original taxonomy for `saturation` (see
+[below](#saturation-new-items-curve)). Prints the full JSON report to stdout
 and a one-line-per-metric summary to stderr; pass
 `--output report.json` to write the report to a file instead.
+
+## Saturation: new-items curve
+
+`saturation` measures how many genuinely new concepts each incoming source
+adds. List sources in order with `incoming: [skillsfuture, another, ...]`
+(a single name still works). Source *k* is compared against the baseline
+plus every concept from sources 1..*k*-1, so a falling rate across
+`details.curve` is the evidence the taxonomy is approaching saturation. The
+whole curve comes from one run; each run is already stored in SQLite.
+
+Named rows are grouped per level by a match key (normalised name, `&` ->
+`and`, `-isation` -> `-ization`, plural `s` dropped), so "Machine Learning"
+under two parents is one concept. Each concept goes through this funnel; the
+first rule that applies wins:
+
+| # | Check | Recommended action |
+|---|---|---|
+| 1 | Blank or placeholder name ("test", "new", ...) | listed in `skipped_invalid`, not counted |
+| 2 | Same match key at the same level | `SKIP_DUPLICATE` |
+| 3 | Close spelling (RapidFuzz >= `threshold`) and the sentence model agrees | `SKIP_DUPLICATE` |
+|   | Close spelling without model agreement | `REVIEW_AMBIGUOUS` (`reason: close_spelling_unconfirmed`) |
+| 4 | Semantic score >= `semantic_threshold` | `SKIP_SEMANTIC_DUPLICATE` |
+| 5 | Same match key at another level | `REVIEW_OTHER_LEVEL` |
+| 6 | Low lexical score and (no model, or low semantic score) | `ADD_CANDIDATE` |
+|   | Anything else | `REVIEW_AMBIGUOUS` (`reason: partial_similarity`) |
+
+Per step, `new_rate_min` = add candidates / concepts reviewed and
+`new_rate_max` = (add candidates + review items) / concepts reviewed.
+
+Concepts the integration team may add (`ADD_CANDIDATE`, `REVIEW_AMBIGUOUS`,
+`REVIEW_OTHER_LEVEL`) carry `parent_status` (`HAS_PARENT` / `NO_PARENT`),
+`parent_level`, `parent_count` and `parents`, resolved **inside their own
+source**: speciality -> category, category -> service, tag -> linked
+specialities. The SkillsFuture dump defines no services of its own, so its
+sectors (categories) are `NO_PARENT`.
+
+`details.overall` and `details.by_concept_level` keep their existing shape
+and describe the last source; `details.steps` holds the same block for every
+source and `details.curve` lists `{step, source, reviewed, add_candidates,
+review_ambiguous, new_rate_min, new_rate_max, cumulative_known_concepts}`.
+Matches also report `matched_source` and `baseline_status`; matches to
+inactive (`status='0'`) rows are counted in `matched_inactive`.
 
 ## Industry and occupational breadth
 
@@ -233,12 +272,9 @@ Ruff linting and the test suite run in CI (see the root
 
 ## Known gaps
 
-- **`saturation`** makes recommendations for each incoming concept: exact and
-  high-lexical matches become `SKIP_DUPLICATE`, high-semantic matches become
-  `SKIP_SEMANTIC_DUPLICATE`, low lexical and semantic scores become
-  `ADD_CANDIDATE`, and all other non-matches become `REVIEW_AMBIGUOUS`.
-  These are review recommendations, not database operations; semantic
-  equivalence still requires administrator confirmation.
+- **`saturation`** recommendations are review aids, not database
+  operations. Its thresholds are not yet calibrated against a hand-labelled
+  set of pairs, and with only SkillsFuture loaded the curve has one point.
 - **`breadth`** and the fuzzy layer of **`integrity`** use lexical
   (RapidFuzz) matching only. Saturation additionally supports an optional
   `sentence-transformers` embedding model for semantic candidates.

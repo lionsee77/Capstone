@@ -1,17 +1,35 @@
-"""Source-by-source taxonomy saturation through concept novelty.
+"""Taxonomy saturation: how many genuinely new concepts each incoming source adds.
 
-For every named category, speciality, and tag in an incoming taxonomy, find
-the closest concept at the same level in a baseline taxonomy. Exact normalized
-names are treated as represented; otherwise RapidFuzz supplies a lexical
-candidate. Optionally, a sentence-embedding model supplies a semantic
-candidate for concepts that remain unmatched. Concepts below both thresholds
-are *ambiguous*, not automatically confirmed additions: a reviewer decides
-whether they are truly new, out of scope, or semantic equivalents with
-different names.
+Incoming sources are compared in order. Source k is checked against the
+baseline plus every concept from sources 1..k-1, so a falling new-items rate
+across steps (the `curve`) is evidence the taxonomy is approaching saturation.
+
+Each unique incoming concept (named rows grouped by `match_key`) goes through
+a decision funnel; the first rule that applies wins:
+
+1. blank or placeholder name            -> skipped, not counted
+2. same match key at the same level     -> SKIP_DUPLICATE
+3. close spelling (lexical >= threshold)
+   - meaning model agrees               -> SKIP_DUPLICATE
+   - otherwise (or no model)            -> REVIEW_AMBIGUOUS
+4. semantic score >= semantic_threshold -> SKIP_SEMANTIC_DUPLICATE
+5. same match key at another level      -> REVIEW_OTHER_LEVEL
+6. low lexical and (no model or low semantic) -> ADD_CANDIDATE
+   anything else                        -> REVIEW_AMBIGUOUS
+
+Close spelling alone never skips a concept: "evaluation" vs "valuation" is a
+near-identical string with a different meaning. Every recommendation is a
+review aid, not a database operation.
+
+Concepts that may be added (ADD_CANDIDATE, REVIEW_AMBIGUOUS,
+REVIEW_OTHER_LEVEL) also carry their parents *within their own source*
+(speciality -> category, category -> service, tag -> linked specialities) so
+a downstream integration team knows what each one hangs off.
 """
 from __future__ import annotations
 
 import math
+import re
 from collections.abc import Iterable
 from typing import Any
 
@@ -26,8 +44,39 @@ from .integrity import normalize
 CONCEPT_LEVELS = ("categories", "specialities", "tags")
 SKIP_DUPLICATE = "SKIP_DUPLICATE"
 SKIP_SEMANTIC_DUPLICATE = "SKIP_SEMANTIC_DUPLICATE"
+REVIEW_OTHER_LEVEL = "REVIEW_OTHER_LEVEL"
 ADD_CANDIDATE = "ADD_CANDIDATE"
 REVIEW_AMBIGUOUS = "REVIEW_AMBIGUOUS"
+HAS_PARENT = "HAS_PARENT"
+NO_PARENT = "NO_PARENT"
+PARENT_LEVEL = {"categories": "services", "specialities": "categories", "tags": "specialities"}
+
+# Copied from (not imported from) `backend/audit/taxonomy_audit.py`, which
+# depends on mysql.connector - the same reason integrity.normalize is copied.
+PLACEHOLDERS = {
+    "arc", "dummy", "eee", "new", "new tag", "placeholder", "sample", "temp", "test",
+}
+
+_PLURAL_S = re.compile(r"(?<=\w{3})(?<!s)s\b")
+
+
+def match_key(name: Any) -> str:
+    """Normalized name used for exact matching: `normalize()` plus folding of
+    '&'/'and', British/American '-isation', and a trailing plural 's'. Both
+    sides of every comparison go through this, so crude plural stripping
+    ("analysis" -> "analysi") is harmless as long as it is consistent.
+    """
+    value = normalize(None if name is None else str(name))
+    value = value.replace("&", " and ").replace("isation", "ization")
+    value = re.sub(r"\s+", " ", value).strip()
+    return _PLURAL_S.sub("", value)
+
+
+def _is_valid_name(name: Any) -> bool:
+    if name is None:
+        return False
+    normalized = normalize(str(name))
+    return any(ch.isalnum() for ch in normalized) and normalized not in PLACEHOLDERS
 
 
 class SemanticMatcher:
@@ -54,166 +103,251 @@ class SemanticMatcher:
         return [(choices[index], round(float(scores[row, index]), 4)) for row, index in enumerate(best_indexes)]
 
 
-def _unique_named_rows(rows: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Keep one incoming row per normalized name so duplicate source rows do
-    not artificially lower the new-concept rate.
-    """
-    seen: set[str] = set()
-    unique = []
+def _group_concepts(rows: Iterable[dict[str, Any]]) -> tuple[dict[str, list[dict[str, Any]]], list[dict[str, Any]]]:
+    """Group valid named rows by match key (first-seen order), so a concept
+    repeated under several parents counts once. Returns (groups, invalid)."""
+    groups: dict[str, list[dict[str, Any]]] = {}
+    invalid = []
     for row in rows:
         name = row.get("name")
-        key = normalize(name)
-        if key and key not in seen:
-            seen.add(key)
-            unique.append(row)
-    return unique
+        if not _is_valid_name(name):
+            invalid.append({"incoming_id": row.get("id"), "incoming_name": name})
+            continue
+        groups.setdefault(match_key(name), []).append(row)
+    return groups, invalid
+
+
+class _Parents:
+    """Resolves each row's parents inside its own source dataset only."""
+
+    def __init__(self, dataset: TaxonomyDataset):
+        self.services = {row.get("id"): row for row in dataset.services}
+        self.categories = {row.get("id"): row for row in dataset.categories}
+        self.specialities = {row.get("id"): row for row in dataset.specialities}
+        self.tag_specialities: dict[Any, list[Any]] = {}
+        for link in dataset.speciality_tags:
+            self.tag_specialities.setdefault(link.get("tag_id"), []).append(link.get("speciality_id"))
+
+    def _lookup(self, level: str, row: dict[str, Any]) -> list[dict[str, Any] | None]:
+        if level == "categories":
+            return [self.services.get(row.get("service_id"))]
+        if level == "specialities":
+            return [self.categories.get(row.get("category_id"))]
+        return [self.specialities.get(sid) for sid in self.tag_specialities.get(row.get("id"), [])]
+
+    def classify(self, level: str, rows: list[dict[str, Any]]) -> dict[str, Any]:
+        parents: dict[Any, dict[str, Any]] = {}
+        for row in rows:
+            for parent in self._lookup(level, row):
+                if parent is not None and parent.get("id") not in parents:
+                    parents[parent.get("id")] = {"id": parent.get("id"), "name": parent.get("name")}
+        return {
+            "parent_status": HAS_PARENT if parents else NO_PARENT,
+            "parent_level": PARENT_LEVEL[level],
+            "parent_count": len(parents),
+            "parents": list(parents.values()),
+        }
+
+
+class _KnownPool:
+    """Every concept seen so far (baseline + earlier incoming sources), by level."""
+
+    def __init__(self):
+        self.by_level: dict[str, dict[str, dict[str, Any]]] = {level: {} for level in CONCEPT_LEVELS}
+
+    def add(self, source: str, dataset: TaxonomyDataset) -> None:
+        for level in CONCEPT_LEVELS:
+            known = self.by_level[level]
+            for key, rows in _group_concepts(getattr(dataset, level))[0].items():
+                if key not in known:
+                    row = rows[0]
+                    known[key] = {
+                        "source": source, "id": row.get("id"), "name": row.get("name"),
+                        "normalized": normalize(str(row.get("name"))), "status": row.get("status"),
+                    }
+
+    def size(self) -> int:
+        return sum(len(known) for known in self.by_level.values())
+
+    def other_level(self, level: str, key: str) -> tuple[str, dict[str, Any]] | None:
+        for other in CONCEPT_LEVELS:
+            if other != level and key in self.by_level[other]:
+                return other, self.by_level[other][key]
+        return None
+
+
+def _match_entry(row: dict[str, Any], known: dict[str, Any], action: str, **extra: Any) -> dict[str, Any]:
+    return {
+        "incoming_id": row.get("id"),
+        "incoming_name": str(row["name"]),
+        "baseline_id": known["id"],
+        "baseline_name": known["name"],
+        "matched_source": known["source"],
+        "baseline_status": known["status"],
+        **extra,
+        "recommended_action": action,
+    }
+
+
+def _is_inactive(entry: dict[str, Any]) -> bool:
+    return str(entry.get("baseline_status")) == "0"
+
+
+def _rate(count: int, total: int) -> float | None:
+    return round(count / total, 3) if total else None
 
 
 def _compare_level(
-    baseline_rows: list[dict[str, Any]],
+    level: str,
     incoming_rows: list[dict[str, Any]],
-    threshold: float,
+    pool: _KnownPool,
+    parents: _Parents,
+    p: dict[str, float],
     semantic_matcher: SemanticMatcher | None,
-    semantic_threshold: float,
-    add_candidate_lexical_threshold: float,
-    add_candidate_semantic_threshold: float,
 ) -> dict[str, Any]:
-    baseline = _unique_named_rows(baseline_rows)
-    incoming = _unique_named_rows(incoming_rows)
-    baseline_by_name = {normalize(row["name"]): row for row in baseline}
-    baseline_names = list(baseline_by_name)
+    groups, invalid = _group_concepts(incoming_rows)
+    known = pool.by_level[level]
+    known_keys = list(known)
 
     exact_matches: list[dict[str, Any]] = []
     fuzzy_matches: list[dict[str, Any]] = []
     semantic_matches: list[dict[str, Any]] = []
+    other_level_matches: list[dict[str, Any]] = []
     ambiguous: list[dict[str, Any]] = []
-    lexical_unmatched: list[tuple[dict[str, Any], str]] = []
 
-    for row in incoming:
-        original_name = str(row["name"])
-        normalized_name = normalize(original_name)
-        exact = baseline_by_name.get(normalized_name)
-        if exact:
-            exact_matches.append(
-                {
-                    "incoming_id": row.get("id"),
-                    "incoming_name": original_name,
-                    "baseline_id": exact.get("id"),
-                    "baseline_name": exact.get("name"),
-                    "score": 100.0,
-                    "recommended_action": SKIP_DUPLICATE,
-                }
-            )
+    remaining: list[tuple[str, list[dict[str, Any]]]] = []
+    for key, rows in groups.items():
+        if key in known:
+            exact_matches.append(_match_entry(rows[0], known[key], SKIP_DUPLICATE, score=100.0))
+        else:
+            remaining.append((key, rows))
+
+    lexical: list[tuple[str | None, float | None]] = [(None, None)] * len(remaining)
+    if remaining and known_keys:
+        scores = process.cdist([key for key, _ in remaining], known_keys, scorer=fuzz.ratio)
+        best_indexes = np.argmax(scores, axis=1)
+        lexical = [(known_keys[index], float(scores[i, index])) for i, index in enumerate(best_indexes)]
+
+    semantic: list[tuple[str | None, float | None]] = [(None, None)] * len(remaining)
+    if semantic_matcher and remaining and known_keys:
+        key_by_normalized = {known[key]["normalized"]: key for key in known_keys}
+        results = semantic_matcher.best_matches(
+            [normalize(str(rows[0]["name"])) for _, rows in remaining],
+            list(key_by_normalized),
+        )
+        semantic = [(key_by_normalized.get(name) if name else None, score) for name, score in results]
+
+    for (key, rows), (lex_key, lex_score), (sem_key, sem_score) in zip(remaining, lexical, semantic, strict=True):
+        row = rows[0]
+        semantic_agrees = sem_key is not None and sem_score is not None and sem_score >= p["semantic_threshold"]
+        close_spelling = lex_score is not None and lex_score >= p["threshold"]
+
+        if close_spelling and semantic_agrees:
+            fuzzy_matches.append(_match_entry(
+                row, known[lex_key], SKIP_DUPLICATE, score=round(lex_score, 1), semantic_score=sem_score,
+                semantic_baseline_name=known[sem_key]["name"],
+            ))
+            continue
+        if not close_spelling and semantic_agrees:
+            semantic_matches.append(_match_entry(
+                row, known[sem_key], SKIP_SEMANTIC_DUPLICATE, semantic_score=sem_score,
+                closest_lexical_baseline_name=known[lex_key]["name"] if lex_key else None,
+                closest_lexical_score=round(lex_score, 1) if lex_score is not None else None,
+            ))
             continue
 
-        lexical_unmatched.append((row, normalized_name))
-
-    lexical_matches: list[tuple[str | None, float | None]]
-    if lexical_unmatched:
-        scores = process.cdist(
-            [normalized_name for _, normalized_name in lexical_unmatched],
-            baseline_names,
-            scorer=fuzz.ratio,
-        )
-        best_indexes = np.argmax(scores, axis=1)
-        lexical_matches = [
-            (baseline_names[index], float(scores[row_index, index]))
-            for row_index, index in enumerate(best_indexes)
-        ]
-    else:
-        lexical_matches = []
-
-    semantic_unmatched: list[tuple[dict[str, Any], tuple[str | None, float | None]]] = []
-    for (row, _), (lexical_name, lexical_score) in zip(lexical_unmatched, lexical_matches, strict=True):
-        original_name = str(row["name"])
-        if lexical_name is not None and lexical_score is not None and lexical_score >= threshold:
-            matched = baseline_by_name[lexical_name]
-            fuzzy_matches.append(
-                {
-                    "incoming_id": row.get("id"),
-                    "incoming_name": original_name,
-                    "baseline_id": matched.get("id"),
-                    "baseline_name": matched.get("name"),
-                    "score": round(lexical_score, 1),
-                    "recommended_action": SKIP_DUPLICATE,
-                }
-            )
+        parent_info = parents.classify(level, rows)
+        incoming_ids = [r.get("id") for r in rows]
+        if close_spelling:
+            action, reason = REVIEW_AMBIGUOUS, "close_spelling_unconfirmed"
         else:
-            semantic_unmatched.append((row, (lexical_name, lexical_score)))
+            other = pool.other_level(level, key)
+            if other is not None:
+                other_level, other_known = other
+                other_level_matches.append({
+                    **_match_entry(row, other_known, REVIEW_OTHER_LEVEL, baseline_level=other_level),
+                    "incoming_ids": incoming_ids, **parent_info,
+                })
+                continue
+            low_lexical = lex_score is None or lex_score < p["add_candidate_lexical_threshold"]
+            low_semantic = sem_score is None or sem_score < p["add_candidate_semantic_threshold"]
+            if low_lexical and low_semantic:
+                action, reason = ADD_CANDIDATE, "no_close_match"
+            else:
+                action, reason = REVIEW_AMBIGUOUS, "partial_similarity"
+        ambiguous.append({
+            "incoming_id": row.get("id"),
+            "incoming_ids": incoming_ids,
+            "incoming_name": str(row["name"]),
+            "closest_baseline_name": known[lex_key]["name"] if lex_key else None,
+            "closest_baseline_score": round(lex_score, 1) if lex_score is not None else None,
+            "closest_semantic_baseline_name": known[sem_key]["name"] if sem_key else None,
+            "closest_semantic_score": sem_score,
+            "reason": reason,
+            **parent_info,
+            "recommended_action": action,
+        })
 
-    semantic_results = (
-        semantic_matcher.best_matches(
-            [normalize(str(row["name"])) for row, _ in semantic_unmatched], baseline_names
-        )
-        if semantic_matcher
-        else [(None, None)] * len(semantic_unmatched)
-    )
-    for (row, lexical_best), (semantic_name, semantic_score) in zip(
-        semantic_unmatched, semantic_results, strict=True
-    ):
-        original_name = str(row["name"])
-        if semantic_name is not None and semantic_score is not None and semantic_score >= semantic_threshold:
-            matched = baseline_by_name[semantic_name]
-            semantic_matches.append(
-                {
-                    "incoming_id": row.get("id"),
-                    "incoming_name": original_name,
-                    "baseline_id": matched.get("id"),
-                    "baseline_name": matched.get("name"),
-                    "semantic_score": semantic_score,
-                    "closest_lexical_baseline_name": lexical_best[0] if lexical_best else None,
-                    "closest_lexical_score": round(float(lexical_best[1]), 1) if lexical_best else None,
-                    "recommended_action": SKIP_SEMANTIC_DUPLICATE,
-                }
-            )
-        else:
-            low_lexical = (
-                lexical_best[1] is not None and lexical_best[1] < add_candidate_lexical_threshold
-            )
-            low_semantic = (
-                semantic_score is not None and semantic_score < add_candidate_semantic_threshold
-            )
-            ambiguous.append(
-                {
-                    "incoming_id": row.get("id"),
-                    "incoming_name": original_name,
-                    "closest_baseline_name": lexical_best[0] if lexical_best else None,
-                    "closest_baseline_score": round(float(lexical_best[1]), 1) if lexical_best else None,
-                    "closest_semantic_baseline_name": semantic_name,
-                    "closest_semantic_score": semantic_score,
-                    "recommended_action": ADD_CANDIDATE if low_lexical and low_semantic else REVIEW_AMBIGUOUS,
-                }
-            )
-
-    reviewed = len(incoming)
-    ambiguous_count = len(ambiguous)
-    action_counts = {
-        SKIP_DUPLICATE: len(exact_matches) + len(fuzzy_matches),
-        SKIP_SEMANTIC_DUPLICATE: len(semantic_matches),
-        ADD_CANDIDATE: sum(item["recommended_action"] == ADD_CANDIDATE for item in ambiguous),
-        REVIEW_AMBIGUOUS: sum(item["recommended_action"] == REVIEW_AMBIGUOUS for item in ambiguous),
-    }
+    reviewed = len(groups)
+    add_count = sum(item["recommended_action"] == ADD_CANDIDATE for item in ambiguous)
+    review_count = len(ambiguous) - add_count
+    candidates = ambiguous + other_level_matches
+    matches = exact_matches + fuzzy_matches + semantic_matches + other_level_matches
     return {
         "relevant_concepts_reviewed": reviewed,
         "exact_matches": len(exact_matches),
         "fuzzy_candidate_matches": len(fuzzy_matches),
         "semantic_candidate_matches": len(semantic_matches),
-        "ambiguous": ambiguous_count,
-        "ambiguous_rate": round(ambiguous_count / reviewed, 3) if reviewed else None,
-        "recommended_action_counts": action_counts,
+        "other_level_matches": len(other_level_matches),
+        "ambiguous": len(ambiguous),
+        "ambiguous_rate": _rate(len(ambiguous), reviewed),
+        "new_rate_min": _rate(add_count, reviewed),
+        "new_rate_max": _rate(add_count + review_count, reviewed),
+        "matched_inactive": sum(_is_inactive(entry) for entry in matches),
+        "skipped_invalid": invalid,
+        "recommended_action_counts": {
+            SKIP_DUPLICATE: len(exact_matches) + len(fuzzy_matches),
+            SKIP_SEMANTIC_DUPLICATE: len(semantic_matches),
+            REVIEW_OTHER_LEVEL: len(other_level_matches),
+            ADD_CANDIDATE: add_count,
+            REVIEW_AMBIGUOUS: review_count,
+        },
+        "parent_status_counts": {
+            HAS_PARENT: sum(item["parent_status"] == HAS_PARENT for item in candidates),
+            NO_PARENT: sum(item["parent_status"] == NO_PARENT for item in candidates),
+        },
         "exact_match_details": exact_matches,
         "fuzzy_match_details": fuzzy_matches,
         "semantic_match_details": semantic_matches,
+        "other_level_match_details": other_level_matches,
         "ambiguous_concepts": ambiguous,
     }
+
+
+def _validated_float(p: dict[str, Any], name: str, low: float, high: float) -> float:
+    value = float(p[name])
+    if not math.isfinite(value) or not low <= value <= high:
+        raise ValueError(f"{name} must be finite and between {low:g} and {high:g}")
+    return value
+
+
+def _incoming_names(value: Any, baseline: Any) -> list[str]:
+    names = [value] if isinstance(value, str) else value
+    if not isinstance(names, list) or not names or not all(isinstance(n, str) and n for n in names):
+        raise ValueError("incoming must be a dataset name or a non-empty list of dataset names")
+    if len(set(names)) != len(names):
+        raise ValueError(f"incoming lists a dataset more than once: {names}")
+    if baseline in names:
+        raise ValueError(f"incoming must not include the baseline dataset {baseline!r}")
+    return names
 
 
 class SaturationMetric(Metric):
     id = "saturation"
     description = (
-        "Incoming-source novelty against a baseline taxonomy. Uses normalized exact matches and "
-        "RapidFuzz lexical matches, plus optional sentence-embedding semantic candidates; unmatched "
-        "concepts with no high-confidence match are ambiguous and require review."
+        "New-concept rate of each incoming source, in order, against the baseline plus earlier sources. "
+        "Exact/normalized matches are skipped; close spellings need semantic agreement; the rest are "
+        "add candidates or review items, with their parents in their own source."
     )
     default_params = {
         "baseline": None,
@@ -227,100 +361,108 @@ class SaturationMetric(Metric):
 
     def run(self, datasets: dict[str, LoadedDataset], params: dict[str, Any]) -> MetricResult:
         p = self.resolve_params(params)
-        resolved = self.require_datasets(
-            datasets,
-            {"baseline": p["baseline"], "incoming": p["incoming"]},
-            {"baseline": TaxonomyDataset, "incoming": TaxonomyDataset},
-        )
+        try:
+            incoming_names = _incoming_names(p["incoming"], p["baseline"])
+        except ValueError as exc:
+            return MetricResult(metric_id=self.id, status="error", summary=str(exc))
+        roles = {"baseline": p["baseline"], **{f"incoming[{i}]": n for i, n in enumerate(incoming_names)}}
+        resolved = self.require_datasets(datasets, roles, {role: TaxonomyDataset for role in roles})
         if isinstance(resolved, MetricResult):
             return resolved
 
         try:
-            threshold = float(p["threshold"])
-            if not math.isfinite(threshold) or not 0 <= threshold <= 100:
-                raise ValueError("threshold must be finite and between 0 and 100")
-            semantic_threshold = float(p["semantic_threshold"])
-            if not math.isfinite(semantic_threshold) or not -1 <= semantic_threshold <= 1:
-                raise ValueError("semantic_threshold must be finite and between -1 and 1")
-            add_candidate_lexical_threshold = float(p["add_candidate_lexical_threshold"])
-            if not math.isfinite(add_candidate_lexical_threshold) or not 0 <= add_candidate_lexical_threshold <= 100:
-                raise ValueError("add_candidate_lexical_threshold must be finite and between 0 and 100")
-            add_candidate_semantic_threshold = float(p["add_candidate_semantic_threshold"])
-            if not math.isfinite(add_candidate_semantic_threshold) or not -1 <= add_candidate_semantic_threshold <= 1:
-                raise ValueError("add_candidate_semantic_threshold must be finite and between -1 and 1")
+            thresholds = {
+                "threshold": _validated_float(p, "threshold", 0, 100),
+                "semantic_threshold": _validated_float(p, "semantic_threshold", -1, 1),
+                "add_candidate_lexical_threshold": _validated_float(p, "add_candidate_lexical_threshold", 0, 100),
+                "add_candidate_semantic_threshold": _validated_float(p, "add_candidate_semantic_threshold", -1, 1),
+            }
         except (TypeError, ValueError) as exc:
             return MetricResult(metric_id=self.id, status="error", summary=str(exc))
 
-        baseline, incoming = resolved["baseline"], resolved["incoming"]
+        baseline = resolved["baseline"]
+        incoming = [resolved[f"incoming[{i}]"] for i in range(len(incoming_names))]
+        for source in incoming:
+            if not any(_group_concepts(getattr(source, level))[0] for level in CONCEPT_LEVELS):
+                return MetricResult(metric_id=self.id, status="error", summary=(
+                    f"{source.name} has no named categories, specialities, or tags to compare; "
+                    "check the dataset source or table_map."
+                ))
         empty_baseline_levels = [
-            level
-            for level in CONCEPT_LEVELS
-            if _unique_named_rows(getattr(incoming, level)) and not _unique_named_rows(getattr(baseline, level))
+            level for level in CONCEPT_LEVELS
+            if not _group_concepts(getattr(baseline, level))[0]
+            and any(_group_concepts(getattr(source, level))[0] for source in incoming)
         ]
         if empty_baseline_levels:
-            return MetricResult(
-                metric_id=self.id,
-                status="error",
-                summary=(
-                    f"{baseline.name} has no named records for {', '.join(empty_baseline_levels)} while "
-                    f"{incoming.name} does; check the dataset source or table_map."
-                ),
-            )
+            return MetricResult(metric_id=self.id, status="error", summary=(
+                f"{baseline.name} has no named records for {', '.join(empty_baseline_levels)} while "
+                "an incoming source does; check the dataset source or table_map."
+            ))
         try:
             semantic_matcher = SemanticMatcher(str(p["semantic_model"])) if p["semantic_model"] else None
         except ValueError as exc:
             return MetricResult(metric_id=self.id, status="error", summary=str(exc))
-        by_level = {
-            level: _compare_level(
-                getattr(baseline, level),
-                getattr(incoming, level),
-                threshold,
-                semantic_matcher,
-                semantic_threshold,
-                add_candidate_lexical_threshold,
-                add_candidate_semantic_threshold,
-            )
-            for level in CONCEPT_LEVELS
-        }
-        reviewed = sum(result["relevant_concepts_reviewed"] for result in by_level.values())
-        if reviewed == 0:
-            return MetricResult(
-                metric_id=self.id,
-                status="error",
-                summary=(
-                    f"{incoming.name} has no named categories, specialities, or tags to compare; "
-                    "check the dataset source or table_map."
-                ),
-                details={
-                    "baseline": baseline.name,
-                    "incoming": incoming.name,
-                    "by_concept_level": by_level,
+
+        pool = _KnownPool()
+        pool.add(baseline.name, baseline)
+        steps, curve = [], []
+        for number, (name, source) in enumerate(zip(incoming_names, incoming, strict=True), start=1):
+            parents = _Parents(source)
+            by_level = {
+                level: _compare_level(level, getattr(source, level), pool, parents, thresholds, semantic_matcher)
+                for level in CONCEPT_LEVELS
+            }
+            pool.add(name, source)
+            reviewed = sum(result["relevant_concepts_reviewed"] for result in by_level.values())
+            ambiguous = sum(result["ambiguous"] for result in by_level.values())
+            adds = sum(result["recommended_action_counts"][ADD_CANDIDATE] for result in by_level.values())
+            steps.append({
+                "source": name,
+                "overall": {
+                    "relevant_concepts_reviewed": reviewed,
+                    "ambiguous": ambiguous,
+                    "ambiguous_rate": _rate(ambiguous, reviewed),
                 },
-            )
-        ambiguous = sum(result["ambiguous"] for result in by_level.values())
-        rate = round(ambiguous / reviewed, 3)
+                "by_concept_level": by_level,
+            })
+            curve.append({
+                "step": number,
+                "source": name,
+                "reviewed": reviewed,
+                "add_candidates": adds,
+                "review_ambiguous": ambiguous - adds,
+                "new_rate_min": _rate(adds, reviewed),
+                "new_rate_max": _rate(ambiguous, reviewed),
+                "cumulative_known_concepts": pool.size(),
+            })
+
+        last = curve[-1]
         summary = (
-            f"{incoming.name} against {baseline.name}: {ambiguous}/{reviewed} "
-            f"({rate:.1%}) concepts have no high-confidence match and require review."
+            f"{last['source']} against {baseline.name}"
+            f"{' + earlier sources' if len(curve) > 1 else ''}: new-items rate "
+            f"{last['new_rate_min']:.1%}-{last['new_rate_max']:.1%} of {last['reviewed']} concepts "
+            f"({last['add_candidates']} add candidates, {last['review_ambiguous']} need review)."
         )
+        if len(curve) > 1:
+            summary += " Curve: " + ", ".join(
+                f"{point['source']} {point['new_rate_min']:.1%}-{point['new_rate_max']:.1%}" for point in curve
+            ) + "."
         return MetricResult(
             metric_id=self.id,
             summary=summary,
             details={
                 "baseline": baseline.name,
-                "incoming": incoming.name,
-                "threshold": threshold,
-                    "semantic_model": p["semantic_model"],
-                    "semantic_threshold": semantic_threshold if semantic_matcher else None,
-                    "add_candidate_lexical_threshold": add_candidate_lexical_threshold,
-                    "add_candidate_semantic_threshold": (
-                        add_candidate_semantic_threshold if semantic_matcher else None
-                    ),
-                "overall": {
-                    "relevant_concepts_reviewed": reviewed,
-                    "ambiguous": ambiguous,
-                    "ambiguous_rate": rate,
-                },
-                "by_concept_level": by_level,
+                "incoming": incoming_names,
+                "threshold": thresholds["threshold"],
+                "semantic_model": p["semantic_model"],
+                "semantic_threshold": thresholds["semantic_threshold"] if semantic_matcher else None,
+                "add_candidate_lexical_threshold": thresholds["add_candidate_lexical_threshold"],
+                "add_candidate_semantic_threshold": (
+                    thresholds["add_candidate_semantic_threshold"] if semantic_matcher else None
+                ),
+                "overall": steps[-1]["overall"],
+                "by_concept_level": steps[-1]["by_concept_level"],
+                "curve": curve,
+                "steps": steps,
             },
         )
