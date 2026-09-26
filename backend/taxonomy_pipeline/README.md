@@ -127,12 +127,15 @@ job titles scored 0.70-0.75 against loosely related skills ("Head of Sales"
 Per step, `new_rate_min` = add candidates / concepts reviewed and
 `new_rate_max` = (add candidates + review items) / concepts reviewed.
 
-Flagged concepts (`ADD_CANDIDATE`, `REVIEW_AMBIGUOUS`, `REVIEW_NEW_PLACEMENT`)
-carry `parent_status` (`HAS_PARENT` / `NO_PARENT`), `parent_level`,
-`parent_count` and `parents`, resolved **inside their own source**:
-speciality -> category, category -> service, tag -> linked specialities. The
-SkillsFuture dump defines no services of its own, so its sectors
-(categories) are `NO_PARENT`.
+Every incoming concept - duplicates included - carries `parent_status`
+(`HAS_PARENT` / `NO_PARENT`), `parent_level`, `parent_count` and `parents`,
+resolved **inside its own source**: speciality -> category, category ->
+service, tag -> linked specialities. The SkillsFuture dump defines no
+services of its own, so its sectors (categories) are `NO_PARENT`.
+`parent_status_counts` covers every reviewed concept;
+`parent_status_counts_flagged` covers only `ADD_CANDIDATE`,
+`REVIEW_AMBIGUOUS` and `REVIEW_NEW_PLACEMENT`. For a duplicate skill, the
+`parents` list shows which job roles link to a tag we already have.
 
 `details.overall` and `details.by_concept_level` keep their existing shape
 and describe the last source; `details.steps` holds the same block for every

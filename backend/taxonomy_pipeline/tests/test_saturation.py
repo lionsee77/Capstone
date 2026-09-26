@@ -288,6 +288,7 @@ def test_parent_status_is_resolved_inside_the_incoming_source():
     assert (hull["parent_status"], hull["parent_count"]) == ("HAS_PARENT", 1)
     assert _ambiguous(levels["tags"], "Knot Tying")["parent_status"] == "NO_PARENT"
     assert levels["specialities"]["parent_status_counts"] == {"HAS_PARENT": 1, "NO_PARENT": 1}
+    assert levels["specialities"]["parent_status_counts_flagged"] == {"HAS_PARENT": 1, "NO_PARENT": 1}
 
 
 def test_concept_known_at_another_level_is_a_duplicate():
@@ -526,3 +527,20 @@ def test_stricter_meaning_threshold_for_one_level(monkeypatch):
 @pytest.mark.parametrize("value", [{"roles": 0.8}, {"specialities": 1.5}, [0.8], {"tags": "high"}])
 def test_invalid_semantic_threshold_by_level_reports_an_error(value):
     assert _run(_datasets(), semantic_threshold_by_level=value).status == "error"
+
+
+def test_duplicates_also_carry_their_incoming_parents():
+    incoming = {
+        **_sf_roles(("Machine Learning", "Healthcare"), ("Data Scientist", "Finance")),
+        "tags": [{"id": 1, "name": "Python"}],
+        "speciality_tags": [{"id": 1, "speciality_id": 100, "tag_id": 1}, {"id": 2, "speciality_id": 101, "tag_id": 1}],
+    }
+    levels = _run(_pair(_HEALTH_ML, incoming)).details["by_concept_level"]
+    role = levels["specialities"]["exact_match_details"][0]
+    assert (role["parent_status"], role["parents"]) == ("HAS_PARENT", [{"id": 1, "name": "Healthcare"}])
+    tag = levels["tags"]["exact_match_details"][0]
+    assert tag["parent_level"] == "specialities"
+    assert [parent["name"] for parent in tag["parents"]] == ["Machine Learning", "Data Scientist"]
+    # Every reviewed tag counts, not only flagged ones.
+    assert levels["tags"]["parent_status_counts"] == {"HAS_PARENT": 1, "NO_PARENT": 0}
+    assert levels["tags"]["parent_status_counts_flagged"] == {"HAS_PARENT": 0, "NO_PARENT": 0}

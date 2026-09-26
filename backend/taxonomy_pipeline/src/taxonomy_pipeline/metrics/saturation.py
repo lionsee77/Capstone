@@ -20,8 +20,9 @@ Close spelling alone never counts: "evaluation" is not "valuation".
 
 New placements are reported separately and do not count toward the
 new-items rate. Every recommendation is a review aid, not a database
-operation; flagged entries carry their parents so a downstream integration
-team knows where each one hangs off.
+operation. Every incoming concept - duplicates included - carries its parents
+within its own source, so a downstream integration team knows where each one
+hangs off (e.g. which SkillsFuture job roles link to a skill we already have).
 """
 from __future__ import annotations
 
@@ -219,6 +220,10 @@ def _match_entry(
 
 def _is_inactive(entry: dict[str, Any]) -> bool:
     return str(entry.get("baseline_status")) == "0"
+
+
+def _parent_status_counts(entries: list[dict[str, Any]]) -> dict[str, int]:
+    return {status: sum(entry["parent_status"] == status for entry in entries) for status in (HAS_PARENT, NO_PARENT)}
 
 
 def _rate(count: int, total: int) -> float | None:
@@ -443,7 +448,11 @@ def _compare_level(
 
         action = SKIP_SEMANTIC_DUPLICATE if match_type == "semantic" else SKIP_DUPLICATE
         skips_by_type[match_type].append(
-            _match_entry(row, known_level, known_entry, action, **extra, parent_check=parent_check)
+            {
+                **_match_entry(row, known_level, known_entry, action, **extra, parent_check=parent_check),
+                "incoming_ids": [r.get("id") for r in rows],
+                **parent_info,
+            }
         )
 
     reviewed = len(groups)
@@ -474,10 +483,8 @@ def _compare_level(
             ADD_CANDIDATE: add_count,
             REVIEW_AMBIGUOUS: review_count,
         },
-        "parent_status_counts": {
-            HAS_PARENT: sum(item["parent_status"] == HAS_PARENT for item in flagged),
-            NO_PARENT: sum(item["parent_status"] == NO_PARENT for item in flagged),
-        },
+        "parent_status_counts": _parent_status_counts(matches + ambiguous),
+        "parent_status_counts_flagged": _parent_status_counts(flagged),
         "exact_match_details": exact_matches,
         "fuzzy_match_details": fuzzy_matches,
         "semantic_match_details": semantic_matches,
