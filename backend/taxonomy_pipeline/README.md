@@ -77,19 +77,29 @@ whole curve comes from one run; each run is already stored in SQLite.
 
 Named rows are grouped per level by a match key (normalised name, `&` ->
 `and`, `-isation` -> `-ization`, plural `s` dropped), so "Machine Learning"
-under two parents is one concept. Each concept goes through this funnel; the
-first rule that applies wins:
+under two parents is one concept.
 
-| # | Check | Recommended action |
-|---|---|---|
-| 1 | Blank or placeholder name ("test", "new", ...) | listed in `skipped_invalid`, not counted |
-| 2 | Same match key at the same level | `SKIP_DUPLICATE` |
-| 3 | Close spelling (RapidFuzz >= `threshold`) and the sentence model agrees | `SKIP_DUPLICATE` |
-|   | Close spelling without model agreement | `REVIEW_AMBIGUOUS` (`reason: close_spelling_unconfirmed`) |
-| 4 | Semantic score >= `semantic_threshold` | `SKIP_SEMANTIC_DUPLICATE` |
-| 5 | Same match key at another level | `REVIEW_OTHER_LEVEL` |
-| 6 | Low lexical score and (no model, or low semantic score) | `ADD_CANDIDATE` |
-|   | Anything else | `REVIEW_AMBIGUOUS` (`reason: partial_similarity`) |
+Sources don't use levels the same way (original specialities are skills,
+SkillsFuture specialities are job titles and its tags are skills), so each
+concept is compared against its own level **and** the other levels of
+everything seen so far. Evidence tiers run strongest first and the first hit
+wins; within a tier a same-level match beats one at another level:
+
+| Tier | Evidence | Same level | Other level |
+|---|---|---|---|
+| 0 | Blank or placeholder name ("test", "new", ...) | listed in `skipped_invalid`, not counted | - |
+| A | Same match key | `SKIP_DUPLICATE` | `REVIEW_OTHER_LEVEL` (`match_type: exact`) |
+| B | Close spelling (RapidFuzz >= `threshold`) and the sentence model agrees | `SKIP_DUPLICATE` | `REVIEW_OTHER_LEVEL` (`close_spelling`) |
+| C | Semantic score >= `semantic_threshold` | `SKIP_SEMANTIC_DUPLICATE` | `REVIEW_OTHER_LEVEL` (`semantic`) |
+| D | Close spelling at any level without model agreement | `REVIEW_AMBIGUOUS` (`close_spelling_unconfirmed`) | same |
+| E | Low lexical and (no model, or low semantic) at **every** level | `ADD_CANDIDATE` | same |
+| F | Anything else | `REVIEW_AMBIGUOUS` (`partial_similarity`) | same |
+
+`REVIEW_OTHER_LEVEL` concepts are already known, so they are not counted as
+new, but they are never skipped automatically. Set `cross_level: false` for a
+strict level-by-level comparison (useful to show the difference it makes).
+Ambiguous concepts report the closest match at any level with
+`closest_baseline_level` / `closest_semantic_baseline_level`.
 
 Per step, `new_rate_min` = add candidates / concepts reviewed and
 `new_rate_max` = (add candidates + review items) / concepts reviewed.

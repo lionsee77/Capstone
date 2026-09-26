@@ -169,11 +169,16 @@ class _KnownPool:
     def size(self) -> int:
         return sum(len(known) for known in self.by_level.values())
 
-    def other_level(self, level: str, key: str) -> tuple[str, dict[str, Any]] | None:
-        for other in CONCEPT_LEVELS:
-            if other != level and key in self.by_level[other]:
-                return other, self.by_level[other][key]
-        return None
+    def candidates(self, level: str, *, other_levels: bool) -> dict[str, tuple[str, dict[str, Any]]]:
+        """Known concepts to compare a `level` concept against, as key -> (level, entry):
+        that level alone, or the other levels combined (a key found at two other
+        levels resolves to the first in CONCEPT_LEVELS order)."""
+        levels = [other for other in CONCEPT_LEVELS if other != level] if other_levels else [level]
+        found: dict[str, tuple[str, dict[str, Any]]] = {}
+        for candidate_level in levels:
+            for key, entry in self.by_level[candidate_level].items():
+                found.setdefault(key, (candidate_level, entry))
+        return found
 
 
 def _match_entry(row: dict[str, Any], known: dict[str, Any], action: str, **extra: Any) -> dict[str, Any]:
@@ -197,17 +202,123 @@ def _rate(count: int, total: int) -> float | None:
     return round(count / total, 3) if total else None
 
 
+class _Evidence:
+    """Best exact / lexical / semantic match of one concept within one candidate set.
+    Each match is (level, known entry, score), or None."""
+
+    __slots__ = ("exact", "lexical", "semantic")
+
+    def __init__(self):
+        self.exact: tuple[str, dict[str, Any], float] | None = None
+        self.lexical: tuple[str, dict[str, Any], float] | None = None
+        self.semantic: tuple[str, dict[str, Any], float] | None = None
+
+    def close_spelling(self, p: dict[str, Any]) -> bool:
+        return self.lexical is not None and self.lexical[2] >= p["threshold"]
+
+    def semantic_agrees(self, p: dict[str, Any]) -> bool:
+        return self.semantic is not None and self.semantic[2] >= p["semantic_threshold"]
+
+
+def _gather_evidence(
+    concepts: list[tuple[str, list[dict[str, Any]]]],
+    candidates: dict[str, tuple[str, dict[str, Any]]],
+    semantic_matcher: SemanticMatcher | None,
+) -> list[_Evidence]:
+    evidence = [_Evidence() for _ in concepts]
+    if not concepts or not candidates:
+        return evidence
+    keys = list(candidates)
+    for item, (key, _) in zip(evidence, concepts, strict=True):
+        if key in candidates:
+            item.exact = (*candidates[key], 100.0)
+
+    scores = process.cdist([key for key, _ in concepts], keys, scorer=fuzz.ratio)
+    for item, row_scores in zip(evidence, scores, strict=True):
+        index = int(np.argmax(row_scores))
+        item.lexical = (*candidates[keys[index]], float(row_scores[index]))
+
+    if semantic_matcher:
+        key_by_normalized: dict[str, str] = {}
+        for key in keys:
+            key_by_normalized.setdefault(candidates[key][1]["normalized"], key)
+        results = semantic_matcher.best_matches(
+            [normalize(str(rows[0]["name"])) for _, rows in concepts], list(key_by_normalized)
+        )
+        for item, (name, score) in zip(evidence, results, strict=True):
+            if name in key_by_normalized and score is not None:
+                item.semantic = (*candidates[key_by_normalized[name]], score)
+    return evidence
+
+
+def _best(*matches: tuple[str, dict[str, Any], float] | None) -> tuple[str, dict[str, Any], float] | None:
+    """Highest-scoring match; earlier arguments (the same level) win ties."""
+    best = None
+    for match in matches:
+        if match is not None and (best is None or match[2] > best[2]):
+            best = match
+    return best
+
+
+def _other_level_entry(
+    row: dict[str, Any], incoming_ids: list[Any], match_type: str,
+    match: tuple[str, dict[str, Any], float], other: _Evidence, parent_info: dict[str, Any],
+) -> dict[str, Any]:
+    other_level, other_known, score = match
+    return {
+        **_match_entry(
+            row, other_known, REVIEW_OTHER_LEVEL, baseline_level=other_level, match_type=match_type,
+            score=None if match_type == "semantic" else round(score, 1),
+            semantic_score=other.semantic[2] if other.semantic else None,
+        ),
+        "incoming_ids": incoming_ids,
+        **parent_info,
+    }
+
+
+def _ambiguous_entry(
+    row: dict[str, Any], incoming_ids: list[Any], same: _Evidence, other: _Evidence,
+    parent_info: dict[str, Any], p: dict[str, Any],
+) -> dict[str, Any]:
+    """No confident match at any level: ADD_CANDIDATE only when nothing at any
+    level is even moderately close, otherwise REVIEW_AMBIGUOUS."""
+    lexical_best = _best(same.lexical, other.lexical)
+    semantic_best = _best(same.semantic, other.semantic)
+    if same.close_spelling(p) or other.close_spelling(p):
+        action, reason = REVIEW_AMBIGUOUS, "close_spelling_unconfirmed"
+    else:
+        low_lexical = lexical_best is None or lexical_best[2] < p["add_candidate_lexical_threshold"]
+        low_semantic = semantic_best is None or semantic_best[2] < p["add_candidate_semantic_threshold"]
+        if low_lexical and low_semantic:
+            action, reason = ADD_CANDIDATE, "no_close_match"
+        else:
+            action, reason = REVIEW_AMBIGUOUS, "partial_similarity"
+    return {
+        "incoming_id": row.get("id"),
+        "incoming_ids": incoming_ids,
+        "incoming_name": str(row["name"]),
+        "closest_baseline_name": lexical_best[1]["name"] if lexical_best else None,
+        "closest_baseline_score": round(lexical_best[2], 1) if lexical_best else None,
+        "closest_baseline_level": lexical_best[0] if lexical_best else None,
+        "closest_semantic_baseline_name": semantic_best[1]["name"] if semantic_best else None,
+        "closest_semantic_score": semantic_best[2] if semantic_best else None,
+        "closest_semantic_baseline_level": semantic_best[0] if semantic_best else None,
+        "reason": reason,
+        **parent_info,
+        "recommended_action": action,
+    }
+
+
 def _compare_level(
     level: str,
     incoming_rows: list[dict[str, Any]],
     pool: _KnownPool,
     parents: _Parents,
-    p: dict[str, float],
+    p: dict[str, Any],
     semantic_matcher: SemanticMatcher | None,
 ) -> dict[str, Any]:
     groups, invalid = _group_concepts(incoming_rows)
     known = pool.by_level[level]
-    known_keys = list(known)
 
     exact_matches: list[dict[str, Any]] = []
     fuzzy_matches: list[dict[str, Any]] = []
@@ -222,71 +333,40 @@ def _compare_level(
         else:
             remaining.append((key, rows))
 
-    lexical: list[tuple[str | None, float | None]] = [(None, None)] * len(remaining)
-    if remaining and known_keys:
-        scores = process.cdist([key for key, _ in remaining], known_keys, scorer=fuzz.ratio)
-        best_indexes = np.argmax(scores, axis=1)
-        lexical = [(known_keys[index], float(scores[i, index])) for i, index in enumerate(best_indexes)]
+    same_evidence = _gather_evidence(remaining, pool.candidates(level, other_levels=False), semantic_matcher)
+    other_candidates = pool.candidates(level, other_levels=True) if p["cross_level"] else {}
+    other_evidence = _gather_evidence(remaining, other_candidates, semantic_matcher)
 
-    semantic: list[tuple[str | None, float | None]] = [(None, None)] * len(remaining)
-    if semantic_matcher and remaining and known_keys:
-        key_by_normalized = {known[key]["normalized"]: key for key in known_keys}
-        results = semantic_matcher.best_matches(
-            [normalize(str(rows[0]["name"])) for _, rows in remaining],
-            list(key_by_normalized),
-        )
-        semantic = [(key_by_normalized.get(name) if name else None, score) for name, score in results]
-
-    for (key, rows), (lex_key, lex_score), (sem_key, sem_score) in zip(remaining, lexical, semantic, strict=True):
+    for (_, rows), same, other in zip(remaining, same_evidence, other_evidence, strict=True):
         row = rows[0]
-        semantic_agrees = sem_key is not None and sem_score is not None and sem_score >= p["semantic_threshold"]
-        close_spelling = lex_score is not None and lex_score >= p["threshold"]
-
-        if close_spelling and semantic_agrees:
-            fuzzy_matches.append(_match_entry(
-                row, known[lex_key], SKIP_DUPLICATE, score=round(lex_score, 1), semantic_score=sem_score,
-                semantic_baseline_name=known[sem_key]["name"],
-            ))
-            continue
-        if not close_spelling and semantic_agrees:
-            semantic_matches.append(_match_entry(
-                row, known[sem_key], SKIP_SEMANTIC_DUPLICATE, semantic_score=sem_score,
-                closest_lexical_baseline_name=known[lex_key]["name"] if lex_key else None,
-                closest_lexical_score=round(lex_score, 1) if lex_score is not None else None,
-            ))
-            continue
-
         parent_info = parents.classify(level, rows)
         incoming_ids = [r.get("id") for r in rows]
-        if close_spelling:
-            action, reason = REVIEW_AMBIGUOUS, "close_spelling_unconfirmed"
+
+        # Tiers run strongest evidence first (the same-level exact tier is
+        # handled above); within a tier the same level wins.
+        if other.exact:
+            other_level_matches.append(_other_level_entry(row, incoming_ids, "exact", other.exact, other, parent_info))
+        elif same.close_spelling(p) and same.semantic_agrees(p):
+            fuzzy_matches.append(_match_entry(
+                row, same.lexical[1], SKIP_DUPLICATE, score=round(same.lexical[2], 1),
+                semantic_score=same.semantic[2], semantic_baseline_name=same.semantic[1]["name"],
+            ))
+        elif other.close_spelling(p) and other.semantic_agrees(p):
+            other_level_matches.append(
+                _other_level_entry(row, incoming_ids, "close_spelling", other.lexical, other, parent_info)
+            )
+        elif same.semantic_agrees(p):
+            semantic_matches.append(_match_entry(
+                row, same.semantic[1], SKIP_SEMANTIC_DUPLICATE, semantic_score=same.semantic[2],
+                closest_lexical_baseline_name=same.lexical[1]["name"] if same.lexical else None,
+                closest_lexical_score=round(same.lexical[2], 1) if same.lexical else None,
+            ))
+        elif other.semantic_agrees(p):
+            other_level_matches.append(
+                _other_level_entry(row, incoming_ids, "semantic", other.semantic, other, parent_info)
+            )
         else:
-            other = pool.other_level(level, key)
-            if other is not None:
-                other_level, other_known = other
-                other_level_matches.append({
-                    **_match_entry(row, other_known, REVIEW_OTHER_LEVEL, baseline_level=other_level),
-                    "incoming_ids": incoming_ids, **parent_info,
-                })
-                continue
-            low_lexical = lex_score is None or lex_score < p["add_candidate_lexical_threshold"]
-            low_semantic = sem_score is None or sem_score < p["add_candidate_semantic_threshold"]
-            if low_lexical and low_semantic:
-                action, reason = ADD_CANDIDATE, "no_close_match"
-            else:
-                action, reason = REVIEW_AMBIGUOUS, "partial_similarity"
-        ambiguous.append({
-            "incoming_id": row.get("id"),
-            "incoming_ids": incoming_ids,
-            "incoming_name": str(row["name"]),
-            "closest_baseline_name": known[lex_key]["name"] if lex_key else None,
-            "closest_baseline_score": round(lex_score, 1) if lex_score is not None else None,
-            "closest_semantic_baseline_name": known[sem_key]["name"] if sem_key else None,
-            "closest_semantic_score": sem_score,
-            "reason": reason,
-            **parent_info,
-            "recommended_action": action,
-        })
+            ambiguous.append(_ambiguous_entry(row, incoming_ids, same, other, parent_info, p))
 
     reviewed = len(groups)
     add_count = sum(item["recommended_action"] == ADD_CANDIDATE for item in ambiguous)
@@ -299,6 +379,10 @@ def _compare_level(
         "fuzzy_candidate_matches": len(fuzzy_matches),
         "semantic_candidate_matches": len(semantic_matches),
         "other_level_matches": len(other_level_matches),
+        "other_level_match_types": {
+            match_type: sum(entry["match_type"] == match_type for entry in other_level_matches)
+            for match_type in ("exact", "close_spelling", "semantic")
+        },
         "ambiguous": len(ambiguous),
         "ambiguous_rate": _rate(len(ambiguous), reviewed),
         "new_rate_min": _rate(add_count, reviewed),
@@ -357,6 +441,7 @@ class SaturationMetric(Metric):
         "semantic_threshold": 0.7,
         "add_candidate_lexical_threshold": 60.0,
         "add_candidate_semantic_threshold": 0.5,
+        "cross_level": True,
     }
 
     def run(self, datasets: dict[str, LoadedDataset], params: dict[str, Any]) -> MetricResult:
@@ -371,7 +456,7 @@ class SaturationMetric(Metric):
             return resolved
 
         try:
-            thresholds = {
+            settings = {
                 "threshold": _validated_float(p, "threshold", 0, 100),
                 "semantic_threshold": _validated_float(p, "semantic_threshold", -1, 1),
                 "add_candidate_lexical_threshold": _validated_float(p, "add_candidate_lexical_threshold", 0, 100),
@@ -379,6 +464,9 @@ class SaturationMetric(Metric):
             }
         except (TypeError, ValueError) as exc:
             return MetricResult(metric_id=self.id, status="error", summary=str(exc))
+        if not isinstance(p["cross_level"], bool):
+            return MetricResult(metric_id=self.id, status="error", summary="cross_level must be true or false")
+        settings["cross_level"] = p["cross_level"]
 
         baseline = resolved["baseline"]
         incoming = [resolved[f"incoming[{i}]"] for i in range(len(incoming_names))]
@@ -409,7 +497,7 @@ class SaturationMetric(Metric):
         for number, (name, source) in enumerate(zip(incoming_names, incoming, strict=True), start=1):
             parents = _Parents(source)
             by_level = {
-                level: _compare_level(level, getattr(source, level), pool, parents, thresholds, semantic_matcher)
+                level: _compare_level(level, getattr(source, level), pool, parents, settings, semantic_matcher)
                 for level in CONCEPT_LEVELS
             }
             pool.add(name, source)
@@ -453,15 +541,16 @@ class SaturationMetric(Metric):
             details={
                 "baseline": baseline.name,
                 "incoming": incoming_names,
-                "threshold": thresholds["threshold"],
+                "threshold": settings["threshold"],
                 "semantic_model": p["semantic_model"],
-                "semantic_threshold": thresholds["semantic_threshold"] if semantic_matcher else None,
-                "add_candidate_lexical_threshold": thresholds["add_candidate_lexical_threshold"],
+                "semantic_threshold": settings["semantic_threshold"] if semantic_matcher else None,
+                "add_candidate_lexical_threshold": settings["add_candidate_lexical_threshold"],
                 "add_candidate_semantic_threshold": (
-                    thresholds["add_candidate_semantic_threshold"] if semantic_matcher else None
+                    settings["add_candidate_semantic_threshold"] if semantic_matcher else None
                 ),
                 "overall": steps[-1]["overall"],
                 "by_concept_level": steps[-1]["by_concept_level"],
+                "cross_level": p["cross_level"],
                 "curve": curve,
                 "steps": steps,
             },

@@ -164,7 +164,8 @@ def test_batches_lexical_comparisons_with_cdist(monkeypatch):
     )
 
     assert result.status == "ok"
-    assert len(calls) == 3
+    # One batch per level for the same level, one for the other levels.
+    assert len(calls) == 6
 
 
 def test_invalid_add_candidate_threshold_reports_an_error():
@@ -182,7 +183,14 @@ def _fake_matcher(monkeypatch, results):
             pass
 
         def best_matches(self, queries, choices):
-            return [results.get(query, (None, None)) for query in queries]
+            # results: query -> (name, score) or a list of them; the first
+            # name present in `choices` is returned, as a real model would.
+            answers = []
+            for query in queries:
+                options = results.get(query, [])
+                options = [options] if isinstance(options, tuple) else options
+                answers.append(next(((n, sc) for n, sc in options if n in choices), (None, None)))
+            return answers
 
     monkeypatch.setattr(saturation, "SemanticMatcher", FakeSemanticMatcher)
 
@@ -331,3 +339,60 @@ def test_single_incoming_name_still_produces_one_step_curve():
 def test_invalid_incoming_lists_report_an_error(incoming):
     result = SaturationMetric().run(_datasets(), {"baseline": "original", "incoming": incoming})
     assert result.status == "error"
+
+
+def test_other_level_close_spelling_confirmed_by_meaning(monkeypatch):
+    _fake_matcher(monkeypatch, {"evaluation": ("valuation", 0.9)})
+    tags = _run(_pair(_BASE, {"tags": [{"id": 1, "name": "Evaluation"}]}), semantic_model="m").details[
+        "by_concept_level"]["tags"]
+    match = tags["other_level_match_details"][0]
+    assert (match["match_type"], match["baseline_level"], match["baseline_name"]) == (
+        "close_spelling", "specialities", "Valuation")
+    assert tags["other_level_match_types"] == {"exact": 0, "close_spelling": 1, "semantic": 0}
+
+
+def test_other_level_meaning_only_match(monkeypatch):
+    _fake_matcher(monkeypatch, {"asset appraisal": ("valuation", 0.8)})
+    tags = _run(_pair(_BASE, {"tags": [{"id": 1, "name": "Asset Appraisal"}]}), semantic_model="m").details[
+        "by_concept_level"]["tags"]
+    match = tags["other_level_match_details"][0]
+    assert (match["match_type"], match["score"], match["semantic_score"]) == ("semantic", None, 0.8)
+    assert tags["new_rate_max"] == 0.0
+
+
+def test_exact_other_level_match_beats_same_level_meaning_match(monkeypatch):
+    _fake_matcher(monkeypatch, {"valuation": ("budgeting", 0.95)})
+    tags = _run(_pair(_BASE, {"tags": [{"id": 1, "name": "Valuation"}]}), semantic_model="m").details[
+        "by_concept_level"]["tags"]
+    assert tags["semantic_candidate_matches"] == 0
+    assert tags["other_level_match_details"][0]["match_type"] == "exact"
+
+
+def test_same_level_wins_within_a_tier(monkeypatch):
+    baseline = {**_BASE, "specialities": [{"id": 10, "name": "Budget Planning"}]}
+    _fake_matcher(monkeypatch, {"cost control": [("budgeting", 0.8), ("budget planning", 0.9)]})
+    tags = _run(_pair(baseline, {"tags": [{"id": 1, "name": "Cost Control"}]}), semantic_model="m").details[
+        "by_concept_level"]["tags"]
+    assert tags["semantic_match_details"][0]["baseline_name"] == "budgeting"
+    assert tags["other_level_matches"] == 0
+
+
+def test_add_candidate_requires_nothing_close_at_any_level():
+    datasets = _pair(_BASE, {"tags": [{"id": 1, "name": "Valuation Review"}]})
+    tags = _run(datasets).details["by_concept_level"]["tags"]
+    concept = _ambiguous(tags, "Valuation Review")
+    assert (concept["recommended_action"], concept["reason"]) == ("REVIEW_AMBIGUOUS", "partial_similarity")
+    assert concept["closest_baseline_level"] == "specialities"
+
+    strict = _run(datasets, cross_level=False).details["by_concept_level"]["tags"]
+    assert _ambiguous(strict, "Valuation Review")["recommended_action"] == "ADD_CANDIDATE"
+
+
+def test_cross_level_off_is_strict_level_by_level():
+    result = _run(_pair(_BASE, {"tags": [{"id": 1, "name": "Valuation"}]}), cross_level=False)
+    assert result.details["cross_level"] is False
+    assert result.details["by_concept_level"]["tags"]["other_level_matches"] == 0
+
+
+def test_non_bool_cross_level_reports_an_error():
+    assert _run(_datasets(), cross_level="yes").status == "error"
