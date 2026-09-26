@@ -80,7 +80,7 @@ metrics:
       # installed, a low semantic score. Other non-matches are REVIEW_AMBIGUOUS.
       add_candidate_lexical_threshold: 60
       add_candidate_semantic_threshold: 0.50
-      # Also compare against the other levels (e.g. SkillsFuture skills vs
-      # original specialities). Matches there are REVIEW_OTHER_LEVEL, never
-      # skipped or counted as new. false = strict level-by-level comparison.
+      # Also look for a similar concept at the other levels (e.g. SkillsFuture
+      # skills vs original specialities); the parent check still applies.
+      # false = strict level-by-level comparison.
       cross_level: true

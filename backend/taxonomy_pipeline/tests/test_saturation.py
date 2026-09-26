@@ -1,3 +1,4 @@
+import numpy as np
 import pytest
 
 from taxonomy_pipeline.datasets.base import TaxonomyDataset
@@ -177,7 +178,8 @@ def test_invalid_add_candidate_threshold_reports_an_error():
     assert result.status == "error"
 
 
-def _fake_matcher(monkeypatch, results):
+def _fake_matcher(monkeypatch, results, parent_similarity=None):
+    parent_similarity = parent_similarity or {}
     class FakeSemanticMatcher:
         def __init__(self, model_name):
             pass
@@ -191,6 +193,10 @@ def _fake_matcher(monkeypatch, results):
                 options = [options] if isinstance(options, tuple) else options
                 answers.append(next(((n, sc) for n, sc in options if n in choices), (None, None)))
             return answers
+
+        def similarity(self, queries, choices):
+            # parent_similarity: {(query, choice): score}; anything else is 0.
+            return np.array([[parent_similarity.get((q, c), 0.0) for c in choices] for q in queries])
 
     monkeypatch.setattr(saturation, "SemanticMatcher", FakeSemanticMatcher)
 
@@ -284,13 +290,13 @@ def test_parent_status_is_resolved_inside_the_incoming_source():
     assert levels["specialities"]["parent_status_counts"] == {"HAS_PARENT": 1, "NO_PARENT": 1}
 
 
-def test_concept_known_at_another_level_is_not_new():
+def test_concept_known_at_another_level_is_a_duplicate():
     datasets = _pair(_BASE, {"tags": [{"id": 5, "name": "Valuation"}]})
     tags = _run(datasets).details["by_concept_level"]["tags"]
+    match = tags["exact_match_details"][0]
+    assert (match["baseline_level"], match["recommended_action"]) == ("specialities", "SKIP_DUPLICATE")
+    assert match["parent_check"] == "not_checked_for_tags"
     assert tags["other_level_matches"] == 1
-    match = tags["other_level_match_details"][0]
-    assert (match["baseline_level"], match["recommended_action"]) == ("specialities", "REVIEW_OTHER_LEVEL")
-    assert match["parent_status"] == "NO_PARENT"
     assert tags["new_rate_max"] == 0.0
 
 
@@ -345,18 +351,18 @@ def test_other_level_close_spelling_confirmed_by_meaning(monkeypatch):
     _fake_matcher(monkeypatch, {"evaluation": ("valuation", 0.9)})
     tags = _run(_pair(_BASE, {"tags": [{"id": 1, "name": "Evaluation"}]}), semantic_model="m").details[
         "by_concept_level"]["tags"]
-    match = tags["other_level_match_details"][0]
+    match = tags["fuzzy_match_details"][0]
     assert (match["match_type"], match["baseline_level"], match["baseline_name"]) == (
         "close_spelling", "specialities", "Valuation")
-    assert tags["other_level_match_types"] == {"exact": 0, "close_spelling": 1, "semantic": 0}
 
 
 def test_other_level_meaning_only_match(monkeypatch):
     _fake_matcher(monkeypatch, {"asset appraisal": ("valuation", 0.8)})
     tags = _run(_pair(_BASE, {"tags": [{"id": 1, "name": "Asset Appraisal"}]}), semantic_model="m").details[
         "by_concept_level"]["tags"]
-    match = tags["other_level_match_details"][0]
-    assert (match["match_type"], match["score"], match["semantic_score"]) == ("semantic", None, 0.8)
+    match = tags["semantic_match_details"][0]
+    assert (match["baseline_level"], match["semantic_score"]) == ("specialities", 0.8)
+    assert match["recommended_action"] == "SKIP_SEMANTIC_DUPLICATE"
     assert tags["new_rate_max"] == 0.0
 
 
@@ -365,7 +371,7 @@ def test_exact_other_level_match_beats_same_level_meaning_match(monkeypatch):
     tags = _run(_pair(_BASE, {"tags": [{"id": 1, "name": "Valuation"}]}), semantic_model="m").details[
         "by_concept_level"]["tags"]
     assert tags["semantic_candidate_matches"] == 0
-    assert tags["other_level_match_details"][0]["match_type"] == "exact"
+    assert tags["exact_match_details"][0]["baseline_level"] == "specialities"
 
 
 def test_same_level_wins_within_a_tier(monkeypatch):
@@ -396,3 +402,105 @@ def test_cross_level_off_is_strict_level_by_level():
 
 def test_non_bool_cross_level_reports_an_error():
     assert _run(_datasets(), cross_level="yes").status == "error"
+
+
+_HEALTH_ML = {
+    "categories": [{"id": 1, "name": "Healthcare"}, {"id": 2, "name": "Accountancy"}],
+    "specialities": [
+        {"id": 10, "name": "Machine Learning", "category_id": 1},
+        {"id": 11, "name": "Head of Treasury", "category_id": 2},
+    ],
+    "tags": [{"id": 100, "name": "python"}],
+}
+
+
+def _sf_roles(*roles):
+    """Incoming source with sectors and job roles given as (role, sector) pairs."""
+    sectors = list(dict.fromkeys(sector for _, sector in roles))
+    return {
+        "categories": [{"id": i, "name": sector} for i, sector in enumerate(sectors, start=1)],
+        "specialities": [
+            {"id": 100 + i, "name": role, "category_id": sectors.index(sector) + 1}
+            for i, (role, sector) in enumerate(roles)
+        ],
+    }
+
+
+def test_known_concept_under_a_new_parent_is_a_new_placement():
+    level = _run(_pair(_HEALTH_ML, _sf_roles(("Machine Learning", "Finance")))).details[
+        "by_concept_level"]["specialities"]
+    assert level["recommended_action_counts"]["REVIEW_NEW_PLACEMENT"] == 1
+    placement = level["new_placement_details"][0]
+    assert placement["unmatched_incoming_parents"] == [{"id": 1, "name": "Finance"}]
+    assert placement["existing_parents"] == ["Healthcare"]
+    assert placement["reason"] == "parent_differs"
+    # A known concept is not a new item.
+    assert (level["new_rate_max"], level["new_placement_rate"]) == (0.0, 1.0)
+
+
+def test_known_concept_under_the_same_parent_is_a_duplicate():
+    level = _run(_pair(_HEALTH_ML, _sf_roles(("machine learning", "Healthcare")))).details[
+        "by_concept_level"]["specialities"]
+    assert level["new_placements"] == 0
+    assert level["exact_match_details"][0]["parent_check"] == "same_parent"
+
+
+def test_parent_similar_in_meaning_counts_as_the_same_parent(monkeypatch):
+    _fake_matcher(monkeypatch, {}, parent_similarity={("health services", "healthcare"): 0.8})
+    level = _run(_pair(_HEALTH_ML, _sf_roles(("Machine Learning", "Health Services"))), semantic_model="m").details[
+        "by_concept_level"]["specialities"]
+    assert level["new_placements"] == 0
+
+
+def test_every_incoming_parent_must_be_covered():
+    incoming = _sf_roles(("Head of Treasury", "Accountancy"), ("Head of Treasury", "Wholesale Trade"))
+    level = _run(_pair(_HEALTH_ML, incoming)).details["by_concept_level"]["specialities"]
+    placement = level["new_placement_details"][0]
+    assert [parent["name"] for parent in placement["unmatched_incoming_parents"]] == ["Wholesale Trade"]
+    assert placement["incoming_ids"] == [100, 101]
+
+
+def test_known_concept_without_parents_is_flagged():
+    baseline = {**_HEALTH_ML, "specialities": [{"id": 10, "name": "Machine Learning", "category_id": 99}]}
+    level = _run(_pair(baseline, _sf_roles(("Machine Learning", "Finance")))).details[
+        "by_concept_level"]["specialities"]
+    assert level["new_placement_details"][0]["reason"] == "existing_has_no_parent"
+
+
+def test_incoming_without_parent_skips_on_concept_match():
+    categories = _run(_pair(_HEALTH_ML, {"categories": [{"id": 1, "name": "Healthcare"}]})).details[
+        "by_concept_level"]["categories"]
+    assert categories["exact_match_details"][0]["parent_check"] == "no_incoming_parent"
+    assert categories["placements_checked"] == 0
+
+
+def test_tags_skip_the_parent_check():
+    incoming = {
+        **_sf_roles(("Data Scientist", "Finance")),
+        "tags": [{"id": 1, "name": "Python"}],
+        "speciality_tags": [{"id": 1, "speciality_id": 100, "tag_id": 1}],
+    }
+    tags = _run(_pair(_HEALTH_ML, incoming)).details["by_concept_level"]["tags"]
+    assert tags["exact_match_details"][0]["parent_check"] == "not_checked_for_tags"
+    assert tags["new_placements"] == 0
+
+
+def test_placements_from_earlier_sources_are_not_flagged_again():
+    datasets = _pair(_HEALTH_ML, _sf_roles(("Machine Learning", "Finance")))
+    datasets["repeat"] = TaxonomyDataset(name="repeat", **_sf_roles(("Machine Learning", "Finance")))
+    curve = SaturationMetric().run(
+        datasets, {"baseline": "original", "incoming": ["skillsfuture", "repeat"]}
+    ).details["curve"]
+    assert [point["new_placements"] for point in curve] == [1, 0]
+
+
+def test_name_repeated_at_two_levels_of_one_source_counts_once():
+    incoming = {"categories": [{"id": 1, "name": "Workplace Safety and Health"}],
+                "tags": [{"id": 9, "name": "Workplace Safety & Health"}]}
+    result = _run(_pair(_BASE, incoming))
+    tags = result.details["by_concept_level"]["tags"]
+    assert tags["relevant_concepts_reviewed"] == 0
+    assert tags["repeated_in_source_other_level"] == [
+        {"incoming_ids": [9], "incoming_name": "Workplace Safety & Health", "first_counted_level": "categories"}
+    ]
+    assert result.details["overall"]["relevant_concepts_reviewed"] == 1

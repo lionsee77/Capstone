@@ -79,42 +79,61 @@ Named rows are grouped per level by a match key (normalised name, `&` ->
 `and`, `-isation` -> `-ization`, plural `s` dropped), so "Machine Learning"
 under two parents is one concept.
 
-Sources don't use levels the same way (original specialities are skills,
-SkillsFuture specialities are job titles and its tags are skills), so each
-concept is compared against its own level **and** the other levels of
-everything seen so far. Evidence tiers run strongest first and the first hit
-wins; within a tier a same-level match beats one at another level:
+Every incoming concept gets **one verdict**. First: is there a similar
+concept at **any** level of what is known? Sources don't use levels the same
+way (original specialities are skills; SkillsFuture specialities are job
+titles and its tags are skills), so all levels are searched. Evidence tiers
+run strongest first - same match key, close spelling (RapidFuzz >=
+`threshold`) confirmed by the sentence model (>= `semantic_threshold`), then
+meaning alone - and within a tier a same-level match wins. Every match
+reports `baseline_level` and `match_type`.
 
-| Tier | Evidence | Same level | Other level |
+| Incoming concept | Similar concept known? | Parents similar? | Verdict |
 |---|---|---|---|
-| 0 | Blank or placeholder name ("test", "new", ...) | listed in `skipped_invalid`, not counted | - |
-| A | Same match key | `SKIP_DUPLICATE` | `REVIEW_OTHER_LEVEL` (`match_type: exact`) |
-| B | Close spelling (RapidFuzz >= `threshold`) and the sentence model agrees | `SKIP_DUPLICATE` | `REVIEW_OTHER_LEVEL` (`close_spelling`) |
-| C | Semantic score >= `semantic_threshold` | `SKIP_SEMANTIC_DUPLICATE` | `REVIEW_OTHER_LEVEL` (`semantic`) |
-| D | Close spelling at any level without model agreement | `REVIEW_AMBIGUOUS` (`close_spelling_unconfirmed`) | same |
-| E | Low lexical and (no model, or low semantic) at **every** level | `ADD_CANDIDATE` | same |
-| F | Anything else | `REVIEW_AMBIGUOUS` (`partial_similarity`) | same |
+| no parent in its source, or a tag | yes | not checked | `SKIP_DUPLICATE` / `SKIP_SEMANTIC_DUPLICATE` |
+| has a parent | yes | yes | `SKIP_DUPLICATE` / `SKIP_SEMANTIC_DUPLICATE` (`parent_check: same_parent`) |
+| has a parent | yes | no | `REVIEW_NEW_PLACEMENT` |
+| any | no - nothing even moderately close at any level | - | `ADD_CANDIDATE` |
+| any | no - but a close spelling without meaning agreement, or partly similar | - | `REVIEW_AMBIGUOUS` |
 
-`REVIEW_OTHER_LEVEL` concepts are already known, so they are not counted as
-new, but they are never skipped automatically. Set `cross_level: false` for a
-strict level-by-level comparison (useful to show the difference it makes).
-Ambiguous concepts report the closest match at any level with
-`closest_baseline_level` / `closest_semantic_baseline_level`.
+Parent check details:
+
+- Parents are resolved inside each concept's own source (speciality ->
+  category, category -> service). An incoming parent is similar to a known
+  parent with the same match key or, with the model, semantic score >=
+  `semantic_threshold`. **Every** incoming parent must be similar to some
+  parent of the known concept; `new_placement_details` lists only the
+  `unmatched_incoming_parents`, next to `existing_parents`.
+- Tags skip the check: in this schema a tag is a shared keyword, so linking
+  a known tag to new specialities is an integration step, not a new concept.
+- Placements from earlier sources are remembered, so a later source is not
+  flagged again for the same concept under the same parent.
+- `REVIEW_NEW_PLACEMENT` is a known concept in a new context (e.g. "Machine
+  Learning" under Finance when the taxonomy has it under Healthcare). It is
+  **not** counted in the new-items rate; it has its own `new_placements` and
+  `new_placement_rate` (new placements / placements checked).
+
+Blank and placeholder names ("test", "new", ...) are listed in
+`skipped_invalid`. A name that appears at two levels of the same source is
+counted once, at the first level; the repeat is listed in
+`repeated_in_source_other_level`. Set `cross_level: false` for a strict
+level-by-level comparison.
 
 Per step, `new_rate_min` = add candidates / concepts reviewed and
 `new_rate_max` = (add candidates + review items) / concepts reviewed.
 
-Concepts the integration team may add (`ADD_CANDIDATE`, `REVIEW_AMBIGUOUS`,
-`REVIEW_OTHER_LEVEL`) carry `parent_status` (`HAS_PARENT` / `NO_PARENT`),
-`parent_level`, `parent_count` and `parents`, resolved **inside their own
-source**: speciality -> category, category -> service, tag -> linked
-specialities. The SkillsFuture dump defines no services of its own, so its
-sectors (categories) are `NO_PARENT`.
+Flagged concepts (`ADD_CANDIDATE`, `REVIEW_AMBIGUOUS`, `REVIEW_NEW_PLACEMENT`)
+carry `parent_status` (`HAS_PARENT` / `NO_PARENT`), `parent_level`,
+`parent_count` and `parents`, resolved **inside their own source**:
+speciality -> category, category -> service, tag -> linked specialities. The
+SkillsFuture dump defines no services of its own, so its sectors
+(categories) are `NO_PARENT`.
 
 `details.overall` and `details.by_concept_level` keep their existing shape
 and describe the last source; `details.steps` holds the same block for every
 source and `details.curve` lists `{step, source, reviewed, add_candidates,
-review_ambiguous, new_rate_min, new_rate_max, cumulative_known_concepts}`.
+review_ambiguous, new_rate_min, new_rate_max, new_placements,
+new_placement_rate, cumulative_known_concepts}`.
 Matches also report `matched_source` and `baseline_status`; matches to
 inactive (`status='0'`) rows are counted in `matched_inactive`.
 
