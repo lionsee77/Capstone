@@ -287,8 +287,9 @@ taxonomy-pipeline serve --reload
   configs, as JSON); dataset paths must be absolute paths on the server. It
   returns `{run_id, status: "queued"}` immediately and runs the pipeline in
   the background.
-- `GET /runs/{run_id}` - poll for status; once `"done"` or `"failed"`, the
-  full report is in the response.
+- `GET /runs/{run_id}` - poll for status, which moves `"queued"` ->
+  `"running"` -> `"done"` or `"failed"`; once finished, the full report is
+  in the response.
 - `GET /runs` - recent run history.
 
 Every run (CLI or API) is persisted to `taxonomy_pipeline.sqlite3` next to
