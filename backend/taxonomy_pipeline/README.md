@@ -91,6 +91,7 @@ reports `baseline_level` and `match_type`.
 | Incoming concept | Similar concept known? | Parents similar? | Verdict |
 |---|---|---|---|
 | no parent in its source, or a tag | yes | not checked | `SKIP_DUPLICATE` / `SKIP_SEMANTIC_DUPLICATE` |
+| has a parent | yes, but at another level | not comparable | `REVIEW_OTHER_LEVEL` (`reason: parent_not_comparable`) |
 | has a parent | yes | yes | `SKIP_DUPLICATE` / `SKIP_SEMANTIC_DUPLICATE` (`parent_check: same_parent`) |
 | has a parent | yes | no | `REVIEW_NEW_PLACEMENT` |
 | any | no - nothing even moderately close at any level | - | `ADD_CANDIDATE` |
@@ -104,6 +105,10 @@ Parent check details:
   `semantic_threshold`. **Every** incoming parent must be similar to some
   parent of the known concept; `new_placement_details` lists only the
   `unmatched_incoming_parents`, next to `existing_parents`.
+- The check only runs for same-level matches. A match at another level has
+  a different kind of parent (e.g. a SkillsFuture sector vs the specialities
+  an original tag hangs off), so it is `REVIEW_OTHER_LEVEL`: already known,
+  so not new and not a new placement, but the team checks it.
 - Tags skip the check: in this schema a tag is a shared keyword, so linking
   a known tag to new specialities is an integration step, not a new concept.
 - Placements from earlier sources are remembered, so a later source is not
@@ -134,14 +139,14 @@ service, tag -> linked specialities. The SkillsFuture dump defines no
 services of its own, so its sectors (categories) are `NO_PARENT`.
 `parent_status_counts` covers every reviewed concept;
 `parent_status_counts_flagged` covers only `ADD_CANDIDATE`,
-`REVIEW_AMBIGUOUS` and `REVIEW_NEW_PLACEMENT`. For a duplicate skill, the
+`REVIEW_AMBIGUOUS`, `REVIEW_NEW_PLACEMENT` and `REVIEW_OTHER_LEVEL`. For a duplicate skill, the
 `parents` list shows which job roles link to a tag we already have.
 
 `details.overall` and `details.by_concept_level` keep their existing shape
 and describe the last source; `details.steps` holds the same block for every
 source and `details.curve` lists `{step, source, reviewed, add_candidates,
 review_ambiguous, new_rate_min, new_rate_max, new_placements,
-new_placement_rate, cumulative_known_concepts}`.
+new_placement_rate, review_other_level, cumulative_known_concepts}`.
 Matches also report `matched_source` and `baseline_status`; matches to
 inactive (`status='0'`) rows are counted in `matched_inactive`.
 

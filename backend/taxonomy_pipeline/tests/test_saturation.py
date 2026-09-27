@@ -90,7 +90,8 @@ def test_semantic_candidates_are_reported_separately_from_lexical_matches(monkey
                 "carbon accounting": ("payroll processing", 0.50),
                 "carbon reporting": ("accounting", 0.81),
             }
-            return [results[query] for query in queries]
+            # Exact matches are sent to the matcher too; they have no entry here.
+            return [results.get(query, (None, None)) for query in queries]
 
     monkeypatch.setattr(saturation, "SemanticMatcher", FakeSemanticMatcher)
     result = SaturationMetric().run(
@@ -544,3 +545,61 @@ def test_duplicates_also_carry_their_incoming_parents():
     # Every reviewed tag counts, not only flagged ones.
     assert levels["tags"]["parent_status_counts"] == {"HAS_PARENT": 1, "NO_PARENT": 0}
     assert levels["tags"]["parent_status_counts_flagged"] == {"HAS_PARENT": 0, "NO_PARENT": 0}
+
+
+def test_cross_level_match_with_incomparable_parents_is_review_other_level():
+    # An SF job role (parent: sector) matching only an original tag (parents:
+    # specialities) - the parents are different kinds and can't be compared.
+    baseline = {**_HEALTH_ML, "speciality_tags": [{"id": 1, "speciality_id": 10, "tag_id": 100}]}
+    level = _run(_pair(baseline, _sf_roles(("Python", "Finance")))).details["by_concept_level"]["specialities"]
+    match = level["other_level_match_details"][0]
+    assert (match["recommended_action"], match["reason"], match["baseline_level"]) == (
+        "REVIEW_OTHER_LEVEL", "parent_not_comparable", "tags")
+    assert match["parents"] == [{"id": 1, "name": "Finance"}]
+    assert (level["new_placements"], level["placements_checked"], level["new_rate_max"]) == (0, 0, 0.0)
+    assert level["parent_status_counts_flagged"] == {"HAS_PARENT": 1, "NO_PARENT": 0}
+
+
+def test_incoming_category_matching_a_known_speciality_is_not_a_new_placement():
+    # The reviewer's case: a category with its own service parent exact-matches
+    # a known speciality (whose parent is a category).
+    incoming = {"services": [{"id": 1, "name": "Industry"}],
+                "categories": [{"id": 5, "name": "Machine Learning", "service_id": 1}]}
+    result = _run(_pair(_HEALTH_ML, incoming))
+    categories = result.details["by_concept_level"]["categories"]
+    assert categories["new_placements"] == 0
+    assert categories["other_level_match_details"][0]["match_type"] == "exact"
+    assert result.details["curve"][0]["review_other_level"] == 1
+
+
+def test_placeholder_parents_are_ignored_on_both_sides():
+    baseline = {
+        "categories": [{"id": 1, "name": "test"}],
+        "specialities": [{"id": 10, "name": "Machine Learning", "category_id": 1}],
+        "tags": [{"id": 100, "name": "python"}],
+    }
+    level = _run(_pair(baseline, _sf_roles(("Machine Learning", "test")))).details["by_concept_level"]["specialities"]
+    assert level["new_placements"] == 0
+    match = level["exact_match_details"][0]
+    assert (match["parent_check"], match["parent_status"]) == ("no_incoming_parent", "NO_PARENT")
+
+
+def test_best_matches_reuses_cached_embeddings():
+    class CountingModel:
+        def __init__(self):
+            self.encoded: list[str] = []
+
+        def encode(self, names, normalize_embeddings):
+            self.encoded.extend(names)
+            return [np.array([1.0, float(len(name))]) / np.linalg.norm([1.0, float(len(name))]) for name in names]
+
+    matcher = object.__new__(saturation.SemanticMatcher)
+    matcher.model, matcher._cache = CountingModel(), {}
+    first = matcher.best_matches(["ab", "abcd"], ["abc", "abcd"])
+    assert first[1][0] == "abcd"
+    matcher.best_matches(["abcd"], ["abc", "abcd"])
+    matcher.similarity(["ab"], ["abc"])
+    # Each distinct name is encoded exactly once across all calls.
+    assert sorted(matcher.model.encoded) == ["ab", "abc", "abcd"]
+    assert matcher.best_matches([], ["abc"]) == []
+    assert matcher.best_matches(["ab"], []) == [(None, None)]

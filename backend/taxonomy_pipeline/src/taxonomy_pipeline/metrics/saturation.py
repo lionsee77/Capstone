@@ -12,14 +12,16 @@ Close spelling alone never counts: "evaluation" is not "valuation".
 
 - Similar concept found -> check parents (within each concept's own source):
   - no incoming parent, or a tag (tags are shared keywords) -> skip
+  - found at another level -> REVIEW_OTHER_LEVEL: parents are different
+    kinds (e.g. a sector vs a tag's specialities) and can't be compared
   - every incoming parent similar to a parent of the known concept -> skip
   - otherwise -> REVIEW_NEW_PLACEMENT: known concept, new context
     (e.g. "Machine Learning" under Finance vs under Healthcare)
 - Nothing similar -> ADD_CANDIDATE when nothing at any level is even
   moderately close, otherwise REVIEW_AMBIGUOUS.
 
-New placements are reported separately and do not count toward the
-new-items rate. Every recommendation is a review aid, not a database
+New placements and other-level matches are reported separately and do not
+count toward the new-items rate. Every recommendation is a review aid, not a database
 operation. Every incoming concept - duplicates included - carries its parents
 within its own source, so a downstream integration team knows where each one
 hangs off (e.g. which SkillsFuture job roles link to a skill we already have).
@@ -43,6 +45,7 @@ CONCEPT_LEVELS = ("categories", "specialities", "tags")
 SKIP_DUPLICATE = "SKIP_DUPLICATE"
 SKIP_SEMANTIC_DUPLICATE = "SKIP_SEMANTIC_DUPLICATE"
 REVIEW_NEW_PLACEMENT = "REVIEW_NEW_PLACEMENT"
+REVIEW_OTHER_LEVEL = "REVIEW_OTHER_LEVEL"
 ADD_CANDIDATE = "ADD_CANDIDATE"
 REVIEW_AMBIGUOUS = "REVIEW_AMBIGUOUS"
 HAS_PARENT = "HAS_PARENT"
@@ -105,10 +108,7 @@ class SemanticMatcher:
     def best_matches(self, queries: list[str], choices: list[str]) -> list[tuple[str | None, float | None]]:
         if not queries or not choices:
             return [(None, None) for _ in queries]
-        embeddings = self.model.encode(queries + choices, normalize_embeddings=True)
-        query_vectors = np.asarray(embeddings[: len(queries)])
-        choice_vectors = np.asarray(embeddings[len(queries) :])
-        scores = query_vectors @ choice_vectors.T
+        scores = self.similarity(queries, choices)
         best_indexes = np.argmax(scores, axis=1)
         return [(choices[index], round(float(scores[row, index]), 4)) for row, index in enumerate(best_indexes)]
 
@@ -149,7 +149,11 @@ class _Parents:
         parents: dict[Any, dict[str, Any]] = {}
         for row in rows:
             for parent in self.lookup(level, row):
-                if parent is not None and parent.get("id") not in parents:
+                # Same filter as _KnownPool.add, so a placeholder parent on
+                # both sides can't look like a new placement.
+                if parent is None or not _is_valid_name(parent.get("name")):
+                    continue
+                if parent.get("id") not in parents:
                     parents[parent.get("id")] = {"id": parent.get("id"), "name": parent.get("name")}
         return {
             "parent_status": HAS_PARENT if parents else NO_PARENT,
@@ -346,10 +350,10 @@ def _winning_match(
     same: _Evidence, other: _Evidence, p: dict[str, Any]
 ) -> tuple[str, tuple[str, dict[str, Any], float], _Evidence] | None:
     """Strongest evidence of a similar concept, as (match_type, match, evidence
-    set it came from); within a tier the same level wins. The same-level exact
-    tier is resolved before evidence is gathered."""
-    if other.exact:
-        return "exact", other.exact, other
+    set it came from); within a tier the same level wins."""
+    for evidence in (same, other):
+        if evidence.exact:
+            return "exact", evidence.exact, evidence
     for evidence in (same, other):
         if evidence.close_spelling(p) and evidence.semantic_agrees(p):
             return "close_spelling", evidence.lexical, evidence
@@ -381,22 +385,17 @@ def _compare_level(
     ]
     groups = {key: rows for key, rows in groups.items() if key not in seen_in_source}
     seen_in_source.update(dict.fromkeys(groups, level))
-    known = pool.by_level[level]
 
     exact_matches: list[dict[str, Any]] = []
     fuzzy_matches: list[dict[str, Any]] = []
     semantic_matches: list[dict[str, Any]] = []
     new_placements: list[dict[str, Any]] = []
+    other_level_matches: list[dict[str, Any]] = []
     ambiguous: list[dict[str, Any]] = []
     placements_checked = 0
 
-    matched: list[tuple[list[dict[str, Any]], str, tuple[str, dict[str, Any], float], _Evidence | None]] = []
-    remaining: list[tuple[str, list[dict[str, Any]]]] = []
-    for key, rows in groups.items():
-        if key in known:
-            matched.append((rows, "exact", (level, known[key], 100.0), None))
-        else:
-            remaining.append((key, rows))
+    matched: list[tuple[list[dict[str, Any]], str, tuple[str, dict[str, Any], float], _Evidence]] = []
+    remaining = list(groups.items())
 
     same_evidence = _gather_evidence(remaining, pool.candidates(level, other_levels=False), semantic_matcher)
     other_candidates = pool.candidates(level, other_levels=True) if p["cross_level"] else {}
@@ -414,7 +413,7 @@ def _compare_level(
     for rows, match_type, (known_level, known_entry, score), evidence in matched:
         row = rows[0]
         parent_info = parents.classify(level, rows)
-        semantic_score = evidence.semantic[2] if evidence and evidence.semantic else None
+        semantic_score = evidence.semantic[2] if evidence.semantic else None
         extra: dict[str, Any] = {"match_type": match_type}
         if match_type == "semantic":
             extra.update(
@@ -431,6 +430,16 @@ def _compare_level(
             parent_check = "not_checked_for_tags"
         elif not parent_info["parents"]:
             parent_check = "no_incoming_parent"
+        elif known_level != level:
+            # Parents are different kinds here (e.g. a sector vs the
+            # specialities a tag hangs off), so they can't be compared.
+            other_level_matches.append({
+                **_match_entry(row, known_level, known_entry, REVIEW_OTHER_LEVEL, **extra),
+                "incoming_ids": [r.get("id") for r in rows],
+                "reason": "parent_not_comparable",
+                **parent_info,
+            })
+            continue
         else:
             placements_checked += 1
             uncovered = _uncovered_parents(parent_info["parents"], known_entry, p, semantic_matcher)
@@ -458,8 +467,8 @@ def _compare_level(
     reviewed = len(groups)
     add_count = sum(item["recommended_action"] == ADD_CANDIDATE for item in ambiguous)
     review_count = len(ambiguous) - add_count
-    flagged = ambiguous + new_placements
-    matches = exact_matches + fuzzy_matches + semantic_matches + new_placements
+    flagged = ambiguous + new_placements + other_level_matches
+    matches = exact_matches + fuzzy_matches + semantic_matches + new_placements + other_level_matches
     return {
         "relevant_concepts_reviewed": reviewed,
         "exact_matches": len(exact_matches),
@@ -480,6 +489,7 @@ def _compare_level(
             SKIP_DUPLICATE: len(exact_matches) + len(fuzzy_matches),
             SKIP_SEMANTIC_DUPLICATE: len(semantic_matches),
             REVIEW_NEW_PLACEMENT: len(new_placements),
+            REVIEW_OTHER_LEVEL: len(other_level_matches),
             ADD_CANDIDATE: add_count,
             REVIEW_AMBIGUOUS: review_count,
         },
@@ -489,6 +499,7 @@ def _compare_level(
         "fuzzy_match_details": fuzzy_matches,
         "semantic_match_details": semantic_matches,
         "new_placement_details": new_placements,
+        "other_level_match_details": other_level_matches,
         "ambiguous_concepts": ambiguous,
     }
 
@@ -609,6 +620,7 @@ class SaturationMetric(Metric):
             ambiguous = sum(result["ambiguous"] for result in by_level.values())
             adds = sum(result["recommended_action_counts"][ADD_CANDIDATE] for result in by_level.values())
             placements = sum(result["new_placements"] for result in by_level.values())
+            other_level = sum(result["recommended_action_counts"][REVIEW_OTHER_LEVEL] for result in by_level.values())
             checked = sum(result["placements_checked"] for result in by_level.values())
             steps.append({
                 "source": name,
@@ -629,6 +641,7 @@ class SaturationMetric(Metric):
                 "new_rate_max": _rate(ambiguous, reviewed),
                 "new_placements": placements,
                 "new_placement_rate": _rate(placements, checked),
+                "review_other_level": other_level,
                 "cumulative_known_concepts": pool.size(),
             })
 
@@ -638,7 +651,8 @@ class SaturationMetric(Metric):
             f"{' + earlier sources' if len(curve) > 1 else ''}: new-items rate "
             f"{last['new_rate_min']:.1%}-{last['new_rate_max']:.1%} of {last['reviewed']} concepts "
             f"({last['add_candidates']} add candidates, {last['review_ambiguous']} need review); "
-            f"{last['new_placements']} known concepts in a new placement."
+            f"{last['new_placements']} known concepts in a new placement, "
+            f"{last['review_other_level']} known at another level."
         )
         if len(curve) > 1:
             summary += " Curve: " + ", ".join(
