@@ -365,6 +365,12 @@ the CLI's stdout, `GET /runs/{run_id}`, or the SQLite `report_json` column:
 }
 ```
 
+A check inside a metric that can't run on a given dataset is reported as
+`null`, not as an empty "all clean" result, and named with a reason in that
+result's `details.skipped_checks` - e.g. integrity's
+`orphans.categories_without_service` is `null` for a dataset that loads no
+`services` table (like `skillsfuture`).
+
 A metric erroring (bad params, unknown dataset) does **not** fail the whole
 run - `status` stays `"done"` with that one result marked `"error"`; only a
 dataset that fails to *load* fails the whole run, since nothing downstream

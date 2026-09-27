@@ -107,9 +107,15 @@ class IntegrityMetric(Metric):
                 dangling_links.append(link)
 
         orphan_specialities = [r for r in ds.specialities if r.get("category_id") not in category_ids]
-        orphan_categories = (
-            [r for r in ds.categories if r.get("service_id") not in service_ids] if ds.services else []
-        )
+        # A dataset with no services loaded can't be checked for category ->
+        # service orphans at all - report that as skipped (None), not as an
+        # empty "all clean" list.
+        skipped_checks: dict[str, str] = {}
+        orphan_categories: list[dict[str, Any]] | None = None
+        if ds.services:
+            orphan_categories = [r for r in ds.categories if r.get("service_id") not in service_ids]
+        else:
+            skipped_checks["categories_without_service"] = "no services table loaded for this dataset"
         orphan_tags = [r for r in ds.tags if r.get("id") not in referenced_tag_ids]
 
         dead_end_categories = [
@@ -133,7 +139,9 @@ class IntegrityMetric(Metric):
                 "tags": _fuzzy_duplicate_pairs(ds.tags, threshold),
             },
             "orphans": {
-                "categories_without_service": [r.get("id") for r in orphan_categories],
+                "categories_without_service": (
+                    [r.get("id") for r in orphan_categories] if orphan_categories is not None else None
+                ),
                 "specialities_without_category": [r.get("id") for r in orphan_specialities],
                 "tags_unused_by_any_speciality": [r.get("id") for r in orphan_tags],
                 "dangling_speciality_tag_links": len(dangling_links),
@@ -148,6 +156,7 @@ class IntegrityMetric(Metric):
                     len(dead_end_specialities) / len(ds.specialities) if ds.specialities else None
                 ),
             },
+            "skipped_checks": skipped_checks,
         }
 
         exact_dup_rows = sum(len(c["ids"]) for tier in exact.values() for c in tier)
@@ -157,4 +166,6 @@ class IntegrityMetric(Metric):
             f"{len(dead_end_categories)} dead-end categories, "
             f"{len(dead_end_specialities)} dead-end specialities."
         )
+        if skipped_checks:
+            summary += f" Skipped: {', '.join(skipped_checks)}."
         return MetricResult(metric_id=self.id, status="ok", summary=summary, details=details)

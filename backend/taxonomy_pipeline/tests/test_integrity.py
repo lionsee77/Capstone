@@ -74,3 +74,28 @@ def test_normalize_matches_taxonomy_audit_baseline_folding():
     clusters = result.details["exact_duplicates"]["categories"]
     assert len(clusters) == 1
     assert set(clusters[0]["ids"]) == {1, 2}
+
+
+def test_skips_orphan_category_check_when_no_services_loaded():
+    # _dataset() has categories pointing at service_id=1 but loads no services,
+    # so the check can't run - it must say so rather than report an empty pass.
+    result = IntegrityMetric().run({"original": _dataset()}, {"dataset": "original"})
+    assert result.status == "ok"
+    assert result.details["orphans"]["categories_without_service"] is None
+    assert "categories_without_service" in result.details["skipped_checks"]
+    assert "Skipped: categories_without_service" in result.summary
+
+
+def test_finds_category_whose_service_is_missing():
+    dataset = TaxonomyDataset(
+        name="original",
+        services=[{"id": 1, "name": "Industry"}],
+        categories=[
+            {"id": 1, "name": "Accounting", "service_id": 1},
+            {"id": 2, "name": "Marketing", "service_id": 2},  # no such service
+        ],
+    )
+    result = IntegrityMetric().run({"original": dataset}, {"dataset": "original"})
+    assert result.details["orphans"]["categories_without_service"] == [2]
+    assert result.details["skipped_checks"] == {}
+    assert "Skipped" not in result.summary
