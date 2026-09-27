@@ -65,16 +65,27 @@ metrics:
   - id: saturation
     params:
       baseline: original
-      incoming: skillsfuture
-      # Names are compared with normalized exact matching first, then the
-      # RapidFuzz lexical matcher. The optional local sentence model then
-      # identifies semantic candidate equivalents among lexical non-matches.
-      # All results without a high-confidence match are ambiguous and require
-      # human review before an administrator adds, maps, or excludes them.
+      # Incoming sources are compared in order: each one against the baseline
+      # plus every earlier source, giving one point on the new-items curve.
+      # Declare another dataset above and append it, e.g. [skillsfuture, onet].
+      incoming: [skillsfuture]
+      # Exact matches (after folding case, '&'/'and' and plurals) are skipped.
+      # A close spelling (RapidFuzz >= threshold) is only skipped when the
+      # optional sentence model agrees (>= semantic_threshold); otherwise it
+      # is REVIEW_AMBIGUOUS, so "evaluation" is never dropped as "valuation".
       threshold: 90
       semantic_model: all-MiniLM-L6-v2
       semantic_threshold: 0.70
-      # An ADD_CANDIDATE recommendation needs low evidence from both matchers.
-      # Other non-matches remain REVIEW_AMBIGUOUS for administrator review.
+      # SkillsFuture job roles are titles ("Risk Manager") while original
+      # specialities are skills ("Risk Management"); low meaning scores between
+      # them are mostly loose associations, so job roles need a stronger match.
+      semantic_threshold_by_level:
+        specialities: 0.80
+      # ADD_CANDIDATE needs a low lexical score and, when the model is
+      # installed, a low semantic score. Other non-matches are REVIEW_AMBIGUOUS.
       add_candidate_lexical_threshold: 60
       add_candidate_semantic_threshold: 0.50
+      # Also look for a similar concept at the other levels (e.g. SkillsFuture
+      # skills vs original specialities); the parent check still applies.
+      # false = strict level-by-level comparison.
+      cross_level: true
