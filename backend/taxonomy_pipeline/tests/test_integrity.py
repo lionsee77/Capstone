@@ -99,3 +99,16 @@ def test_finds_category_whose_service_is_missing():
     assert result.details["orphans"]["categories_without_service"] == [2]
     assert result.details["skipped_checks"] == {}
     assert "Skipped" not in result.summary
+
+
+def test_reports_orphan_categories_when_services_table_is_present_but_empty():
+    # An empty services table is still a table: every category pointing at a
+    # service is an orphan, not a reason to skip the check.
+    dataset = TaxonomyDataset(
+        name="original",
+        services=[],
+        categories=[{"id": 1, "name": "Accounting", "service_id": 999}],
+    )
+    result = IntegrityMetric().run({"original": dataset}, {"dataset": "original"})
+    assert result.details["orphans"]["categories_without_service"] == [1]
+    assert result.details["skipped_checks"] == {}

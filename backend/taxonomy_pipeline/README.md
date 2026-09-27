@@ -309,6 +309,11 @@ datasets:
       categories: sf_categories  # concept to default it to its own name
 ```
 
+A table counts as present if the dump has a `CREATE TABLE` or an `INSERT`
+for it; a concept whose table is missing entirely is loaded as empty but
+reported as absent (`TaxonomyDataset.has_table()`), so metrics can skip a
+check instead of passing it on no data.
+
 To add a new source type (a live MariaDB connection, a CSV export, ...):
 implement `TaxonomySource.load()` (see `datasets/base.py`) and register a
 builder for it in `datasets/__init__.py`. No other file changes.
@@ -369,8 +374,10 @@ the CLI's stdout, `GET /runs/{run_id}`, or the SQLite `report_json` column:
 A check inside a metric that can't run on a given dataset is reported as
 `null`, not as an empty "all clean" result, and named with a reason in that
 result's `details.skipped_checks` - e.g. integrity's
-`orphans.categories_without_service` is `null` for a dataset that loads no
-`services` table (like `skillsfuture`).
+`orphans.categories_without_service` is `null` for a dataset that has no
+`services` table (like `skillsfuture`). A `services` table that exists but
+is empty is still checked, so every category pointing at a service is
+reported as an orphan.
 
 A metric erroring (bad params, unknown dataset) does **not** fail the whole
 run - `status` stays `"done"` with that one result marked `"error"`; only a

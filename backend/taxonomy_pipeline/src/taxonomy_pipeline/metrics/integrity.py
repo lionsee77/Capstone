@@ -107,12 +107,13 @@ class IntegrityMetric(Metric):
                 dangling_links.append(link)
 
         orphan_specialities = [r for r in ds.specialities if r.get("category_id") not in category_ids]
-        # A dataset with no services loaded can't be checked for category ->
+        # A dataset with no services table can't be checked for category ->
         # service orphans at all - report that as skipped (None), not as an
-        # empty "all clean" list.
+        # empty "all clean" list. A services table that exists but is empty
+        # is still checked: every category pointing at a service is an orphan.
         skipped_checks: dict[str, str] = {}
         orphan_categories: list[dict[str, Any]] | None = None
-        if ds.services:
+        if ds.has_table("services"):
             orphan_categories = [r for r in ds.categories if r.get("service_id") not in service_ids]
         else:
             skipped_checks["categories_without_service"] = "no services table loaded for this dataset"

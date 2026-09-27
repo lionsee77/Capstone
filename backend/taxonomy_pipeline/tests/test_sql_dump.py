@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from taxonomy_pipeline.datasets.sql_dump import SqlDumpSource, iter_insert_statements
+from taxonomy_pipeline.datasets.sql_dump import SqlDumpSource, iter_created_tables, iter_insert_statements
 from tests.conftest import FIXTURES
 
 
@@ -109,3 +109,41 @@ def test_ignores_insert_like_text_inside_sql_comments():
     statements = list(iter_insert_statements(sql))
 
     assert statements == [("tags", [{"id": 1, "name": "Real tag"}])]
+
+
+def test_created_table_without_inserts_counts_as_present_but_empty(tmp_path):
+    dump = tmp_path / "dump.sql"
+    dump.write_text(
+        "CREATE TABLE `services` (`id` int, `name` varchar(255));\n"
+        "INSERT INTO `categories` (`id`, `name`, `service_id`) VALUES (1, 'Accounting', 999);\n"
+    )
+    dataset = SqlDumpSource(name="original", paths=[dump]).load()
+    assert dataset.has_table("services") is True
+    assert dataset.services == []
+    assert dataset.has_table("categories") is True
+
+
+def test_table_missing_from_the_dump_is_not_present(tmp_path):
+    dump = tmp_path / "dump.sql"
+    dump.write_text("INSERT INTO `categories` (`id`, `name`) VALUES (1, 'Accounting');\n")
+    dataset = SqlDumpSource(name="original", paths=[dump]).load()
+    assert dataset.has_table("services") is False
+    assert dataset.services == []
+
+
+def test_create_table_if_not_exists_like_counts_as_present_via_table_map(tmp_path):
+    # The skillsfuture generator's style: sf_* tables cloned from the originals.
+    dump = tmp_path / "dump.sql"
+    dump.write_text("CREATE TABLE IF NOT EXISTS sf_categories LIKE categories;\n")
+    dataset = SqlDumpSource(name="sf", paths=[dump], table_map={"categories": "sf_categories"}).load()
+    assert dataset.has_table("categories") is True
+    assert dataset.has_table("services") is False
+
+
+def test_ignores_create_table_text_inside_quoted_fields_and_comments():
+    sql = """
+    -- CREATE TABLE services (id int);
+    /* CREATE TABLE tags (id int); */
+    INSERT INTO `categories` (`id`, `name`) VALUES (1, 'CREATE TABLE specialities (id int)');
+    """
+    assert list(iter_created_tables(sql)) == []
