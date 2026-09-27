@@ -8,18 +8,17 @@ categories against baseline categories, instead of tags against tags.
 """
 from __future__ import annotations
 
-import math
 from collections import Counter
 from typing import Any
 
 from ..datasets.base import LoadedDataset, TaxonomyDataset
 from ..models import MetricResult
 from .base import Metric
-from .integrity import normalize
-from .saturation import SemanticMatcher, _compare_level
+from .saturation import SemanticMatcher, _compare_level, _KnownPool, _Parents, _validated_float
 
 NEW_CATEGORY = "NEW_CATEGORY"
 NO_SOURCE_CATEGORY = "NO_SOURCE_CATEGORY"
+INVALID_CATEGORY_NAME = "INVALID_CATEGORY_NAME"
 
 
 def _tag_source_categories(
@@ -133,18 +132,10 @@ class CategoryAdaptationMetric(Metric):
             )
 
         try:
-            threshold = float(p["threshold"])
-            if not math.isfinite(threshold) or not 0 <= threshold <= 100:
-                raise ValueError("threshold must be finite and between 0 and 100")
-            semantic_threshold = float(p["semantic_threshold"])
-            if not math.isfinite(semantic_threshold) or not -1 <= semantic_threshold <= 1:
-                raise ValueError("semantic_threshold must be finite and between -1 and 1")
-            add_candidate_lexical_threshold = float(p["add_candidate_lexical_threshold"])
-            if not math.isfinite(add_candidate_lexical_threshold) or not 0 <= add_candidate_lexical_threshold <= 100:
-                raise ValueError("add_candidate_lexical_threshold must be finite and between 0 and 100")
-            add_candidate_semantic_threshold = float(p["add_candidate_semantic_threshold"])
-            if not math.isfinite(add_candidate_semantic_threshold) or not -1 <= add_candidate_semantic_threshold <= 1:
-                raise ValueError("add_candidate_semantic_threshold must be finite and between -1 and 1")
+            threshold = _validated_float(p, "threshold", 0, 100)
+            semantic_threshold = _validated_float(p, "semantic_threshold", -1, 1)
+            add_candidate_lexical_threshold = _validated_float(p, "add_candidate_lexical_threshold", 0, 100)
+            add_candidate_semantic_threshold = _validated_float(p, "add_candidate_semantic_threshold", -1, 1)
         except (TypeError, ValueError) as exc:
             return MetricResult(metric_id=self.id, status="error", summary=str(exc))
         try:
@@ -163,44 +154,84 @@ class CategoryAdaptationMetric(Metric):
                 referenced[category.get("id")] = category
         source_category_rows = list(referenced.values())
 
+        # Reuses saturation's own matcher machinery: a pool seeded with just
+        # the baseline (no earlier incoming sources - Case A only ever
+        # compares one source's categories against the accepted baseline).
+        # cross_level=False keeps this to category-vs-category only.
+        pool = _KnownPool()
+        pool.add(baseline.name, baseline)
+        parents = _Parents(incoming)
+        settings = {
+            "threshold": threshold,
+            "semantic_threshold": semantic_threshold,
+            "add_candidate_lexical_threshold": add_candidate_lexical_threshold,
+            "add_candidate_semantic_threshold": add_candidate_semantic_threshold,
+            "cross_level": False,
+            "semantic_threshold_by_level": {},
+        }
         category_comparison = _compare_level(
-            baseline.categories,
-            source_category_rows,
-            threshold,
-            semantic_matcher,
-            semantic_threshold,
-            add_candidate_lexical_threshold,
-            add_candidate_semantic_threshold,
+            "categories", source_category_rows, pool, parents, settings, semantic_matcher, seen_in_source={}
         )
 
-        # Keyed by normalized name, not id: _compare_level dedupes its own
-        # incoming rows by normalized name, so two source categories that
-        # happen to share a name would otherwise leave one id unresolvable.
         baseline_categories_by_id = {row.get("id"): row for row in baseline.categories}
         matched_baseline_rows: list[dict[str, Any]] = []
-        placement_by_normalized_name: dict[str, dict[str, Any]] = {}
-        for detail_list, match_type in (
-            (category_comparison["exact_match_details"], "exact"),
-            (category_comparison["fuzzy_match_details"], "lexical"),
-            (category_comparison["semantic_match_details"], "semantic"),
+        # Keyed by source category id (every match/ambiguous entry now
+        # carries `incoming_ids`, covering every id in its name-grouped
+        # cluster) - simpler and safer than the old name-based keying, which
+        # broke when two source categories shared a normalized name.
+        placement_by_source_category_id: dict[Any, dict[str, Any]] = {}
+
+        for match in (
+            category_comparison["exact_match_details"]
+            + category_comparison["fuzzy_match_details"]
+            + category_comparison["semantic_match_details"]
         ):
-            for match in detail_list:
-                baseline_row = baseline_categories_by_id.get(match["baseline_id"])
-                if baseline_row is not None:
-                    matched_baseline_rows.append(baseline_row)
-                placement_by_normalized_name[normalize(match["incoming_name"])] = {
-                    "action": match["recommended_action"],
-                    "match_type": match_type,
-                    "score": match.get("score", match.get("semantic_score")),
-                    "target_category_id": match["baseline_id"],
-                    "target_category_name": match["baseline_name"],
-                    "needs_review": False,
+            baseline_row = baseline_categories_by_id.get(match["baseline_id"])
+            if baseline_row is not None:
+                matched_baseline_rows.append(baseline_row)
+            placement = {
+                "action": match["recommended_action"],
+                "match_type": match["match_type"],
+                "score": match.get("score", match.get("semantic_score")),
+                "target_category_id": match["baseline_id"],
+                "target_category_name": match["baseline_name"],
+                "needs_review": False,
+            }
+            for source_category_id in match["incoming_ids"]:
+                placement_by_source_category_id[source_category_id] = placement
+
+        # Known concept, but the source files it under a different service
+        # than the baseline does (e.g. its own service parent doesn't cover
+        # what the matched baseline category is known under) - genuinely
+        # worth a human's attention, not a plain skip.
+        for placement_entry in category_comparison["new_placement_details"]:
+            for source_category_id in placement_entry["incoming_ids"]:
+                placement_by_source_category_id[source_category_id] = {
+                    "action": "REVIEW_NEW_PLACEMENT",
+                    "match_type": placement_entry["match_type"],
+                    "score": placement_entry.get("score", placement_entry.get("semantic_score")),
+                    "target_category_id": placement_entry["baseline_id"],
+                    "target_category_name": placement_entry["baseline_name"],
+                    "existing_parents": placement_entry.get("existing_parents"),
+                    "unmatched_incoming_parents": placement_entry.get("unmatched_incoming_parents"),
+                    "needs_review": True,
+                }
+
+        # cross_level=False means this should never actually fire; handled
+        # defensively rather than silently dropping a category outright.
+        for other_level in category_comparison["other_level_match_details"]:
+            for source_category_id in other_level["incoming_ids"]:
+                placement_by_source_category_id[source_category_id] = {
+                    "action": "REVIEW_OTHER_LEVEL",
+                    "match_type": other_level.get("match_type"),
+                    "target_category_id": None,
+                    "target_category_name": None,
+                    "needs_review": True,
                 }
 
         for ambiguous in category_comparison["ambiguous_concepts"]:
-            key = normalize(ambiguous["incoming_name"])
             if ambiguous["recommended_action"] == "ADD_CANDIDATE":
-                placement_by_normalized_name[key] = {
+                placement = {
                     "action": NEW_CATEGORY,
                     "match_type": None,
                     "score": None,
@@ -210,7 +241,7 @@ class CategoryAdaptationMetric(Metric):
                     "needs_review": True,
                 }
             else:  # REVIEW_AMBIGUOUS - defer to Lionel's ambiguity box, don't decide here.
-                placement_by_normalized_name[key] = {
+                placement = {
                     "action": "REVIEW_AMBIGUOUS",
                     "match_type": None,
                     "score": None,
@@ -219,7 +250,18 @@ class CategoryAdaptationMetric(Metric):
                     "target_category_id": None,
                     "target_category_name": None,
                     "needs_review": True,
-                } 
+                }
+            for source_category_id in ambiguous["incoming_ids"]:
+                placement_by_source_category_id[source_category_id] = placement
+
+       
+        for invalid in category_comparison["skipped_invalid"]:
+            placement_by_source_category_id[invalid["incoming_id"]] = {
+                "action": INVALID_CATEGORY_NAME,
+                "target_category_id": None,
+                "target_category_name": None,
+                "needs_review": True,
+            }
 
         placements: list[dict[str, Any]] = []
         for tag_id, categories in source_categories_by_tag.items():
@@ -230,7 +272,7 @@ class CategoryAdaptationMetric(Metric):
                 )
                 continue
             for category in categories:
-                placement = dict(placement_by_normalized_name[normalize(category.get("name"))])
+                placement = dict(placement_by_source_category_id[category.get("id")])
                 placement["tag_id"] = tag_id
                 placement["tag_name"] = tag_name
                 placement["source_category_id"] = category.get("id")

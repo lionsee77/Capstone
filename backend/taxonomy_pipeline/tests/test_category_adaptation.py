@@ -66,17 +66,52 @@ def test_matched_source_category_reuses_the_existing_baseline_id():
     assert placement["needs_review"] is False
 
 
-def test_unmatched_source_category_with_no_semantic_model_is_review_ambiguous():
-    # Without a semantic model, a low-lexical-only score can never satisfy
-    # saturation's "low_lexical AND low_semantic" rule for ADD_CANDIDATE
-    # (semantic_score is None, never "< threshold"), so it stays uncertain
-    # rather than being auto-promoted to a new category.
+def test_unmatched_source_category_becomes_new_category_even_without_semantic_model():
+    # saturation.py's low_semantic check treats a missing semantic score (no
+    # model configured) as "low" by default, so a low lexical score alone is
+    # enough to reach ADD_CANDIDATE/NEW_CATEGORY - a semantic model narrows
+    # false positives, it isn't required to reach this outcome at all.
     result = _run([9002])
 
     placements = result.details["placements"]
     assert len(placements) == 1
-    assert placements[0]["action"] == "REVIEW_AMBIGUOUS"
+    assert placements[0]["action"] == "NEW_CATEGORY"
     assert placements[0]["needs_review"] is True
+
+
+def test_close_lexical_spelling_alone_stays_ambiguous_not_a_match(monkeypatch):
+    # The module's whole point (see saturation.py's docstring): close
+    # spelling must be confirmed by meaning, or it doesn't count - a fake
+    # matcher that disagrees keeps this REVIEW_AMBIGUOUS, never a skip.
+    class DisagreeingSemanticMatcher:
+        def __init__(self, model_name):
+            assert model_name == "test-model"
+
+        def best_matches(self, queries, choices):
+            return [(choices[0] if choices else None, 0.1) for _ in queries]
+
+    datasets = {
+        "original": TaxonomyDataset(name="original", categories=[{"id": 1, "name": "Valuation", "service_id": 1}]),
+        "skillsfuture": TaxonomyDataset(
+            name="skillsfuture",
+            categories=[{"id": 501, "name": "Evaluation", "service_id": 1}],
+            specialities=[{"id": 601, "name": "Some Speciality", "category_id": 501}],
+            tags=[{"id": 9001, "name": "some tag"}],
+            speciality_tags=[{"id": 701, "speciality_id": 601, "tag_id": 9001}],
+        ),
+    }
+    monkeypatch.setattr(category_adaptation, "SemanticMatcher", DisagreeingSemanticMatcher)
+    result = CategoryAdaptationMetric().run(
+        datasets,
+        {
+            "baseline": "original", "incoming": "skillsfuture", "new_tag_ids": [9001],
+            "semantic_model": "test-model", "threshold": 80,
+        },
+    )
+
+    placements = result.details["placements"]
+    assert len(placements) == 1
+    assert placements[0]["action"] == "REVIEW_AMBIGUOUS"
 
 
 def test_unmatched_source_category_becomes_a_new_category_with_a_namespaced_id(monkeypatch):
