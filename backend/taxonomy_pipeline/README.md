@@ -23,7 +23,7 @@ taxonomy_pipeline/
 │   │   ├── integrity.py              #   duplicates, orphans, dead ends
 │   │   ├── depth.py                  #   branching factor
 │   │   ├── breadth.py                #   coverage vs. a reference dataset
-│   │   ├── saturation.py             #   candidate-new concepts from an incoming taxonomy
+│   │   ├── saturation.py             #   new-items curve across ordered incoming sources
 │   │   └── registry.py               #   METRICS dict - register new metrics here
 │   ├── config.py                     # YAML/JSON pipeline config (datasets + metrics)
 │   ├── pipeline.py                   # run_pipeline(config) -> RunReport
@@ -61,13 +61,94 @@ This loads `backend/sql-files-nus/*.sql` (Ankit's original taxonomy) and
 `backend/skillsfuture/skillsfuture_taxonomy.sql` (the generated SkillsFuture
 taxonomy's `sf_*` tables), runs integrity + depth on each, evaluates both
 taxonomies against SSIC 2025 and SSOC 2024 for breadth, and compares
-SkillsFuture concepts against the original taxonomy for `saturation`. Its
-exact matches are found first, then lexical candidates, then optional semantic
-candidate equivalents at the same concept level. Semantic candidates are
-review evidence, not automatic additions. Concepts unmatched by all stages are
-ambiguous concepts for human review. Prints the full JSON report to stdout
+SkillsFuture concepts against the original taxonomy for `saturation` (see
+[below](#saturation-new-items-curve)). Prints the full JSON report to stdout
 and a one-line-per-metric summary to stderr; pass
 `--output report.json` to write the report to a file instead.
+
+## Saturation: new-items curve
+
+`saturation` measures how many genuinely new concepts each incoming source
+adds. List sources in order with `incoming: [skillsfuture, another, ...]`
+(a single name still works). Source *k* is compared against the baseline
+plus every concept from sources 1..*k*-1, so a falling rate across
+`details.curve` is the evidence the taxonomy is approaching saturation. The
+whole curve comes from one run; each run is already stored in SQLite.
+
+Named rows are grouped per level by a match key (normalised name, `&` ->
+`and`, `-isation` -> `-ization`, plural `s` dropped), so "Machine Learning"
+under two parents is one concept.
+
+Every incoming concept gets **one verdict**. First: is there a similar
+concept at **any** level of what is known? Sources don't use levels the same
+way (original specialities are skills; SkillsFuture specialities are job
+titles and its tags are skills), so all levels are searched. Evidence tiers
+run strongest first - same match key, close spelling (RapidFuzz >=
+`threshold`) confirmed by the sentence model (>= `semantic_threshold`), then
+meaning alone - and within a tier a same-level match wins. Every match
+reports `baseline_level` and `match_type`.
+
+| Incoming concept | Similar concept known? | Parents similar? | Verdict |
+|---|---|---|---|
+| no parent in its source, or a tag | yes | not checked | `SKIP_DUPLICATE` / `SKIP_SEMANTIC_DUPLICATE` |
+| has a parent | yes, but at another level | not comparable | `REVIEW_OTHER_LEVEL` (`reason: parent_not_comparable`) |
+| has a parent | yes | yes | `SKIP_DUPLICATE` / `SKIP_SEMANTIC_DUPLICATE` (`parent_check: same_parent`) |
+| has a parent | yes | no | `REVIEW_NEW_PLACEMENT` |
+| any | no - nothing even moderately close at any level | - | `ADD_CANDIDATE` |
+| any | no - but a close spelling without meaning agreement, or partly similar | - | `REVIEW_AMBIGUOUS` |
+
+Parent check details:
+
+- Parents are resolved inside each concept's own source (speciality ->
+  category, category -> service). An incoming parent is similar to a known
+  parent with the same match key or, with the model, semantic score >=
+  `semantic_threshold`. **Every** incoming parent must be similar to some
+  parent of the known concept; `new_placement_details` lists only the
+  `unmatched_incoming_parents`, next to `existing_parents`.
+- The check only runs for same-level matches. A match at another level has
+  a different kind of parent (e.g. a SkillsFuture sector vs the specialities
+  an original tag hangs off), so it is `REVIEW_OTHER_LEVEL`: already known,
+  so not new and not a new placement, but the team checks it.
+- Tags skip the check: in this schema a tag is a shared keyword, so linking
+  a known tag to new specialities is an integration step, not a new concept.
+- Placements from earlier sources are remembered, so a later source is not
+  flagged again for the same concept under the same parent.
+- `REVIEW_NEW_PLACEMENT` is a known concept in a new context (e.g. "Machine
+  Learning" under Finance when the taxonomy has it under Healthcare). It is
+  **not** counted in the new-items rate; it has its own `new_placements` and
+  `new_placement_rate` (new placements / placements checked).
+
+Blank and placeholder names ("test", "new", ...) are listed in
+`skipped_invalid`. A name that appears at two levels of the same source is
+counted once, at the first level; the repeat is listed in
+`repeated_in_source_other_level`. Set `cross_level: false` for a strict
+level-by-level comparison.
+
+`semantic_threshold_by_level` overrides `semantic_threshold` for matching
+concepts of one incoming level, e.g. `{specialities: 0.80}`: SkillsFuture
+job titles scored 0.70-0.75 against loosely related skills ("Head of Sales"
+-> "sales"). The parent check always uses `semantic_threshold`.
+
+Per step, `new_rate_min` = add candidates / concepts reviewed and
+`new_rate_max` = (add candidates + review items) / concepts reviewed.
+
+Every incoming concept - duplicates included - carries `parent_status`
+(`HAS_PARENT` / `NO_PARENT`), `parent_level`, `parent_count` and `parents`,
+resolved **inside its own source**: speciality -> category, category ->
+service, tag -> linked specialities. The SkillsFuture dump defines no
+services of its own, so its sectors (categories) are `NO_PARENT`.
+`parent_status_counts` covers every reviewed concept;
+`parent_status_counts_flagged` covers only `ADD_CANDIDATE`,
+`REVIEW_AMBIGUOUS`, `REVIEW_NEW_PLACEMENT` and `REVIEW_OTHER_LEVEL`. For a duplicate skill, the
+`parents` list shows which job roles link to a tag we already have.
+
+`details.overall` and `details.by_concept_level` keep their existing shape
+and describe the last source; `details.steps` holds the same block for every
+source and `details.curve` lists `{step, source, reviewed, add_candidates,
+review_ambiguous, new_rate_min, new_rate_max, new_placements,
+new_placement_rate, review_other_level, cumulative_known_concepts}`.
+Matches also report `matched_source` and `baseline_status`; matches to
+inactive (`status='0'`) rows are counted in `matched_inactive`.
 
 ## Industry and occupational breadth
 
@@ -233,12 +314,9 @@ Ruff linting and the test suite run in CI (see the root
 
 ## Known gaps
 
-- **`saturation`** makes recommendations for each incoming concept: exact and
-  high-lexical matches become `SKIP_DUPLICATE`, high-semantic matches become
-  `SKIP_SEMANTIC_DUPLICATE`, low lexical and semantic scores become
-  `ADD_CANDIDATE`, and all other non-matches become `REVIEW_AMBIGUOUS`.
-  These are review recommendations, not database operations; semantic
-  equivalence still requires administrator confirmation.
+- **`saturation`** recommendations are review aids, not database
+  operations. Its thresholds are not yet calibrated against a hand-labelled
+  set of pairs, and with only SkillsFuture loaded the curve has one point.
 - **`breadth`** and the fuzzy layer of **`integrity`** use lexical
   (RapidFuzz) matching only. Saturation additionally supports an optional
   `sentence-transformers` embedding model for semantic candidates.
