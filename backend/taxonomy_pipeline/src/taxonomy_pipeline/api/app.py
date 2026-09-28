@@ -2,8 +2,8 @@
 
 A run is a batch job, not a request/response - `POST /runs` validates the
 config, schedules the work as a background task, and returns immediately
-with a run id. Poll `GET /runs/{run_id}` for status and, once done, the
-report. This is also the seam a future admin dashboard talks to.
+with a run id. Poll `GET /runs/{run_id}` for status (queued -> running ->
+done|failed) and, once done, the report. This is also the seam a future admin dashboard talks to.
 """
 from __future__ import annotations
 
@@ -24,10 +24,16 @@ app = FastAPI(
 )
 
 
-def _execute_and_save(run_id: str, config: PipelineConfig) -> None:
+def _execute_and_save(queued: RunReport, config: PipelineConfig) -> None:
+    config_json = config.model_dump_json()
+    # Persist "running" before the (potentially slow) pipeline starts, so a
+    # poller sees queued -> running -> done|failed rather than a jump.
+    queued.status = "running"
+    db.save_run(queued, config_json=config_json)
+
     report = run_pipeline(config)
-    report.run_id = run_id  # keep the id the caller was given, not a fresh one
-    db.save_run(report, config_json=config.model_dump_json())
+    report.run_id = queued.run_id  # keep the id the caller was given, not a fresh one
+    db.save_run(report, config_json=config_json)
 
 
 def _require_absolute_dataset_paths(config: PipelineConfig) -> None:
@@ -63,7 +69,7 @@ def create_run(config: PipelineConfig, background_tasks: BackgroundTasks) -> dic
     _require_absolute_dataset_paths(config)
     report = RunReport(status="queued")
     db.save_run(report, config_json=config.model_dump_json())
-    background_tasks.add_task(_execute_and_save, report.run_id, config)
+    background_tasks.add_task(_execute_and_save, report, config)
     return {"run_id": report.run_id, "status": "queued"}
 
 

@@ -17,6 +17,10 @@ _INSERT_HEADER = re.compile(
     r"INSERT INTO\s+`?(?P<table>\w+)`?\s*\((?P<columns>[^)]*)\)\s*VALUES\s*",
     re.IGNORECASE,
 )
+_CREATE_HEADER = re.compile(
+    r"CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?`?(?P<table>\w+)`?",
+    re.IGNORECASE,
+)
 
 # Maps a single escaped character (the char after a backslash in a SQL
 # string literal) to what it decodes to. Anything not listed here just
@@ -211,6 +215,18 @@ def iter_insert_statements(sql_text: str) -> Iterator[tuple[str, list[dict[str, 
         yield table, rows
 
 
+def iter_created_tables(sql_text: str) -> Iterator[str]:
+    """Yield the table name of every CREATE TABLE statement in `sql_text`,
+    using the same quote/comment-aware scan as `iter_insert_statements`.
+    Lets a loader tell an empty table (created, no INSERTs) from a missing one.
+    """
+    for start, end in _iter_sql_statements(sql_text):
+        statement_start = _skip_whitespace_and_comments(sql_text, start)
+        header = _CREATE_HEADER.match(sql_text, statement_start, end)
+        if header is not None:
+            yield header.group("table")
+
+
 class SqlDumpSource:
     """Reads one or more SQL dump files and maps their tables onto the
     canonical taxonomy concepts via `table_map` (concept -> actual table
@@ -232,11 +248,17 @@ class SqlDumpSource:
         tables: dict[str, list[dict[str, Any]]] = {}
         for path in self.paths:
             text = path.read_text(encoding="utf-8", errors="replace")
+            for table in iter_created_tables(text):
+                tables.setdefault(table, [])
             for table, rows in iter_insert_statements(text):
                 tables.setdefault(table, []).extend(rows)
 
+        # Only pass concepts whose table the dump actually has (created or
+        # inserted into), so TaxonomyDataset.has_table() can tell a missing
+        # table from an empty one.
         data = {
-            concept: tables.get(table_name, [])
+            concept: tables[table_name]
             for concept, table_name in self.table_map.items()
+            if table_name in tables
         }
         return TaxonomyDataset(name=self.name, **data)

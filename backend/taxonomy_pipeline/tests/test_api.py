@@ -67,3 +67,26 @@ def test_get_unknown_run_is_404(isolated_db):
     client = TestClient(app)
     response = client.get("/runs/does-not-exist")
     assert response.status_code == 404
+
+
+def test_run_is_marked_running_while_the_pipeline_executes(isolated_db, monkeypatch):
+    from taxonomy_pipeline import db
+    from taxonomy_pipeline.api import app as app_module
+    from taxonomy_pipeline.models import RunReport
+
+    statuses_seen_mid_run = []
+
+    def fake_run_pipeline(config):
+        # The only row in the isolated DB is this run; run_id isn't bound yet
+        # because the background task executes before client.post returns.
+        statuses_seen_mid_run.extend(record.status for record in db.list_runs())
+        return RunReport(status="done")
+
+    monkeypatch.setattr(app_module, "run_pipeline", fake_run_pipeline)
+    client = TestClient(app)
+
+    created = client.post("/runs", json=_config_payload())
+    run_id = created.json()["run_id"]
+    # TestClient runs BackgroundTasks before returning, so by now it's finished.
+    assert statuses_seen_mid_run == ["running"]
+    assert client.get(f"/runs/{run_id}").json()["status"] == "done"

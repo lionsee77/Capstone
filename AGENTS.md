@@ -64,11 +64,18 @@ new work should follow the same shape unless there's a good reason not to.
 - Commit subjects use a conventional-commit-style prefix: `feat:`, `fix:`,
   `chore:`, `ci:`, `docs:`, `init:`. Keep the subject in plain imperative
   language after the prefix.
+- Flow is feature branch -> `dev` -> `main`. Branch from `dev` (the default
+  branch) and open PRs against `dev`; `main` only receives `dev` -> `main`
+  promotion PRs. Both branches carry the same protections and required
+  checks.
 - Land work via PR + merge commit (`Merge pull request #N ...`), not direct
-  pushes to `main`.
+  pushes to `dev` or `main`.
 
 ## Docs
 
 - Every subproject with a CLI/API surface gets a `README.md` covering
   setup, how to run it, and its directory structure as an annotated tree -
   don't rely on the code alone to onboard the next contributor.
+- Read a subproject's `README.md` before changing that subproject.
+- If a change alters behaviour, config params, CLI flags, or report fields,
+  update that subproject's README in the same PR - a stale README is a bug.
