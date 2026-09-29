@@ -38,6 +38,28 @@ taxonomy_pipeline/
     └── fixtures/                     # tiny synthetic SQL dumps used by the tests
 ```
 
+## Classification output contract
+
+Shared models and fixtures define Case A/B handoffs. Taxonomy
+lookup, deduplication, and merge preview generation are still pending.
+
+```text
+src/taxonomy_pipeline/classification/models.py  # classification and merge data models
+schemas/classification_output.schema.json      # JSON array contract for both branches
+tests/fixtures/classification/                 # sample outputs and taxonomy snapshot
+tests/test_classification_models.py            # contract validation tests
+```
+
+Both branches supply exactly eight fields: `source_dataset`, `tag_id`,
+`original_tag`, `original_classification`, `category`, `speciality`, `confidence`,
+and `reason`. Parse an array with `CLASSIFICATION_OUTPUTS.validate_json(payload)`
+from `taxonomy_pipeline.classification.models`. Unresolved placements use explicit
+`null` values for category, speciality, and confidence. The model checks types and
+complete placements; checking names against the taxonomy is not yet implemented.
+
+See the [classification output contract](CLASSIFICATION_OUTPUT_CONTRACT.md) for fields,
+examples and handoff rules.
+
 ## Setup
 
 ```bash

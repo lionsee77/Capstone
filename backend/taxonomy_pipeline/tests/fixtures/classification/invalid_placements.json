@@ -1,0 +1,22 @@
+[
+  {
+    "source_dataset": "plain-skills",
+    "tag_id": "49",
+    "original_tag": "Quantum analysis",
+    "original_classification": "unclassified",
+    "category": "Quantum science",
+    "speciality": "Quantum computing",
+    "confidence": 0.75,
+    "reason": "The proposed path does not exist in the fixture taxonomy."
+  },
+  {
+    "source_dataset": "categorized-skills",
+    "tag_id": "50",
+    "original_tag": "Animal studies",
+    "original_classification": "classified",
+    "category": "Data analytics",
+    "speciality": "Zoology",
+    "confidence": 0.6,
+    "reason": "Both names exist but the speciality belongs to a different category."
+  }
+]
