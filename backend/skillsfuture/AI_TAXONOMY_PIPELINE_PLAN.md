@@ -200,7 +200,7 @@ skillsfuture/
   - Does not connect to MySQL.
 
 - `classify_unmapped_skills.py`
-  - Sends unmapped tags to the configured AI model through OpenRouter.
+  - Sends unmapped tags to the configured OpenAI model.
   - Produces JSON and CSV proposals.
   - Does not modify MySQL or the generated SQL.
 
@@ -239,9 +239,8 @@ cp .env.example .env
 The relevant settings are:
 
 ```env
-OPENROUTER_API_KEY=your-openrouter-api-key
-OPENAI_BASE_URL=https://openrouter.ai/api/v1
-OPENAI_MODEL=nvidia/nemotron-3.5-lightning:free
+OPENAI_API_KEY=your-openai-api-key
+OPENAI_MODEL=gpt-4o-mini
 ```
 
 The classifier loads `.env` automatically. Do not commit `.env` or expose the

@@ -1,0 +1,3053 @@
+[
+  {
+    "tag": "First-Responder Anti-Harassment Support Provision",
+    "tag_id": "3000",
+    "action": "assign_existing",
+    "category": "Security",
+    "speciality": "Auxiliary Police Officer",
+    "confidence": 0.9,
+    "reason": "The skill 'First-Responder Anti-Harassment Support Provision' aligns with the responsibilities of security personnel, particularly in providing support during incidents."
+  },
+  {
+    "tag": "Generative AI Principles and Applications",
+    "tag_id": "3002",
+    "action": "propose_new_speciality",
+    "category": "Infocomm Technology",
+    "speciality": "Generative AI Specialist",
+    "confidence": 0.85,
+    "reason": "Generative AI principles and applications are emerging fields that require specialized knowledge and skills not currently covered by existing specialities."
+  },
+  {
+    "tag": "Generative AI Strategy",
+    "tag_id": "3004",
+    "action": "propose_new_speciality",
+    "category": "Infocomm Technology",
+    "speciality": "Generative AI Strategist",
+    "confidence": 0.85,
+    "reason": "The skill 'Generative AI Strategy' indicates a need for strategic roles in AI that are not explicitly defined in current specialities."
+  },
+  {
+    "tag": "Perform Rigging of Suspended Scaffold",
+    "tag_id": "3005",
+    "action": "assign_existing",
+    "category": "Workplace Safety and Health",
+    "speciality": "Workplace Safety and Health Officer",
+    "confidence": 0.8,
+    "reason": "Performing rigging of suspended scaffold is closely related to workplace safety practices, making it relevant to the safety and health domain."
+  },
+  {
+    "tag": "Perform Fitting Works in Workshop",
+    "tag_id": "3014",
+    "action": "assign_existing",
+    "category": "Precision Engineering",
+    "speciality": "Machinist / Technician",
+    "confidence": 0.9,
+    "reason": "Performing fitting works in a workshop is a core skill for machinists and technicians in precision engineering."
+  },
+  {
+    "tag": "Special Effects Makeup Application",
+    "tag_id": "3026",
+    "action": "propose_new_speciality",
+    "category": "Arts",
+    "speciality": "Special Effects Makeup Artist",
+    "confidence": 0.9,
+    "reason": "The skill 'Special Effects Makeup Application' directly relates to the arts, specifically in the field of makeup artistry for film and theater."
+  },
+  {
+    "tag": "Parenting Guidance",
+    "tag_id": "3027",
+    "action": "assign_existing",
+    "category": "Early Childhood",
+    "speciality": "Parenting Guidance Specialist",
+    "confidence": 0.8,
+    "reason": "Parenting guidance is closely related to early childhood education and support, making it a suitable fit within this category."
+  },
+  {
+    "tag": "Mobility and Ambulation Assistance",
+    "tag_id": "3040",
+    "action": "assign_existing",
+    "category": "Healthcare",
+    "speciality": "Mobility and Ambulation Assistant",
+    "confidence": 0.85,
+    "reason": "Mobility and ambulation assistance is a critical aspect of healthcare, particularly in supporting patients with mobility challenges."
+  },
+  {
+    "tag": "Design for Additive Manufacturing",
+    "tag_id": "3051",
+    "action": "assign_existing",
+    "category": "Manufacturing",
+    "speciality": "Additive Manufacturing Specialist",
+    "confidence": 0.9,
+    "reason": "Design for additive manufacturing is a specialized skill within the manufacturing sector, focusing on 3D printing technologies."
+  },
+  {
+    "tag": "Manufacturing Compliance Documentation",
+    "tag_id": "3065",
+    "action": "assign_existing",
+    "category": "Manufacturing",
+    "speciality": "Compliance Documentation Specialist",
+    "confidence": 0.8,
+    "reason": "Manufacturing compliance documentation is essential for ensuring adherence to industry standards and regulations."
+  },
+  {
+    "tag": "Customs Valuation",
+    "tag_id": "3067",
+    "action": "assign_existing",
+    "category": "Logistics",
+    "speciality": "Customs Valuation Specialist",
+    "confidence": 0.9,
+    "reason": "Customs Valuation is directly related to logistics and trade compliance."
+  },
+  {
+    "tag": "Customs Verification and Audit Management",
+    "tag_id": "3068",
+    "action": "assign_existing",
+    "category": "Logistics",
+    "speciality": "Customs Verification and Audit Manager",
+    "confidence": 0.9,
+    "reason": "Customs Verification and Audit Management is a key function within logistics and trade compliance."
+  },
+  {
+    "tag": "Positive Behaviour Promotion",
+    "tag_id": "3075",
+    "action": "assign_existing",
+    "category": "Social Service",
+    "speciality": "Positive Behaviour Support Specialist",
+    "confidence": 0.85,
+    "reason": "Positive Behaviour Promotion aligns with social service practices, particularly in educational and care settings."
+  },
+  {
+    "tag": "Hair Cutting and Styling",
+    "tag_id": "3077",
+    "action": "assign_existing",
+    "category": "Food Services",
+    "speciality": "Hair Stylist",
+    "confidence": 0.8,
+    "reason": "Hair Cutting and Styling is relevant to personal grooming services, which can be categorized under food services in hospitality contexts."
+  },
+  {
+    "tag": "Rotoscoping, Paint and Matte Work",
+    "tag_id": "3089",
+    "action": "assign_existing",
+    "category": "Media",
+    "speciality": "Visual Effects Artist",
+    "confidence": 0.9,
+    "reason": "Rotoscoping, Paint and Matte Work are essential skills in the media and entertainment industry, specifically in visual effects."
+  },
+  {
+    "tag": "Air-freight Tracking System Administration",
+    "tag_id": "3094",
+    "action": "assign_existing",
+    "category": "Logistics",
+    "speciality": "Airside Officer",
+    "confidence": 0.9,
+    "reason": "The skill 'Air-freight Tracking System Administration' relates closely to logistics operations, particularly in air transport."
+  },
+  {
+    "tag": "Stereotypes and Stigmas Against Care Recipients",
+    "tag_id": "3099",
+    "action": "assign_existing",
+    "category": "Social Service",
+    "speciality": "Counsellor",
+    "confidence": 0.85,
+    "reason": "Understanding stereotypes and stigmas against care recipients is crucial for social service professionals, particularly in counselling roles."
+  },
+  {
+    "tag": "Workplace Safety and Health for Tank Cleaning",
+    "tag_id": "3109",
+    "action": "assign_existing",
+    "category": "Workplace Safety and Health",
+    "speciality": "Workplace Safety and Health Officer",
+    "confidence": 0.95,
+    "reason": "This skill directly pertains to workplace safety protocols, especially in specialized areas like tank cleaning."
+  },
+  {
+    "tag": "Workplace Safety and Health for Marine Electrical Installation",
+    "tag_id": "3122",
+    "action": "assign_existing",
+    "category": "Marine and Offshore",
+    "speciality": "Senior Workplace Safety and Health Officer",
+    "confidence": 0.9,
+    "reason": "The skill is relevant to safety practices in marine electrical installations, which is critical in the marine and offshore industry."
+  },
+  {
+    "tag": "Autonomous Vehicle Remote Intervention and System Recovery",
+    "tag_id": "3124",
+    "action": "propose_new_speciality",
+    "category": "Engineering Services",
+    "speciality": "Autonomous Vehicle Systems Engineer",
+    "confidence": 0.8,
+    "reason": "The skill involves advanced technology related to autonomous vehicles, which does not fit neatly into existing specialities."
+  },
+  {
+    "tag": "Motion Capture Pipeline Management",
+    "tag_id": "3129",
+    "action": "assign_existing",
+    "category": "Media",
+    "speciality": "Motion Capture Pipeline Management",
+    "confidence": 0.9,
+    "reason": "Motion capture is a technique used in media production, particularly in animation and video games."
+  },
+  {
+    "tag": "Perform Formwork Activities",
+    "tag_id": "3136",
+    "action": "assign_existing",
+    "category": "Built Environment",
+    "speciality": "Construction Manager",
+    "confidence": 0.8,
+    "reason": "Formwork activities are related to construction processes, which fall under the built environment."
+  },
+  {
+    "tag": "Grief and Loss Management",
+    "tag_id": "3138",
+    "action": "assign_existing",
+    "category": "Social Service",
+    "speciality": "Counsellor",
+    "confidence": 0.85,
+    "reason": "Grief and loss management is a key aspect of counselling in social services."
+  },
+  {
+    "tag": "Learning Mode Design",
+    "tag_id": "3139",
+    "action": "propose_new_speciality",
+    "category": "Training and Adult Education",
+    "speciality": "Learning Experience Designer",
+    "confidence": 0.75,
+    "reason": "Learning mode design focuses on creating effective learning experiences, which is a growing field in education."
+  },
+  {
+    "tag": "Operate Vertical Personnel Platform",
+    "tag_id": "3149",
+    "action": "assign_existing",
+    "category": "Logistics",
+    "speciality": "Operations Manager",
+    "confidence": 0.8,
+    "reason": "Operating vertical personnel platforms is relevant to logistics and operations management."
+  },
+  {
+    "tag": "Compositional Flexibility",
+    "tag_id": "3150",
+    "action": "propose_new_speciality",
+    "category": "Arts",
+    "speciality": "Compositional Flexibility Specialist",
+    "confidence": 0.8,
+    "reason": "This skill relates to creative flexibility in composition, which aligns with the arts domain."
+  },
+  {
+    "tag": "Lesson Delivery and Classroom Management",
+    "tag_id": "3152",
+    "action": "assign_existing",
+    "category": "Early Childhood",
+    "speciality": "Lead Early Years Educators",
+    "confidence": 0.9,
+    "reason": "Lesson delivery and classroom management are critical skills for educators in early childhood settings."
+  },
+  {
+    "tag": "Wound & Incontinence Management",
+    "tag_id": "3155",
+    "action": "assign_existing",
+    "category": "Healthcare",
+    "speciality": "Nurse Clinician",
+    "confidence": 0.85,
+    "reason": "Wound and incontinence management are essential skills for nursing professionals."
+  },
+  {
+    "tag": "Tariff and Non-Tariff Measures Management of Digital Goods and Services",
+    "tag_id": "3171",
+    "action": "propose_new_speciality",
+    "category": "Trade Associations and Chambers",
+    "speciality": "Digital Goods and Services Compliance Specialist",
+    "confidence": 0.75,
+    "reason": "This skill pertains to managing tariff and non-tariff measures for digital goods, which is relevant to trade compliance."
+  },
+  {
+    "tag": "Data Cleaning and Retargeting",
+    "tag_id": "3180",
+    "action": "assign_existing",
+    "category": "Infocomm Technology",
+    "speciality": "Data Analyst",
+    "confidence": 0.9,
+    "reason": "Data cleaning and retargeting are key responsibilities of data analysts in the infocomm technology sector."
+  },
+  {
+    "tag": "Virtual and Physical Art Asset Integration",
+    "tag_id": "3188",
+    "action": "propose_new_speciality",
+    "category": "Design",
+    "speciality": "Virtual and Physical Art Asset Integration Specialist",
+    "confidence": 0.8,
+    "reason": "The skill involves integrating art assets in both virtual and physical environments, which aligns with design principles."
+  },
+  {
+    "tag": "Workplace Safety and Health for Dockside Tower Crane Operations",
+    "tag_id": "3191",
+    "action": "assign_existing",
+    "category": "Workplace Safety and Health",
+    "speciality": "Workplace Safety and Health Officer",
+    "confidence": 0.9,
+    "reason": "The skill directly relates to workplace safety protocols, particularly in crane operations."
+  },
+  {
+    "tag": "Omni-Channel Strategy and Management",
+    "tag_id": "3194",
+    "action": "propose_new_speciality",
+    "category": "Retail",
+    "speciality": "Omni-Channel Strategy Specialist",
+    "confidence": 0.85,
+    "reason": "The skill focuses on managing strategies across multiple channels, which is crucial in retail."
+  },
+  {
+    "tag": "Apply Workplace Safety and Health in Logistics and Transportation",
+    "tag_id": "3195",
+    "action": "assign_existing",
+    "category": "Logistics",
+    "speciality": "Logistics Operations Executive",
+    "confidence": 0.9,
+    "reason": "The skill applies workplace safety and health specifically in logistics and transportation contexts."
+  },
+  {
+    "tag": "Production Technical Services",
+    "tag_id": "3196",
+    "action": "assign_existing",
+    "category": "Engineering Services",
+    "speciality": "Engineering Manager",
+    "confidence": 0.8,
+    "reason": "The skill relates to providing technical services in production, which fits within engineering services."
+  },
+  {
+    "tag": "Learning Solution Design",
+    "tag_id": "3204",
+    "action": "assign_existing",
+    "category": "Training and Adult Education",
+    "speciality": "Learning Consultant / Learning Solutionist",
+    "confidence": 0.9,
+    "reason": "Learning Solution Design aligns closely with the role of a Learning Consultant or Learning Solutionist, who focuses on designing effective learning solutions."
+  },
+  {
+    "tag": "Advanced Material Treatment Processes",
+    "tag_id": "3206",
+    "action": "assign_existing",
+    "category": "Precision Engineering",
+    "speciality": "Process Specialist / Shift Leader / Team Leader",
+    "confidence": 0.85,
+    "reason": "Advanced Material Treatment Processes are often part of the responsibilities of a Process Specialist in Precision Engineering."
+  },
+  {
+    "tag": "Audience Segmentation",
+    "tag_id": "3211",
+    "action": "assign_existing",
+    "category": "Marketing",
+    "speciality": "Marketing Executive",
+    "confidence": 0.8,
+    "reason": "Audience Segmentation is a key skill in marketing roles, particularly for Marketing Executives who analyze and target specific customer segments."
+  },
+  {
+    "tag": "Perform Electrical Fitting Work",
+    "tag_id": "3216",
+    "action": "assign_existing",
+    "category": "Financial Services",
+    "speciality": "Data Scientist",
+    "confidence": 0.9,
+    "reason": "Generative AI Application Development and Deployment in Financial Services requires advanced data analysis and application development skills typical of a Data Scientist."
+  },
+  {
+    "tag": "Generative AI Application Development and Deployment in Financial Services",
+    "tag_id": "3228",
+    "action": "assign_existing",
+    "category": "Infocomm Technology",
+    "speciality": "Artificial Intelligence / Machine Learning Engineer",
+    "confidence": 0.95,
+    "reason": "Generative AI Application Development and Deployment directly relates to the responsibilities of an AI/Machine Learning Engineer."
+  },
+  {
+    "tag": "Developmental Delay or Disability Identification",
+    "tag_id": "3251",
+    "action": "assign_existing",
+    "category": "Early Childhood",
+    "speciality": "Early Intervention Educator",
+    "confidence": 0.9,
+    "reason": "Developmental Delay or Disability Identification is closely related to the role of an Early Intervention Educator who works with children with developmental delays."
+  },
+  {
+    "tag": "AI Content Generation for Script Development",
+    "tag_id": "3253",
+    "action": "assign_existing",
+    "category": "Media",
+    "speciality": "Scriptwriter / Writer",
+    "confidence": 0.85,
+    "reason": "AI Content Generation for Script Development aligns with the skills required for a Scriptwriter or Writer in the Media industry."
+  },
+  {
+    "tag": "Sustainable Farming Practice Implementation",
+    "tag_id": "3254",
+    "action": "assign_existing",
+    "category": "Agrifood",
+    "speciality": "Agriculturist",
+    "confidence": 0.8,
+    "reason": "Sustainable Farming Practice Implementation is a key responsibility of an Agriculturist, making this a suitable match."
+  },
+  {
+    "tag": "Apply Teamwork in the Workplace",
+    "tag_id": "3260",
+    "action": "assign_existing",
+    "category": "Human Resource",
+    "speciality": "Manager, Learning and Organisation Development",
+    "confidence": 0.75,
+    "reason": "Applying teamwork in the workplace is a fundamental aspect of roles in Human Resource, particularly in Learning and Development."
+  },
+  {
+    "tag": "Ammonia Handling and Safety",
+    "tag_id": "3263",
+    "action": "assign_existing",
+    "category": "Workplace Safety and Health",
+    "speciality": "Workplace Safety and Health Officer",
+    "confidence": 0.9,
+    "reason": "Ammonia Handling and Safety is directly relevant to the responsibilities of a Workplace Safety and Health Officer."
+  },
+  {
+    "tag": "Shipping and Transit Risk",
+    "tag_id": "3274",
+    "action": "assign_existing",
+    "category": "Logistics",
+    "speciality": "Shipping Analyst",
+    "confidence": 0.9,
+    "reason": "Shipping and Transit Risk is closely related to logistics and shipping operations."
+  },
+  {
+    "tag": "Operate Electrical Measurement Devices",
+    "tag_id": "3275",
+    "action": "assign_existing",
+    "category": "Workplace Safety and Health",
+    "speciality": "Workplace Safety and Health Officer",
+    "confidence": 0.85,
+    "reason": "Operating electrical measurement devices is relevant to workplace safety and health practices."
+  },
+  {
+    "tag": "Perform Stock Control and Housekeeping Operations",
+    "tag_id": "3291",
+    "action": "assign_existing",
+    "category": "Logistics",
+    "speciality": "Warehouse Operations Executive / Inventory Management Executive",
+    "confidence": 0.8,
+    "reason": "Performing stock control and housekeeping operations is a key function in logistics and warehouse management."
+  },
+  {
+    "tag": "Generative AI Data Governance",
+    "tag_id": "3292",
+    "action": "propose_new_speciality",
+    "category": "Infocomm Technology",
+    "speciality": "Generative AI Data Governance Specialist",
+    "confidence": 0.75,
+    "reason": "Generative AI Data Governance does not fit existing specialities and requires a new focus on data governance in AI."
+  },
+  {
+    "tag": "Positive and Negative List Administration",
+    "tag_id": "3296",
+    "action": "assign_existing",
+    "category": "Financial Services",
+    "speciality": "Compliance Analyst",
+    "confidence": 0.7,
+    "reason": "Positive and Negative List Administration relates to compliance and regulatory frameworks in financial services."
+  },
+  {
+    "tag": "Photography",
+    "tag_id": "3318",
+    "action": "propose_new_speciality",
+    "category": "Arts",
+    "speciality": "Photographer",
+    "confidence": 0.9,
+    "reason": "Photography is a recognized skill within the arts category, and a specific specialty for photographers can be proposed."
+  },
+  {
+    "tag": "Perform Medical-Lock Attendant Duties for Compressed Air Work",
+    "tag_id": "3320",
+    "action": "assign_existing",
+    "category": "Workplace Safety and Health",
+    "speciality": "Workplace Safety and Health Officer",
+    "confidence": 0.8,
+    "reason": "Performing medical-lock attendant duties for compressed air work relates to safety protocols, fitting within the Workplace Safety and Health category."
+  },
+  {
+    "tag": "Brand Storytelling",
+    "tag_id": "3322",
+    "action": "propose_new_speciality",
+    "category": "Media",
+    "speciality": "Brand Storyteller",
+    "confidence": 0.85,
+    "reason": "Brand storytelling is a specific skill that aligns with media and marketing, warranting a new specialty."
+  },
+  {
+    "tag": "Assess Shipyard Safety for Hot-Work Certification",
+    "tag_id": "3327",
+    "action": "assign_existing",
+    "category": "Workplace Safety and Health",
+    "speciality": "Workplace Safety and Health Officer",
+    "confidence": 0.9,
+    "reason": "Assessing shipyard safety for hot-work certification is directly related to workplace safety practices."
+  },
+  {
+    "tag": "Technology-Enhanced Learning Delivery",
+    "tag_id": "3347",
+    "action": "assign_existing",
+    "category": "Training and Adult Education",
+    "speciality": "Learning Facilitator",
+    "confidence": 0.8,
+    "reason": "Technology-enhanced learning delivery is a key aspect of training and adult education, fitting well within this category."
+  },
+  {
+    "tag": "Solid-State Device Engineering",
+    "tag_id": "3356",
+    "action": "assign_existing",
+    "category": "Electronics",
+    "speciality": "Engineer",
+    "confidence": 0.9,
+    "reason": "Solid-State Device Engineering aligns with the engineering roles in the electronics sector."
+  },
+  {
+    "tag": "Image Capture for Spatial Computing",
+    "tag_id": "3358",
+    "action": "propose_new_speciality",
+    "category": "Design",
+    "speciality": "Spatial Computing Specialist",
+    "confidence": 0.8,
+    "reason": "Image Capture for Spatial Computing is a specialized area that does not fit existing specialities but relates to design and technology."
+  },
+  {
+    "tag": "Electric Vehicle Air-Conditioning System Maintenance",
+    "tag_id": "3364",
+    "action": "assign_existing",
+    "category": "Marine and Offshore",
+    "speciality": "Maintenance Technician",
+    "confidence": 0.85,
+    "reason": "Electric Vehicle Air-Conditioning System Maintenance can be associated with maintenance roles in marine and offshore engineering."
+  },
+  {
+    "tag": "Allied Health Professional Partnership in Therapy Journey",
+    "tag_id": "3375",
+    "action": "assign_existing",
+    "category": "Healthcare",
+    "speciality": "Occupational Therapist",
+    "confidence": 0.9,
+    "reason": "Allied Health Professional Partnership in Therapy Journey relates closely to roles in healthcare, particularly in therapy."
+  },
+  {
+    "tag": "Perform Manhole Safety Assessment",
+    "tag_id": "3393",
+    "action": "assign_existing",
+    "category": "Workplace Safety and Health",
+    "speciality": "Workplace Safety and Health Officer",
+    "confidence": 0.95,
+    "reason": "Perform Manhole Safety Assessment is directly related to workplace safety assessments and fits within the existing category."
+  },
+  {
+    "tag": "Learning Analytics",
+    "tag_id": "3415",
+    "action": "propose_new_speciality",
+    "category": "Training and Adult Education",
+    "speciality": "Learning Analytics Specialist",
+    "confidence": 0.9,
+    "reason": "Learning analytics is a specialized area within training and adult education that focuses on the analysis of data to improve learning outcomes."
+  },
+  {
+    "tag": "Generative AI Regulatory, Legal, and Risk Management Compliance",
+    "tag_id": "3416",
+    "action": "propose_new_speciality",
+    "category": "Legal Services",
+    "speciality": "Generative AI Compliance Specialist",
+    "confidence": 0.85,
+    "reason": "This skill pertains to the legal and regulatory aspects of generative AI, which is a niche area within legal services."
+  },
+  {
+    "tag": "Functional Skills Development",
+    "tag_id": "3419",
+    "action": "assign_existing",
+    "category": "Training and Adult Education",
+    "speciality": "Learning Consultant / Learning Solutionist",
+    "confidence": 0.8,
+    "reason": "Functional skills development aligns well with the role of a learning consultant who focuses on enhancing skills."
+  },
+  {
+    "tag": "Image Processing for Spatial Computing",
+    "tag_id": "3428",
+    "action": "propose_new_speciality",
+    "category": "Infocomm Technology",
+    "speciality": "Spatial Computing Image Processing Specialist",
+    "confidence": 0.9,
+    "reason": "Image processing for spatial computing is a specific technical skill that does not fit neatly into existing specialities."
+  },
+  {
+    "tag": "Generative AI Prompt Engineering",
+    "tag_id": "3435",
+    "action": "propose_new_speciality",
+    "category": "Infocomm Technology",
+    "speciality": "Generative AI Prompt Engineer",
+    "confidence": 0.9,
+    "reason": "Prompt engineering for generative AI is a new and emerging field that requires specialized knowledge and skills."
+  },
+  {
+    "tag": "Perform Thermal Insulation Work",
+    "tag_id": "3440",
+    "action": "assign_existing",
+    "category": "Workplace Safety and Health",
+    "speciality": "Workplace Safety and Health Officer",
+    "confidence": 0.8,
+    "reason": "Thermal insulation work is related to safety and health standards in construction and maintenance."
+  },
+  {
+    "tag": "Electric Vehicle Suspension System Maintenance",
+    "tag_id": "3442",
+    "action": "assign_existing",
+    "category": "Marine and Offshore",
+    "speciality": "Senior Technician / Technician",
+    "confidence": 0.9,
+    "reason": "Electric vehicle suspension system maintenance aligns with technical skills required in marine and offshore engineering."
+  },
+  {
+    "tag": "Stunt Wire-Work Pulling, Rigging and Coordination",
+    "tag_id": "3452",
+    "action": "assign_existing",
+    "category": "Arts",
+    "speciality": "Stunt Coordinator",
+    "confidence": 0.85,
+    "reason": "Stunt wire-work pulling, rigging, and coordination are essential skills in the arts, particularly in film and performance."
+  },
+  {
+    "tag": "Layout Sequencing",
+    "tag_id": "3476",
+    "action": "assign_existing",
+    "category": "Design",
+    "speciality": "Designer",
+    "confidence": 0.75,
+    "reason": "Layout sequencing is a design skill relevant to various fields including graphic design and product design."
+  },
+  {
+    "tag": "Additive Manufacturing of Polymer-Based Components",
+    "tag_id": "3480",
+    "action": "assign_existing",
+    "category": "Precision Engineering",
+    "speciality": "Product Engineer / Product Designer",
+    "confidence": 0.9,
+    "reason": "Additive manufacturing of polymer-based components is a key aspect of precision engineering and product design."
+  },
+  {
+    "tag": "Makeup Image Design",
+    "tag_id": "3484",
+    "action": "assign_existing",
+    "category": "Arts",
+    "speciality": "Make-up and / or Hair Designer",
+    "confidence": 0.9,
+    "reason": "Makeup Image Design aligns closely with the role of a Make-up and/or Hair Designer in the Arts category."
+  },
+  {
+    "tag": "Safe Medication Delivery",
+    "tag_id": "3486",
+    "action": "assign_existing",
+    "category": "Healthcare",
+    "speciality": "Pharmacy Technician",
+    "confidence": 0.85,
+    "reason": "Safe Medication Delivery is a critical skill for Pharmacy Technicians in the Healthcare category."
+  },
+  {
+    "tag": "Learner Profile Analysis",
+    "tag_id": "3495",
+    "action": "propose_new_speciality",
+    "category": "Training and Adult Education",
+    "speciality": "Learner Profile Analyst",
+    "confidence": 0.8,
+    "reason": "Learner Profile Analysis is a specialized skill that focuses on understanding and analyzing learner profiles, which is essential in the context of training and adult education."
+  },
+  {
+    "tag": "Foreign Exchange, Interest Rate and Commodity Hedging",
+    "tag_id": "3496",
+    "action": "assign_existing",
+    "category": "Financial Services",
+    "speciality": "Foreign Exchange Analyst",
+    "confidence": 0.9,
+    "reason": "Foreign Exchange, Interest Rate and Commodity Hedging is relevant to roles in Financial Services, particularly those involving risk management and trading."
+  },
+  {
+    "tag": "Home Environment Adaptation",
+    "tag_id": "3503",
+    "action": "assign_existing",
+    "category": "Healthcare",
+    "speciality": "Occupational Therapist",
+    "confidence": 0.75,
+    "reason": "Home Environment Adaptation is a key aspect of the work done by Occupational Therapists in the Healthcare sector."
+  },
+  {
+    "tag": "Use Basic Hand Tools and Equipment",
+    "tag_id": "3510",
+    "action": "assign_existing",
+    "category": "Workplace Safety and Health",
+    "speciality": "Workplace Safety and Health Officer",
+    "confidence": 0.9,
+    "reason": "Using basic hand tools and equipment is essential for workplace safety and health roles."
+  },
+  {
+    "tag": "Music Arrangement and Orchestration",
+    "tag_id": "3511",
+    "action": "assign_existing",
+    "category": "Arts",
+    "speciality": "Music Arrangement and Orchestration",
+    "confidence": 0.95,
+    "reason": "Music arrangement and orchestration directly relates to the arts category."
+  },
+  {
+    "tag": "Perform Metal Scaffolding Work",
+    "tag_id": "3518",
+    "action": "assign_existing",
+    "category": "Workplace Safety and Health",
+    "speciality": "Workplace Safety and Health Officer",
+    "confidence": 0.85,
+    "reason": "Performing metal scaffolding work is relevant to workplace safety and health."
+  },
+  {
+    "tag": "Learning Experience Evaluation and Enhancement",
+    "tag_id": "3521",
+    "action": "assign_existing",
+    "category": "Training and Adult Education",
+    "speciality": "Learning Consultant / Learning Solutionist",
+    "confidence": 0.9,
+    "reason": "Learning experience evaluation and enhancement is a key aspect of training and adult education."
+  },
+  {
+    "tag": "RegTech Tools Management",
+    "tag_id": "3528",
+    "action": "assign_existing",
+    "category": "Financial Services",
+    "speciality": "Compliance Analyst",
+    "confidence": 0.8,
+    "reason": "RegTech tools management is closely related to compliance and regulatory roles in financial services."
+  },
+  {
+    "tag": "Supervise Work in Confined Space Operation",
+    "tag_id": "3532",
+    "action": "assign_existing",
+    "category": "Workplace Safety and Health",
+    "speciality": "Workplace Safety and Health Officer",
+    "confidence": 0.9,
+    "reason": "The skill 'Supervise Work in Confined Space Operation' directly relates to workplace safety protocols, making it suitable for the Workplace Safety and Health category."
+  },
+  {
+    "tag": "Filmmaking Concepts",
+    "tag_id": "3533",
+    "action": "assign_existing",
+    "category": "Media",
+    "speciality": "Filmmaking Concepts",
+    "confidence": 0.95,
+    "reason": "The skill 'Filmmaking Concepts' is inherently related to the Media category, which encompasses various aspects of film production."
+  },
+  {
+    "tag": "Workplace Safety and Health for Marine Mechanical Installation",
+    "tag_id": "3535",
+    "action": "assign_existing",
+    "category": "Marine and Offshore",
+    "speciality": "Senior Workplace Safety and Health Officer",
+    "confidence": 0.85,
+    "reason": "The skill 'Workplace Safety and Health for Marine Mechanical Installation' is specific to safety practices in marine environments, fitting well within the Marine and Offshore category."
+  },
+  {
+    "tag": "Direct Consignment Management",
+    "tag_id": "3539",
+    "action": "assign_existing",
+    "category": "Logistics",
+    "speciality": "Logistics Contracts Executive / Logistics Operations Executive / Logistics Operations Specialist",
+    "confidence": 0.8,
+    "reason": "The skill 'Direct Consignment Management' relates to logistics operations, making it appropriate for the Logistics category."
+  },
+  {
+    "tag": "Technical Production Operations",
+    "tag_id": "3547",
+    "action": "assign_existing",
+    "category": "Media",
+    "speciality": "Production Manager",
+    "confidence": 0.9,
+    "reason": "The skill 'Technical Production Operations' aligns with the responsibilities of a Production Manager in the Media category."
+  },
+  {
+    "tag": "Accounting for Production",
+    "tag_id": "3558",
+    "action": "assign_existing",
+    "category": "Accountancy",
+    "speciality": "Management Accountant / Financial Planning and Analysis Analyst / Business Analyst",
+    "confidence": 0.9,
+    "reason": "The skill 'Accounting for Production' directly relates to financial analysis and management within production contexts, fitting well under the accountancy category."
+  },
+  {
+    "tag": "Burnout Prevention and Self-Care Management",
+    "tag_id": "3559",
+    "action": "assign_existing",
+    "category": "Workplace Safety and Health",
+    "speciality": "Workplace Safety and Health Officer",
+    "confidence": 0.85,
+    "reason": "The skill 'Burnout Prevention and Self-Care Management' is closely related to health and safety practices in the workplace, making it suitable for the Workplace Safety and Health category."
+  },
+  {
+    "tag": "Operational Planning",
+    "tag_id": "3575",
+    "action": "assign_existing",
+    "category": "Logistics",
+    "speciality": "Operations Manager",
+    "confidence": 0.8,
+    "reason": "The skill 'Operational Planning' is essential for logistics and operations management, aligning it with the logistics category."
+  },
+  {
+    "tag": "Health and Safety",
+    "tag_id": "3576",
+    "action": "assign_existing",
+    "category": "Workplace Safety and Health",
+    "speciality": "HSE Manager",
+    "confidence": 0.9,
+    "reason": "The skill 'Health and Safety' is directly related to workplace safety practices, making it a perfect fit for the Workplace Safety and Health category."
+  },
+  {
+    "tag": "Generative AI Application Development and Deployment",
+    "tag_id": "3582",
+    "action": "propose_new_category",
+    "category": "Infocomm Technology",
+    "speciality": "Generative AI Developer",
+    "confidence": 0.75,
+    "reason": "The skill 'Generative AI Application Development and Deployment' does not fit existing categories and represents a new technological field that warrants its own category."
+  },
+  {
+    "tag": "Ethical and Responsible Generative AI Adoption",
+    "tag_id": "3594",
+    "action": "propose_new_speciality",
+    "category": "Infocomm Technology",
+    "speciality": "Generative AI Specialist",
+    "confidence": 0.9,
+    "reason": "The skill focuses on ethical and responsible adoption of generative AI, which aligns with emerging roles in the Infocomm Technology sector."
+  },
+  {
+    "tag": "AI Content Generation for Music",
+    "tag_id": "3596",
+    "action": "propose_new_speciality",
+    "category": "Media",
+    "speciality": "AI Music Content Creator",
+    "confidence": 0.85,
+    "reason": "This skill pertains to AI content generation specifically for music, which is a niche area within the Media industry."
+  },
+  {
+    "tag": "FX Simulation",
+    "tag_id": "3600",
+    "action": "assign_existing",
+    "category": "Engineering Services",
+    "speciality": "Simulation Engineer",
+    "confidence": 0.8,
+    "reason": "FX Simulation is relevant to engineering simulations, which fits within the Engineering Services category."
+  },
+  {
+    "tag": "Manage Work at Height",
+    "tag_id": "3602",
+    "action": "assign_existing",
+    "category": "Workplace Safety and Health",
+    "speciality": "Workplace Safety Officer",
+    "confidence": 0.9,
+    "reason": "Managing work at height is a critical aspect of workplace safety, aligning with roles in Workplace Safety and Health."
+  },
+  {
+    "tag": "Patient Assessment for Oral Health Therapy",
+    "tag_id": "3603",
+    "action": "assign_existing",
+    "category": "Healthcare",
+    "speciality": "Oral Health Therapist",
+    "confidence": 0.95,
+    "reason": "Patient assessment for oral health therapy directly relates to roles in the healthcare sector, specifically for oral health professionals."
+  },
+  {
+    "tag": "Shipboard Ammonia Bunkering Fuel Infrastructure Engineering",
+    "tag_id": "3638",
+    "action": "propose_new_speciality",
+    "category": "Marine and Offshore",
+    "speciality": "Shipboard Ammonia Bunkering Fuel Infrastructure Engineer",
+    "confidence": 0.9,
+    "reason": "The skill specifically relates to engineering practices in marine environments, particularly focused on ammonia bunkering."
+  },
+  {
+    "tag": "Apply Workplace Safety and Health in Process Plant",
+    "tag_id": "3640",
+    "action": "assign_existing",
+    "category": "Workplace Safety and Health",
+    "speciality": "Workplace Safety and Health Officer",
+    "confidence": 0.95,
+    "reason": "The skill directly relates to applying workplace safety and health principles, which aligns with the responsibilities of a Workplace Safety and Health Officer."
+  },
+  {
+    "tag": "Workplace Safety and Health for Steel Fitting",
+    "tag_id": "3641",
+    "action": "assign_existing",
+    "category": "Workplace Safety and Health",
+    "speciality": "Workplace Safety and Health Officer",
+    "confidence": 0.95,
+    "reason": "The skill pertains to workplace safety and health practices in steel fitting, fitting well within the scope of a Workplace Safety and Health Officer."
+  },
+  {
+    "tag": "Workplace Safety and Health for forklift Operations",
+    "tag_id": "3657",
+    "action": "assign_existing",
+    "category": "Workplace Safety and Health",
+    "speciality": "Workplace Safety and Health Officer",
+    "confidence": 0.95,
+    "reason": "The skill focuses on safety practices for forklift operations, which is a key responsibility of a Workplace Safety and Health Officer."
+  },
+  {
+    "tag": "Virtual Production / ICVFX Concepts for Creators",
+    "tag_id": "3669",
+    "action": "propose_new_speciality",
+    "category": "Media",
+    "speciality": "Virtual Production / ICVFX Specialist",
+    "confidence": 0.85,
+    "reason": "The skill involves advanced concepts in virtual production and ICVFX, which does not fit neatly into existing specialities but is relevant to media production."
+  },
+  {
+    "tag": "Creative Camera Operations",
+    "tag_id": "3673",
+    "action": "assign_existing",
+    "category": "Media",
+    "speciality": "Camera Operator (Specialty Camera Operation, Electronic News Gathering and Electronic Field Production Operation)",
+    "confidence": 0.9,
+    "reason": "Creative Camera Operations aligns closely with the role of a Camera Operator in media production."
+  },
+  {
+    "tag": "Programme and Project Management",
+    "tag_id": "3674",
+    "action": "assign_existing",
+    "category": "Project Management",
+    "speciality": "Project Manager",
+    "confidence": 0.85,
+    "reason": "Programme and Project Management is a core skill for Project Managers across various industries."
+  },
+  {
+    "tag": "Visual Effects for Production",
+    "tag_id": "3678",
+    "action": "assign_existing",
+    "category": "Media",
+    "speciality": "Visual Effects Specialist",
+    "confidence": 0.9,
+    "reason": "Visual Effects for Production directly relates to the role of a Visual Effects Specialist in media."
+  },
+  {
+    "tag": "Family Relationships and Communication Strengthening",
+    "tag_id": "3679",
+    "action": "propose_new_speciality",
+    "category": "Social Service",
+    "speciality": "Family Communication Specialist",
+    "confidence": 0.8,
+    "reason": "Family Relationships and Communication Strengthening does not fit existing specialities and requires a new designation."
+  },
+  {
+    "tag": "Perform Instrumentation Fitting Work",
+    "tag_id": "3687",
+    "action": "assign_existing",
+    "category": "Engineering Services",
+    "speciality": "Technician / Coordinator (Engineering Construction)",
+    "confidence": 0.75,
+    "reason": "Perform Instrumentation Fitting Work is relevant to the skills required for technicians in engineering services."
+  },
+  {
+    "tag": "Perform Industrial Audiometric Screening",
+    "tag_id": "3696",
+    "action": "assign_existing",
+    "category": "Workplace Safety and Health",
+    "speciality": "Occupational Hygiene Officer",
+    "confidence": 0.9,
+    "reason": "The skill 'Perform Industrial Audiometric Screening' is closely related to workplace safety and health practices, particularly in occupational hygiene."
+  },
+  {
+    "tag": "Business Analysis Management",
+    "tag_id": "3706",
+    "action": "assign_existing",
+    "category": "Training and Adult Education",
+    "speciality": "Learning Consultant / Learning Solutionist",
+    "confidence": 0.85,
+    "reason": "Business Analysis Management involves skills that align with training and adult education, particularly in developing learning solutions."
+  },
+  {
+    "tag": "Arts Curriculum Design",
+    "tag_id": "3710",
+    "action": "assign_existing",
+    "category": "Arts",
+    "speciality": "Curriculum Lead",
+    "confidence": 0.8,
+    "reason": "Arts Curriculum Design directly relates to the development and management of educational programs in the arts."
+  },
+  {
+    "tag": "Operate Explosive Powered Tools",
+    "tag_id": "3711",
+    "action": "assign_existing",
+    "category": "Marine and Offshore",
+    "speciality": "Technician",
+    "confidence": 0.75,
+    "reason": "Operating explosive powered tools is relevant in various technical fields, including marine and offshore operations where such tools may be used."
+  },
+  {
+    "tag": "Responsible AI and Generative AI Practices in Financial Services",
+    "tag_id": "3712",
+    "action": "assign_existing",
+    "category": "Financial Services",
+    "speciality": "Digital Transformation Manager",
+    "confidence": 0.9,
+    "reason": "Responsible AI and Generative AI Practices in Financial Services is a critical aspect of digital transformation in the financial sector."
+  },
+  {
+    "tag": "Hair Image Design",
+    "tag_id": "3718",
+    "action": "propose_new_speciality",
+    "category": "Arts",
+    "speciality": "Hair Designer",
+    "confidence": 0.9,
+    "reason": "The skill 'Hair Image Design' aligns closely with artistic and design principles, making it suitable for the Arts category."
+  },
+  {
+    "tag": "Learning Strategy and Framework Development",
+    "tag_id": "3730",
+    "action": "propose_new_speciality",
+    "category": "Training and Adult Education",
+    "speciality": "Learning Strategy Developer",
+    "confidence": 0.85,
+    "reason": "The skill 'Learning Strategy and Framework Development' is focused on educational methodologies, fitting well within Training and Adult Education."
+  },
+  {
+    "tag": "Electric Vehicle Steering System Maintenance",
+    "tag_id": "3731",
+    "action": "assign_existing",
+    "category": "Engineering Services",
+    "speciality": "Engineer / Supervisor (Operations and Maintenance)",
+    "confidence": 0.8,
+    "reason": "The skill 'Electric Vehicle Steering System Maintenance' relates to engineering and maintenance, which is covered under Engineering Services."
+  },
+  {
+    "tag": "Anti-Money Laundering and Countering Financing of Terrorism",
+    "tag_id": "3744",
+    "action": "assign_existing",
+    "category": "Financial Services",
+    "speciality": "Compliance Analyst",
+    "confidence": 0.9,
+    "reason": "The skill 'Anti-Money Laundering and Countering Financing of Terrorism' is directly related to compliance and regulatory roles in Financial Services."
+  },
+  {
+    "tag": "Creative Video Editing for Formats and Genres for Documentaries",
+    "tag_id": "3753",
+    "action": "assign_existing",
+    "category": "Media",
+    "speciality": "Video Editor",
+    "confidence": 0.95,
+    "reason": "The skill 'Creative Video Editing for Formats and Genres for Documentaries' fits perfectly within the Media category, specifically for video editing roles."
+  },
+  {
+    "tag": "Analogue Integrated Circuit Design",
+    "tag_id": "3766",
+    "action": "assign_existing",
+    "category": "Electronics",
+    "speciality": "Engineer",
+    "confidence": 0.9,
+    "reason": "Analogue Integrated Circuit Design is a core skill in the Electronics category, relevant to various engineering roles."
+  },
+  {
+    "tag": "Care Recipient Interaction",
+    "tag_id": "3767",
+    "action": "assign_existing",
+    "category": "Healthcare",
+    "speciality": "Healthcare Assistant / Basic Care Assistant / Nursing Aide",
+    "confidence": 0.8,
+    "reason": "Care Recipient Interaction is a fundamental skill in healthcare roles, particularly for those directly interacting with patients."
+  },
+  {
+    "tag": "Tax Planning and Optimisation",
+    "tag_id": "3773",
+    "action": "assign_existing",
+    "category": "Accountancy",
+    "speciality": "Tax Associate / Tax Executive",
+    "confidence": 0.85,
+    "reason": "Tax Planning and Optimisation is directly related to tax roles within the Accountancy category."
+  },
+  {
+    "tag": "Electric Vehicle Propulsion Systems Maintenance",
+    "tag_id": "3788",
+    "action": "assign_existing",
+    "category": "Marine and Offshore",
+    "speciality": "Technician",
+    "confidence": 0.75,
+    "reason": "Electric Vehicle Propulsion Systems Maintenance aligns with technical roles in the Marine and Offshore sector, particularly in maintenance."
+  },
+  {
+    "tag": "Acting For Camera",
+    "tag_id": "3790",
+    "action": "assign_existing",
+    "category": "Arts",
+    "speciality": "Actor",
+    "confidence": 0.9,
+    "reason": "Acting For Camera is a specific skill relevant to acting roles in the Arts category."
+  },
+  {
+    "tag": "Creative Video Editing",
+    "tag_id": "3795",
+    "action": "assign_existing",
+    "category": "Media",
+    "speciality": "Video Editor (Colour Grading, Online Editing)",
+    "confidence": 0.9,
+    "reason": "Creative Video Editing aligns closely with the role of a Video Editor in the Media category."
+  },
+  {
+    "tag": "Electrical Installation",
+    "tag_id": "3806",
+    "action": "assign_existing",
+    "category": "Electrical Engineering",
+    "speciality": "Electrical Engineer",
+    "confidence": 0.85,
+    "reason": "Electrical Installation is a fundamental skill for Electrical Engineers, fitting well within the Electrical Engineering category."
+  },
+  {
+    "tag": "Social Listening",
+    "tag_id": "3809",
+    "action": "propose_new_speciality",
+    "category": "Social Service",
+    "speciality": "Social Media Analyst",
+    "confidence": 0.8,
+    "reason": "Social Listening is a specialized skill that fits within the Social Service category, focusing on understanding community needs through social media."
+  },
+  {
+    "tag": "Visual Style Development for Cinematography",
+    "tag_id": "3816",
+    "action": "assign_existing",
+    "category": "Media",
+    "speciality": "Cinematographer",
+    "confidence": 0.9,
+    "reason": "Visual Style Development for Cinematography is a key aspect of the Cinematographer role in the Media category."
+  },
+  {
+    "tag": "Ethical Frameworks for Generative AI",
+    "tag_id": "3819",
+    "action": "propose_new_speciality",
+    "category": "Infocomm Technology",
+    "speciality": "AI Ethics Specialist",
+    "confidence": 0.75,
+    "reason": "Ethical Frameworks for Generative AI is a new and emerging area that requires specialized knowledge in AI ethics, fitting within Infocomm Technology."
+  },
+  {
+    "tag": "Multi-Camera Operations for Live Shows",
+    "tag_id": "3831",
+    "action": "propose_new_speciality",
+    "category": "Media",
+    "speciality": "Multi-Camera Operations Specialist",
+    "confidence": 0.9,
+    "reason": "The skill involves specialized knowledge in operating multiple cameras for live shows, which is a distinct area within media production."
+  },
+  {
+    "tag": "Product Origin Management",
+    "tag_id": "3838",
+    "action": "assign_existing",
+    "category": "Wholesale Trade",
+    "speciality": "Procurement Manager / Sourcing Manager",
+    "confidence": 0.8,
+    "reason": "Product origin management is closely related to procurement and sourcing activities in wholesale trade."
+  },
+  {
+    "tag": "Basic Nursing Care",
+    "tag_id": "3839",
+    "action": "assign_existing",
+    "category": "Healthcare",
+    "speciality": "Healthcare Assistant / Basic Care Assistant / Nursing Aide",
+    "confidence": 0.85,
+    "reason": "Basic nursing care is a fundamental skill associated with healthcare assistants and nursing aides."
+  },
+  {
+    "tag": "Autonomous Vehicle Operations",
+    "tag_id": "3849",
+    "action": "propose_new_speciality",
+    "category": "Transportation",
+    "speciality": "Autonomous Vehicle Operator",
+    "confidence": 0.9,
+    "reason": "Autonomous vehicle operations require specific skills and knowledge that are not currently categorized under existing specialties."
+  },
+  {
+    "tag": "Prompt Design",
+    "tag_id": "3858",
+    "action": "propose_new_speciality",
+    "category": "Design",
+    "speciality": "Prompt Design Specialist",
+    "confidence": 0.85,
+    "reason": "Prompt design is a unique skill that focuses on creating effective prompts for various applications, which does not fit into existing categories."
+  },
+  {
+    "tag": "Content Creation for Multimedia",
+    "tag_id": "3864",
+    "action": "assign_existing",
+    "category": "Media",
+    "speciality": "Content Strategist",
+    "confidence": 0.9,
+    "reason": "Content creation for multimedia aligns closely with the role of a Content Strategist in the Media category."
+  },
+  {
+    "tag": "Operate Lorry Crane",
+    "tag_id": "3870",
+    "action": "assign_existing",
+    "category": "Logistics",
+    "speciality": "Forklift Operator",
+    "confidence": 0.8,
+    "reason": "Operating a lorry crane is similar to the skills required for a Forklift Operator in the Logistics category."
+  },
+  {
+    "tag": "Generative AI Model Selection",
+    "tag_id": "3871",
+    "action": "assign_existing",
+    "category": "Infocomm Technology",
+    "speciality": "Artificial Intelligence / Machine Learning Engineer",
+    "confidence": 0.85,
+    "reason": "Generative AI model selection is a key task for professionals in AI and machine learning roles."
+  },
+  {
+    "tag": "Real-Time Production",
+    "tag_id": "3875",
+    "action": "assign_existing",
+    "category": "Media",
+    "speciality": "Producer",
+    "confidence": 0.75,
+    "reason": "Real-time production is a critical aspect of the role of a Producer in the Media industry."
+  },
+  {
+    "tag": "Electric Vehicle and/or Hybrid Electric Vehicle Charging Management",
+    "tag_id": "3896",
+    "action": "propose_new_speciality",
+    "category": "Energy and Power",
+    "speciality": "Electric Vehicle Charging Specialist",
+    "confidence": 0.9,
+    "reason": "The skill of managing electric vehicle and hybrid electric vehicle charging does not fit existing specialities and warrants a new speciality."
+  },
+  {
+    "tag": "Action Choreography, Coordination, Design & Direction",
+    "tag_id": "3903",
+    "action": "propose_new_speciality",
+    "category": "Arts",
+    "speciality": "Choreographer",
+    "confidence": 0.9,
+    "reason": "Action choreography involves artistic direction and design, which aligns with the Arts category."
+  },
+  {
+    "tag": "End-of-Life Conversation",
+    "tag_id": "3931",
+    "action": "propose_new_speciality",
+    "category": "Healthcare",
+    "speciality": "End-of-Life Care Specialist",
+    "confidence": 0.85,
+    "reason": "End-of-life conversations are crucial in healthcare settings, particularly in palliative care."
+  },
+  {
+    "tag": "Legal Provisions Awareness for Care Recipients",
+    "tag_id": "3933",
+    "action": "assign_existing",
+    "category": "Healthcare",
+    "speciality": "Healthcare Assistant / Basic Care Assistant / Nursing Aide",
+    "confidence": 0.8,
+    "reason": "Legal provisions awareness is essential for healthcare assistants who work directly with care recipients."
+  },
+  {
+    "tag": "Art Form Pedagogy",
+    "tag_id": "3936",
+    "action": "assign_existing",
+    "category": "Early Childhood",
+    "speciality": "Curriculum / Pedagogy Specialist",
+    "confidence": 0.75,
+    "reason": "Art form pedagogy is relevant in early childhood education, focusing on teaching methods and curriculum design."
+  },
+  {
+    "tag": "Real-Time Workflow Design",
+    "tag_id": "3937",
+    "action": "propose_new_speciality",
+    "category": "Infocomm Technology",
+    "speciality": "Workflow Designer",
+    "confidence": 0.8,
+    "reason": "Real-time workflow design is a technical skill that fits within the Infocomm Technology category."
+  },
+  {
+    "tag": "Stunt Wire-Work Riding",
+    "tag_id": "3946",
+    "action": "propose_new_speciality",
+    "category": "Arts",
+    "speciality": "Stunt Performer",
+    "confidence": 0.9,
+    "reason": "Stunt Wire-Work Riding is a specialized skill within the arts, particularly in performance and film."
+  },
+  {
+    "tag": "Creative Execution",
+    "tag_id": "3947",
+    "action": "assign_existing",
+    "category": "Design",
+    "speciality": "Creative Technologist",
+    "confidence": 0.8,
+    "reason": "Creative Execution aligns well with the role of a Creative Technologist who focuses on innovative design solutions."
+  },
+  {
+    "tag": "Generative AI-enabled Transformations",
+    "tag_id": "3948",
+    "action": "assign_existing",
+    "category": "Infocomm Technology",
+    "speciality": "Artificial Intelligence / Machine Learning Engineer",
+    "confidence": 0.85,
+    "reason": "Generative AI-enabled Transformations directly relate to the field of AI and machine learning."
+  },
+  {
+    "tag": "Workplace Safety and Health for Painting and Blasting",
+    "tag_id": "3959",
+    "action": "assign_existing",
+    "category": "Workplace Safety and Health",
+    "speciality": "Workplace Safety and Health Officer",
+    "confidence": 0.9,
+    "reason": "Workplace Safety and Health for Painting and Blasting is a specific application of workplace safety practices."
+  },
+  {
+    "tag": "Electric Vehicle and Hybrid Electric Vehicle Maintenance Management",
+    "tag_id": "3970",
+    "action": "propose_new_speciality",
+    "category": "Automotive",
+    "speciality": "Electric Vehicle Maintenance Manager",
+    "confidence": 0.9,
+    "reason": "Electric Vehicle and Hybrid Electric Vehicle Maintenance Management is a specialized area that does not fit existing categories."
+  },
+  {
+    "tag": "Perform Blasting and Painting Work",
+    "tag_id": "3977",
+    "action": "assign_existing",
+    "category": "Marine and Offshore",
+    "speciality": "Technician",
+    "confidence": 0.9,
+    "reason": "Blasting and painting work is commonly associated with marine and offshore maintenance tasks."
+  },
+  {
+    "tag": "Groom / Character FX (CFX)",
+    "tag_id": "3978",
+    "action": "assign_existing",
+    "category": "Arts",
+    "speciality": "Make-up and / or Hair Designer",
+    "confidence": 0.95,
+    "reason": "Grooming and character effects are integral to the arts, particularly in film and theater."
+  },
+  {
+    "tag": "Perform Refractory Work",
+    "tag_id": "3983",
+    "action": "assign_existing",
+    "category": "Built Environment",
+    "speciality": "Technician",
+    "confidence": 0.85,
+    "reason": "Refractory work is often related to construction and maintenance in built environments."
+  },
+  {
+    "tag": "Costume Construction and Tailoring",
+    "tag_id": "3993",
+    "action": "assign_existing",
+    "category": "Arts",
+    "speciality": "Costume Designer",
+    "confidence": 0.9,
+    "reason": "Costume construction and tailoring directly relate to the arts, specifically in theater and film."
+  },
+  {
+    "tag": "Makeup Application",
+    "tag_id": "3994",
+    "action": "assign_existing",
+    "category": "Arts",
+    "speciality": "Make-up and / or Hair Designer",
+    "confidence": 0.95,
+    "reason": "Makeup application is a key skill in the arts, particularly in performance and film."
+  },
+  {
+    "tag": "Case History Taking in Healthcare",
+    "tag_id": "4002",
+    "action": "assign_existing",
+    "category": "Healthcare",
+    "speciality": "Healthcare Assistant / Basic Care Assistant / Nursing Aide",
+    "confidence": 0.9,
+    "reason": "The skill 'Case History Taking in Healthcare' is directly related to the responsibilities of healthcare assistants and nursing aides who take patient histories."
+  },
+  {
+    "tag": "Real-Time Rendering Optimisation",
+    "tag_id": "4006",
+    "action": "assign_existing",
+    "category": "Media",
+    "speciality": "Lead Technical Artist",
+    "confidence": 0.85,
+    "reason": "Real-time rendering optimisation is a key skill for technical artists in the media industry, particularly in game development and visual effects."
+  },
+  {
+    "tag": "AI Content Generation for Photorealistic Images",
+    "tag_id": "4014",
+    "action": "assign_existing",
+    "category": "Media",
+    "speciality": "Lead Game Designer",
+    "confidence": 0.8,
+    "reason": "AI content generation for photorealistic images is relevant to game design and development, where creating realistic visuals is crucial."
+  },
+  {
+    "tag": "Student Relationship Management",
+    "tag_id": "4017",
+    "action": "assign_existing",
+    "category": "Education",
+    "speciality": "Lead Early Years Educators",
+    "confidence": 0.75,
+    "reason": "Student relationship management is essential in educational settings, particularly for those in leadership roles in early childhood education."
+  },
+  {
+    "tag": "Work in Biosafety Level-3 laboratories",
+    "tag_id": "4023",
+    "action": "assign_existing",
+    "category": "BioPharmaceuticals Manufacturing",
+    "speciality": "Engineering and Maintenance Technician",
+    "confidence": 0.9,
+    "reason": "Working in Biosafety Level-3 laboratories requires specific technical skills related to engineering and maintenance in biopharmaceutical settings."
+  },
+  {
+    "tag": "Generative AI Models Technical Aspects of Security and Ethics",
+    "tag_id": "4026",
+    "action": "propose_new_speciality",
+    "category": "Security",
+    "speciality": "Generative AI Security Specialist",
+    "confidence": 0.9,
+    "reason": "The skill focuses on the technical aspects of security and ethics related to generative AI models, which aligns with the Security category."
+  },
+  {
+    "tag": "Additive Manufacturing Processes and Systems",
+    "tag_id": "4028",
+    "action": "assign_existing",
+    "category": "Precision Engineering",
+    "speciality": "Additive Manufacturing Engineer",
+    "confidence": 0.95,
+    "reason": "Additive manufacturing is a key area within precision engineering, making this a suitable assignment."
+  },
+  {
+    "tag": "Respond to Incidents and Accidents in Biomedical Facility",
+    "tag_id": "4037",
+    "action": "assign_existing",
+    "category": "Healthcare",
+    "speciality": "Biomedical Safety Officer",
+    "confidence": 0.85,
+    "reason": "The skill pertains to responding to incidents in a biomedical facility, which fits well within healthcare safety roles."
+  },
+  {
+    "tag": "Nutrition and Hydration Management",
+    "tag_id": "4040",
+    "action": "assign_existing",
+    "category": "Healthcare",
+    "speciality": "Nutrition Manager",
+    "confidence": 0.9,
+    "reason": "Nutrition and hydration management is a critical aspect of healthcare, particularly in patient care settings."
+  },
+  {
+    "tag": "Manage Workplace Safety and Health in Shipbuilding and Ship Repair",
+    "tag_id": "4044",
+    "action": "assign_existing",
+    "category": "Marine and Offshore",
+    "speciality": "Workplace Safety and Health Manager (Shipbuilding)",
+    "confidence": 0.9,
+    "reason": "Managing workplace safety and health in shipbuilding directly relates to the marine and offshore industry."
+  },
+  {
+    "tag": "Diversity Appreciation and Sensitivity",
+    "tag_id": "4051",
+    "action": "assign_existing",
+    "category": "Human Resource",
+    "speciality": "Diversity and Inclusion Specialist",
+    "confidence": 0.9,
+    "reason": "The skill 'Diversity Appreciation and Sensitivity' aligns well with the Human Resource category, specifically in the context of promoting diversity and inclusion in the workplace."
+  },
+  {
+    "tag": "WTO and WCO Principles and Treaties",
+    "tag_id": "4053",
+    "action": "assign_existing",
+    "category": "Trade Associations and Chambers",
+    "speciality": "Trade Policy Analyst",
+    "confidence": 0.85,
+    "reason": "The skill 'WTO and WCO Principles and Treaties' is relevant to trade associations and chambers, focusing on trade policy and international agreements."
+  },
+  {
+    "tag": "Apply Good Biosafety Practices when Working with Animals",
+    "tag_id": "4066",
+    "action": "assign_existing",
+    "category": "Agrifood",
+    "speciality": "Animal Care Technician",
+    "confidence": 0.8,
+    "reason": "The skill 'Apply Good Biosafety Practices when Working with Animals' fits within the Agrifood category, particularly in roles related to animal care and biosafety."
+  },
+  {
+    "tag": "Creative Vision Mixing",
+    "tag_id": "4075",
+    "action": "assign_existing",
+    "category": "Media",
+    "speciality": "Video Production Specialist",
+    "confidence": 0.75,
+    "reason": "The skill 'Creative Vision Mixing' is applicable in the Media category, especially in video production and editing roles."
+  },
+  {
+    "tag": "Generative AI Model Evaluation in Financial Services",
+    "tag_id": "4081",
+    "action": "assign_existing",
+    "category": "Financial Services",
+    "speciality": "AI Risk Analyst",
+    "confidence": 0.9,
+    "reason": "The skill 'Generative AI Model Evaluation in Financial Services' is directly relevant to the Financial Services category, focusing on the evaluation of AI models in financial contexts."
+  },
+  {
+    "tag": "Assistance with ADLs",
+    "tag_id": "4085",
+    "action": "assign_existing",
+    "category": "Healthcare",
+    "speciality": "Healthcare Assistant / Basic Care Assistant / Nursing Aide",
+    "confidence": 0.9,
+    "reason": "The skill 'Assistance with ADLs' directly relates to the responsibilities of a Healthcare Assistant."
+  },
+  {
+    "tag": "Supervise Metal Scaffold in Marine industry",
+    "tag_id": "4088",
+    "action": "assign_existing",
+    "category": "Marine and Offshore",
+    "speciality": "Supervisor / Chargehand / Foreman",
+    "confidence": 0.85,
+    "reason": "Supervising metal scaffold work is a task typically associated with supervisory roles in the marine industry."
+  },
+  {
+    "tag": "Workplace Safety and Health for Pipe Fitting",
+    "tag_id": "4093",
+    "action": "assign_existing",
+    "category": "Workplace Safety and Health",
+    "speciality": "Workplace Safety and Health Officer",
+    "confidence": 0.9,
+    "reason": "The skill 'Workplace Safety and Health for Pipe Fitting' aligns with the responsibilities of a Workplace Safety and Health Officer."
+  },
+  {
+    "tag": "Healthcare System Navigation",
+    "tag_id": "4094",
+    "action": "assign_existing",
+    "category": "Healthcare",
+    "speciality": "Patient Service Associate",
+    "confidence": 0.8,
+    "reason": "Navigating healthcare systems is a key function of roles that assist patients, such as Patient Service Associates."
+  },
+  {
+    "tag": "Personal Hygiene Maintenance",
+    "tag_id": "4100",
+    "action": "assign_existing",
+    "category": "Healthcare",
+    "speciality": "Healthcare Assistant / Basic Care Assistant / Nursing Aide",
+    "confidence": 0.9,
+    "reason": "Personal hygiene maintenance is a fundamental duty of Healthcare Assistants."
+  },
+  {
+    "tag": "Responsible AI and Generative AI Practices",
+    "tag_id": "4102",
+    "action": "propose_new_speciality",
+    "category": "Infocomm Technology",
+    "speciality": "Responsible AI and Generative AI Specialist",
+    "confidence": 0.9,
+    "reason": "This skill focuses on AI practices which do not fit into existing specialities."
+  },
+  {
+    "tag": "Electric Vehicle High Voltage Systems Maintenance",
+    "tag_id": "4115",
+    "action": "assign_existing",
+    "category": "Energy and Power",
+    "speciality": "Electricity Transmission and Distribution Department Manager",
+    "confidence": 0.8,
+    "reason": "The skill relates to maintenance of high voltage systems, relevant to energy and power."
+  },
+  {
+    "tag": "Immersive Technology Integration",
+    "tag_id": "4119",
+    "action": "propose_new_speciality",
+    "category": "Design",
+    "speciality": "Immersive Technology Designer",
+    "confidence": 0.85,
+    "reason": "This skill involves integration of immersive technologies which is not covered by existing specialities."
+  },
+  {
+    "tag": "Perform Rigger and Signalman Tasks",
+    "tag_id": "4126",
+    "action": "assign_existing",
+    "category": "Logistics",
+    "speciality": "Rigger / Signalman",
+    "confidence": 0.9,
+    "reason": "The skill directly relates to tasks performed in logistics and operations."
+  },
+  {
+    "tag": "Apply 5S Techniques in the Workplace",
+    "tag_id": "4132",
+    "action": "assign_existing",
+    "category": "Workplace Safety and Health",
+    "speciality": "Workplace Safety and Health Officer",
+    "confidence": 0.95,
+    "reason": "Applying 5S techniques is closely related to workplace safety and health practices."
+  },
+  {
+    "tag": "Virtual Set Design and Construction for ICVFX",
+    "tag_id": "4141",
+    "action": "propose_new_speciality",
+    "category": "Design",
+    "speciality": "Virtual Set Designer",
+    "confidence": 0.9,
+    "reason": "Virtual set design is a specialized area within design that focuses on creating immersive environments for film and television, which aligns with existing design practices."
+  },
+  {
+    "tag": "Apply Workplace Safety and Health in Shipyard (General Trade)",
+    "tag_id": "4147",
+    "action": "assign_existing",
+    "category": "Workplace Safety and Health",
+    "speciality": "Workplace Safety and Health Officer",
+    "confidence": 0.95,
+    "reason": "The skill directly relates to applying workplace safety and health practices, which is a core responsibility of a Workplace Safety and Health Officer."
+  },
+  {
+    "tag": "Operate Boom Lift",
+    "tag_id": "4148",
+    "action": "assign_existing",
+    "category": "Workplace Safety and Health",
+    "speciality": "Workplace Safety and Health Officer",
+    "confidence": 0.9,
+    "reason": "Operating a boom lift requires knowledge of workplace safety protocols, making it relevant to the role of a Workplace Safety and Health Officer."
+  },
+  {
+    "tag": "Special Effects Makeup Material Construction",
+    "tag_id": "4159",
+    "action": "propose_new_speciality",
+    "category": "Arts",
+    "speciality": "Special Effects Makeup Artist",
+    "confidence": 0.85,
+    "reason": "Special effects makeup is a distinct specialty within the arts that focuses on creating realistic effects for film and theater, which is not explicitly covered in existing specialities."
+  },
+  {
+    "tag": "Workplace Learning Delivery",
+    "tag_id": "4161",
+    "action": "assign_existing",
+    "category": "Training and Adult Education",
+    "speciality": "Learning Facilitator",
+    "confidence": 0.9,
+    "reason": "Workplace learning delivery aligns with the role of a Learning Facilitator, who is responsible for delivering educational content in various settings."
+  },
+  {
+    "tag": "AI Content Generation for Visual Art Images",
+    "tag_id": "4165",
+    "action": "propose_new_speciality",
+    "category": "Arts",
+    "speciality": "AI Content Generation Specialist",
+    "confidence": 0.9,
+    "reason": "The skill focuses on AI content generation specifically for visual art images, which aligns with the creative and technological aspects of the Arts category."
+  },
+  {
+    "tag": "Motion Capture Technology",
+    "tag_id": "4171",
+    "action": "assign_existing",
+    "category": "Media",
+    "speciality": "Motion Capture Technician",
+    "confidence": 0.85,
+    "reason": "Motion capture technology is commonly used in media production, particularly in film and gaming, making it a suitable fit under the Media category."
+  },
+  {
+    "tag": "Audience Analytics",
+    "tag_id": "4183",
+    "action": "assign_existing",
+    "category": "Media",
+    "speciality": "Audience Analytics Specialist",
+    "confidence": 0.8,
+    "reason": "Audience analytics is crucial in media for understanding viewer engagement and preferences, fitting well within the Media category."
+  },
+  {
+    "tag": "Operate Forklift",
+    "tag_id": "4194",
+    "action": "assign_existing",
+    "category": "Logistics",
+    "speciality": "Forklift Operator",
+    "confidence": 0.95,
+    "reason": "Operating a forklift is a key skill in logistics and warehousing, making it a direct match for the Logistics category."
+  },
+  {
+    "tag": "Third-Party and Third-Country Invoicing",
+    "tag_id": "4199",
+    "action": "assign_existing",
+    "category": "Accountancy",
+    "speciality": "Invoicing Specialist",
+    "confidence": 0.75,
+    "reason": "Third-party and third-country invoicing relates to financial transactions and accounting practices, aligning it with the Accountancy category."
+  },
+  {
+    "tag": "Special Effects Makeup Material Attachment",
+    "tag_id": "4205",
+    "action": "propose_new_speciality",
+    "category": "Arts",
+    "speciality": "Special Effects Makeup Artist",
+    "confidence": 0.9,
+    "reason": "The skill relates to the creation and application of special effects makeup, which fits within the Arts category."
+  },
+  {
+    "tag": "Perform Work in Confined Space Operation",
+    "tag_id": "4207",
+    "action": "assign_existing",
+    "category": "Workplace Safety and Health",
+    "speciality": "Workplace Safety and Health Officer",
+    "confidence": 0.85,
+    "reason": "The skill involves performing work in confined spaces, which is a critical aspect of workplace safety."
+  },
+  {
+    "tag": "Apply Workplace Safety and Health in Metal Work",
+    "tag_id": "4209",
+    "action": "assign_existing",
+    "category": "Workplace Safety and Health",
+    "speciality": "Workplace Safety and Health Officer",
+    "confidence": 0.85,
+    "reason": "Applying workplace safety and health principles in metal work is directly related to the responsibilities of a Workplace Safety and Health Officer."
+  },
+  {
+    "tag": "Generative AI Innovation, Research and Development, and Innovation Management",
+    "tag_id": "4217",
+    "action": "propose_new_speciality",
+    "category": "Infocomm Technology",
+    "speciality": "Generative AI Specialist",
+    "confidence": 0.9,
+    "reason": "The skill focuses on innovation and research in generative AI, which is a specialized area within Infocomm Technology."
+  },
+  {
+    "tag": "3D Environment Creation",
+    "tag_id": "4223",
+    "action": "assign_existing",
+    "category": "Media",
+    "speciality": "3D Artist (Modelling / Rigging / Texturing)",
+    "confidence": 0.9,
+    "reason": "3D environment creation is a core skill for 3D artists in the media industry."
+  },
+  {
+    "tag": "Social Skills Development",
+    "tag_id": "4225",
+    "action": "propose_new_speciality",
+    "category": "Social Service",
+    "speciality": "Social Skills Development Specialist",
+    "confidence": 0.9,
+    "reason": "The skill focuses on developing social skills, which aligns closely with roles in social services that aim to enhance interpersonal skills and community engagement."
+  },
+  {
+    "tag": "Metrology and Inspection in Advanced Manufacturing",
+    "tag_id": "4227",
+    "action": "assign_existing",
+    "category": "Precision Engineering",
+    "speciality": "Metrology and Inspection Engineer",
+    "confidence": 0.95,
+    "reason": "Metrology and inspection are critical components of precision engineering, making this a suitable existing speciality."
+  },
+  {
+    "tag": "Health and Wellbeing Enhancement",
+    "tag_id": "4236",
+    "action": "assign_existing",
+    "category": "Healthcare",
+    "speciality": "Health and Wellbeing Specialist",
+    "confidence": 0.85,
+    "reason": "This skill is directly related to enhancing health and wellbeing, which is a core focus in healthcare roles."
+  },
+  {
+    "tag": "Electric Vehicle Traction Battery and Battery Management System Maintenance",
+    "tag_id": "4239",
+    "action": "propose_new_speciality",
+    "category": "Energy and Power",
+    "speciality": "Electric Vehicle Battery Maintenance Technician",
+    "confidence": 0.9,
+    "reason": "The skill specifically addresses maintenance of electric vehicle traction batteries, which is a growing area in the energy and power sector."
+  },
+  {
+    "tag": "Ammonia Regulations and Standards",
+    "tag_id": "4248",
+    "action": "assign_existing",
+    "category": "Energy and Chemicals",
+    "speciality": "Regulatory Compliance Specialist",
+    "confidence": 0.8,
+    "reason": "Understanding ammonia regulations and standards is essential for compliance roles in the energy and chemicals industry."
+  },
+  {
+    "tag": "Immersive Ad Placement Collaboration",
+    "tag_id": "4261",
+    "action": "propose_new_speciality",
+    "category": "Media",
+    "speciality": "Immersive Ad Placement Specialist",
+    "confidence": 0.8,
+    "reason": "The skill relates to immersive advertising, which is a growing area in media and requires specialized knowledge."
+  },
+  {
+    "tag": "Palliative Care",
+    "tag_id": "4262",
+    "action": "assign_existing",
+    "category": "Healthcare",
+    "speciality": "Palliative Care Specialist",
+    "confidence": 0.9,
+    "reason": "Palliative care is a recognized specialty within healthcare focused on providing relief from symptoms and stress of serious illness."
+  },
+  {
+    "tag": "Lighting Operations in Digital Lighting Control",
+    "tag_id": "4264",
+    "action": "propose_new_speciality",
+    "category": "Design",
+    "speciality": "Digital Lighting Control Specialist",
+    "confidence": 0.75,
+    "reason": "This skill involves specific expertise in digital lighting control, which is not explicitly covered by existing specialities."
+  },
+  {
+    "tag": "Supplier Performance and Management",
+    "tag_id": "4266",
+    "action": "assign_existing",
+    "category": "Logistics",
+    "speciality": "Supplier Performance Manager",
+    "confidence": 0.85,
+    "reason": "Supplier performance and management is a key aspect of logistics and supply chain management."
+  },
+  {
+    "tag": "Script Supervision",
+    "tag_id": "4278",
+    "action": "assign_existing",
+    "category": "Media",
+    "speciality": "Script Supervisor",
+    "confidence": 0.9,
+    "reason": "Script supervision is a recognized role in media production, ensuring continuity and accuracy in scripts."
+  },
+  {
+    "tag": "Hair Perming and Straightening",
+    "tag_id": "4309",
+    "action": "assign_existing",
+    "category": "Healthcare",
+    "speciality": "Hair Perming and Straightening",
+    "confidence": 0.8,
+    "reason": "Hair perming and straightening is a skill relevant to the healthcare and beauty industry, particularly in cosmetology."
+  },
+  {
+    "tag": "Generative AI Model Evaluation",
+    "tag_id": "4311",
+    "action": "propose_new_speciality",
+    "category": "Infocomm Technology",
+    "speciality": "Generative AI Model Evaluation Specialist",
+    "confidence": 0.9,
+    "reason": "Generative AI model evaluation is a specialized skill that does not fit into existing specialities but is crucial in the field of AI and technology."
+  },
+  {
+    "tag": "Technical Vision Mixing",
+    "tag_id": "4319",
+    "action": "assign_existing",
+    "category": "Media",
+    "speciality": "Technical Director",
+    "confidence": 0.85,
+    "reason": "Technical vision mixing is a skill relevant to media production, particularly in roles related to technical direction and production management."
+  },
+  {
+    "tag": "Workplace Safety and Health for Welding",
+    "tag_id": "4334",
+    "action": "assign_existing",
+    "category": "Workplace Safety and Health",
+    "speciality": "Workplace Safety and Health Officer",
+    "confidence": 0.9,
+    "reason": "Workplace safety and health for welding is a specific application of workplace safety skills, relevant to the safety and health category."
+  },
+  {
+    "tag": "Cross-Border Payment Management",
+    "tag_id": "4374",
+    "action": "assign_existing",
+    "category": "Financial Services",
+    "speciality": "Cross-Border Payment Specialist",
+    "confidence": 0.8,
+    "reason": "Cross-border payment management is a critical skill in financial services, particularly in roles related to international finance and transactions."
+  },
+  {
+    "tag": "Learning Experience Evaluation",
+    "tag_id": "4375",
+    "action": "propose_new_speciality",
+    "category": "Training and Adult Education",
+    "speciality": "Learning Experience Evaluator",
+    "confidence": 0.9,
+    "reason": "The skill focuses on evaluating learning experiences, which aligns with the objectives of training and adult education."
+  },
+  {
+    "tag": "Supervise Suspended Scaffold",
+    "tag_id": "4377",
+    "action": "assign_existing",
+    "category": "Workplace Safety and Health",
+    "speciality": "Workplace Safety and Health Supervisor",
+    "confidence": 0.85,
+    "reason": "Supervising suspended scaffolds is directly related to workplace safety and health practices."
+  },
+  {
+    "tag": "Generative AI Models Technical Aspects of Security and Ethics in Financial Services",
+    "tag_id": "4380",
+    "action": "assign_existing",
+    "category": "Financial Services",
+    "speciality": "Chief Information Security Officer",
+    "confidence": 0.8,
+    "reason": "The skill pertains to security and ethics in financial services, which is relevant to the role of a Chief Information Security Officer."
+  },
+  {
+    "tag": "LED Technology and Processing",
+    "tag_id": "4381",
+    "action": "assign_existing",
+    "category": "Electronics",
+    "speciality": "LED Technology Engineer",
+    "confidence": 0.75,
+    "reason": "The skill involves LED technology, which fits within the electronics category."
+  },
+  {
+    "tag": "Electric Vehicle Drivetrain System Maintenance",
+    "tag_id": "4384",
+    "action": "assign_existing",
+    "category": "Energy and Power",
+    "speciality": "Electric Vehicle Maintenance Technician",
+    "confidence": 0.9,
+    "reason": "The skill is specifically about maintaining electric vehicle drivetrains, which is relevant to the energy and power sector."
+  },
+  {
+    "tag": "Letter of Credit Management",
+    "tag_id": "4388",
+    "action": "assign_existing",
+    "category": "Financial Services",
+    "speciality": "Letter of Credit Management",
+    "confidence": 0.9,
+    "reason": "The skill directly relates to financial transactions and management, which falls under Financial Services."
+  },
+  {
+    "tag": "Workplace Safety and Health for Self-Propelled Platform Operations",
+    "tag_id": "4398",
+    "action": "assign_existing",
+    "category": "Workplace Safety and Health",
+    "speciality": "Workplace Safety and Health Officer",
+    "confidence": 0.95,
+    "reason": "The skill is specifically about workplace safety, which is a core focus of the Workplace Safety and Health category."
+  },
+  {
+    "tag": "Maritime Charging Infrastructure",
+    "tag_id": "4401",
+    "action": "propose_new_speciality",
+    "category": "Marine and Offshore",
+    "speciality": "Maritime Charging Infrastructure",
+    "confidence": 0.85,
+    "reason": "This skill pertains to the development and management of charging infrastructure in maritime contexts, which is not explicitly covered in existing specialities."
+  },
+  {
+    "tag": "Post-Caregiving Life Transition",
+    "tag_id": "4415",
+    "action": "propose_new_speciality",
+    "category": "Social Service",
+    "speciality": "Post-Caregiving Life Transition",
+    "confidence": 0.8,
+    "reason": "This skill focuses on supporting individuals transitioning after caregiving roles, which is a unique aspect of social services not currently specified."
+  },
+  {
+    "tag": "Apply Workplace Safety and Health in Construction Sites",
+    "tag_id": "4421",
+    "action": "assign_existing",
+    "category": "Workplace Safety and Health",
+    "speciality": "Workplace Safety and Health Officer",
+    "confidence": 0.9,
+    "reason": "The skill is about applying safety protocols in construction, aligning with the responsibilities of a Workplace Safety and Health Officer."
+  },
+  {
+    "tag": "Complex Behavior and Crisis Management for Care Recipients",
+    "tag_id": "4423",
+    "action": "assign_existing",
+    "category": "Social Service",
+    "speciality": "Senior Counsellor",
+    "confidence": 0.9,
+    "reason": "The skill 'Complex Behavior and Crisis Management for Care Recipients' aligns closely with the responsibilities of a Senior Counsellor in managing complex cases."
+  },
+  {
+    "tag": "Customs Declaration and Permits Management",
+    "tag_id": "4429",
+    "action": "assign_existing",
+    "category": "Logistics",
+    "speciality": "Import Export Manager / Freight Allocation Manager / Freight Shipping Manager / Freight Documentation Manager / Freight Pricing Manager",
+    "confidence": 0.85,
+    "reason": "The skill 'Customs Declaration and Permits Management' is directly related to the duties of an Import Export Manager, who handles customs and permits."
+  },
+  {
+    "tag": "AI Content Generation for Videos",
+    "tag_id": "4443",
+    "action": "propose_new_speciality",
+    "category": "Media",
+    "speciality": "AI Content Generation Specialist",
+    "confidence": 0.8,
+    "reason": "The skill 'AI Content Generation for Videos' does not fit existing specialities and requires a new role focused on AI-driven content creation."
+  },
+  {
+    "tag": "Incoterms Management",
+    "tag_id": "4446",
+    "action": "assign_existing",
+    "category": "Logistics",
+    "speciality": "Logistics Solutions Specialist / Logistics Solutions Engineer",
+    "confidence": 0.75,
+    "reason": "The skill 'Incoterms Management' is relevant to logistics operations and can be associated with roles that manage logistics solutions."
+  },
+  {
+    "tag": "Food Styling",
+    "tag_id": "4449",
+    "action": "assign_existing",
+    "category": "Food Services",
+    "speciality": "Food Technologist",
+    "confidence": 0.8,
+    "reason": "The skill 'Food Styling' is closely related to the expertise of a Food Technologist, who may also be involved in food presentation and styling."
+  },
+  {
+    "tag": "Work with Infected and Non-Infected Organisms, Microbes, Biological Materials and Their Derivatives",
+    "tag_id": "4465",
+    "action": "assign_existing",
+    "category": "Healthcare",
+    "speciality": "Microbiologist",
+    "confidence": 0.9,
+    "reason": "The skill involves working with microbes and biological materials, which aligns with the responsibilities of a microbiologist in healthcare."
+  },
+  {
+    "tag": "Mental Wellbeing Support for Care Recipient",
+    "tag_id": "4494",
+    "action": "assign_existing",
+    "category": "Healthcare",
+    "speciality": "Counsellor",
+    "confidence": 0.85,
+    "reason": "Mental wellbeing support is a key aspect of counselling in healthcare settings."
+  },
+  {
+    "tag": "Intervention Evaluation in Healthcare",
+    "tag_id": "4496",
+    "action": "assign_existing",
+    "category": "Healthcare",
+    "speciality": "Healthcare Assistant / Basic Care Assistant / Nursing Aide",
+    "confidence": 0.8,
+    "reason": "Intervention evaluation is relevant to roles that involve direct patient care and support."
+  },
+  {
+    "tag": "Implement Biorisk Management System",
+    "tag_id": "4497",
+    "action": "assign_existing",
+    "category": "Healthcare",
+    "speciality": "Health and Safety Manager",
+    "confidence": 0.75,
+    "reason": "Implementing a biorisk management system is closely related to health and safety management in healthcare."
+  },
+  {
+    "tag": "Electric Vehicle Low Voltage Systems Maintenance",
+    "tag_id": "4500",
+    "action": "assign_existing",
+    "category": "Energy and Power",
+    "speciality": "Maintenance Technician",
+    "confidence": 0.8,
+    "reason": "Electric vehicle maintenance falls under the energy and power sector, specifically in the maintenance of electrical systems."
+  },
+  {
+    "tag": "Educational Landscape Navigation",
+    "tag_id": "4502",
+    "action": "propose_new_speciality",
+    "category": "Training and Adult Education",
+    "speciality": "Educational Navigator",
+    "confidence": 0.8,
+    "reason": "The skill focuses on navigating educational landscapes, which aligns with roles in training and adult education."
+  },
+  {
+    "tag": "Certificate of Non-Manipulation Maintenance",
+    "tag_id": "4505",
+    "action": "propose_new_speciality",
+    "category": "Workplace Safety and Health",
+    "speciality": "Non-Manipulation Maintenance Specialist",
+    "confidence": 0.7,
+    "reason": "The skill relates to maintenance practices that ensure safety, fitting within workplace safety and health."
+  },
+  {
+    "tag": "Assessment Design and Implementation",
+    "tag_id": "4523",
+    "action": "assign_existing",
+    "category": "Training and Adult Education",
+    "speciality": "Curriculum Lead",
+    "confidence": 0.9,
+    "reason": "Assessment design and implementation is a key responsibility of curriculum leads in educational settings."
+  },
+  {
+    "tag": "Perform Plant Equipment Fitting Work",
+    "tag_id": "4528",
+    "action": "assign_existing",
+    "category": "Engineering Services",
+    "speciality": "Technician / Coordinator (Engineering Construction)",
+    "confidence": 0.85,
+    "reason": "Performing plant equipment fitting work is closely related to the responsibilities of technicians in engineering services."
+  },
+  {
+    "tag": "LED Volume Setup and Configuration",
+    "tag_id": "4541",
+    "action": "assign_existing",
+    "category": "Media",
+    "speciality": "Technical Support Operator (Video Tape Operations and / or Video Technical Operations)",
+    "confidence": 0.75,
+    "reason": "Setting up and configuring LED volumes is relevant to technical roles in media production."
+  },
+  {
+    "tag": "Art Form Showcase",
+    "tag_id": "4542",
+    "action": "assign_existing",
+    "category": "Arts",
+    "speciality": "Artist",
+    "confidence": 0.9,
+    "reason": "The skill 'Art Form Showcase' aligns with the general role of an artist who showcases their work."
+  },
+  {
+    "tag": "Stage, Liveshow and Theatre Action Coordination",
+    "tag_id": "4543",
+    "action": "assign_existing",
+    "category": "Arts",
+    "speciality": "Stage Manager",
+    "confidence": 0.85,
+    "reason": "The skill 'Stage, Liveshow and Theatre Action Coordination' is closely related to the responsibilities of a stage manager."
+  },
+  {
+    "tag": "Arts Education Research",
+    "tag_id": "4544",
+    "action": "assign_existing",
+    "category": "Arts",
+    "speciality": "Arts Educator",
+    "confidence": 0.8,
+    "reason": "The skill 'Arts Education Research' fits well within the role of an arts educator who engages in research related to arts education."
+  },
+  {
+    "tag": "Technical Camera Operations",
+    "tag_id": "4587",
+    "action": "assign_existing",
+    "category": "Media",
+    "speciality": "Camera Operator",
+    "confidence": 0.9,
+    "reason": "The skill 'Technical Camera Operations' is directly related to the role of a camera operator in media production."
+  },
+  {
+    "tag": "Digital Audio Workstation Sound Editing",
+    "tag_id": "4596",
+    "action": "assign_existing",
+    "category": "Media",
+    "speciality": "Sound Engineer",
+    "confidence": 0.9,
+    "reason": "The skill 'Digital Audio Workstation Sound Editing' is relevant to the role of a sound engineer who works with audio editing software."
+  },
+  {
+    "tag": "Supervise Workplace Safety and Health for formwork Construction",
+    "tag_id": "4600",
+    "action": "assign_existing",
+    "category": "Workplace Safety and Health",
+    "speciality": "Workplace Safety and Health Supervisor",
+    "confidence": 0.9,
+    "reason": "The skill involves supervising safety and health practices, which aligns with the responsibilities of a Workplace Safety and Health Supervisor."
+  },
+  {
+    "tag": "Legal Advisory for Carbon Products and Activities",
+    "tag_id": "4612",
+    "action": "assign_existing",
+    "category": "Legal Services",
+    "speciality": "Legal Counsel",
+    "confidence": 0.85,
+    "reason": "Legal advisory for carbon products and activities falls under the purview of legal counsel, particularly in environmental and regulatory contexts."
+  },
+  {
+    "tag": "Care Plan Development",
+    "tag_id": "4630",
+    "action": "assign_existing",
+    "category": "Healthcare",
+    "speciality": "Care Staff",
+    "confidence": 0.8,
+    "reason": "Care plan development is a fundamental aspect of healthcare roles, particularly for care staff involved in patient management."
+  },
+  {
+    "tag": "Trade Incentives Management",
+    "tag_id": "4631",
+    "action": "assign_existing",
+    "category": "Trade Associations and Chambers",
+    "speciality": "Industry Development Manager / Assistant Manager",
+    "confidence": 0.75,
+    "reason": "Trade incentives management is typically handled by industry development professionals who work to promote and manage trade-related initiatives."
+  },
+  {
+    "tag": "Condition Specific Education",
+    "tag_id": "4636",
+    "action": "assign_existing",
+    "category": "Healthcare",
+    "speciality": "Curriculum / Pedagogy Specialist",
+    "confidence": 0.7,
+    "reason": "Condition specific education relates to specialized training and education in healthcare, which aligns with the role of a curriculum or pedagogy specialist."
+  },
+  {
+    "tag": "Hair Colouring and Lightening",
+    "tag_id": "4638",
+    "action": "assign_existing",
+    "category": "Healthcare",
+    "speciality": "Senior Hairdresser / Hair Colourist",
+    "confidence": 0.8,
+    "reason": "Hair colouring and lightening is a skill relevant to the healthcare and beauty industry, particularly in cosmetology."
+  },
+  {
+    "tag": "Additive Manufacturing Standards, Qualifications, and Certifications",
+    "tag_id": "4639",
+    "action": "propose_new_speciality",
+    "category": "Precision Engineering",
+    "speciality": "Additive Manufacturing Specialist",
+    "confidence": 0.9,
+    "reason": "Additive manufacturing standards, qualifications, and certifications are specific to precision engineering and manufacturing processes."
+  },
+  {
+    "tag": "Digital Financial Management Tools Application",
+    "tag_id": "4640",
+    "action": "assign_existing",
+    "category": "Financial Services",
+    "speciality": "Digital Transformation Executive",
+    "confidence": 0.85,
+    "reason": "Digital financial management tools application is closely related to digital transformation in financial services."
+  },
+  {
+    "tag": "Goal Setting with Your Care Recipient",
+    "tag_id": "4643",
+    "action": "assign_existing",
+    "category": "Social Service",
+    "speciality": "Counsellor",
+    "confidence": 0.75,
+    "reason": "Goal setting with care recipients is a fundamental aspect of counselling and social services."
+  },
+  {
+    "tag": "Mutual Recognition Arrangements of Authorised Economic Operator Management",
+    "tag_id": "4665",
+    "action": "assign_existing",
+    "category": "Logistics",
+    "speciality": "Customs Compliance Manager",
+    "confidence": 0.8,
+    "reason": "Mutual recognition arrangements of authorised economic operator management are relevant to logistics and trade compliance."
+  },
+  {
+    "tag": "Costume Design and Conceptualisation",
+    "tag_id": "4666",
+    "action": "assign_existing",
+    "category": "Arts",
+    "speciality": "Costume Designer",
+    "confidence": 0.9,
+    "reason": "Costume design is a recognized specialty within the Arts category."
+  },
+  {
+    "tag": "Apply Containment Principles in Laboratory Design",
+    "tag_id": "4676",
+    "action": "propose_new_speciality",
+    "category": "Built Environment",
+    "speciality": "Laboratory Design Specialist",
+    "confidence": 0.8,
+    "reason": "Containment principles in laboratory design require specialized knowledge that is not covered by existing specialities."
+  },
+  {
+    "tag": "Creativity and Wellbeing Through Arts Learning Experiences",
+    "tag_id": "4680",
+    "action": "assign_existing",
+    "category": "Arts",
+    "speciality": "Creative Technologist",
+    "confidence": 0.85,
+    "reason": "Creativity and wellbeing through arts learning experiences align with the role of a creative technologist."
+  },
+  {
+    "tag": "Shore-Based Ammonia Bunkering Fuel Infrastructure Engineering",
+    "tag_id": "4683",
+    "action": "propose_new_speciality",
+    "category": "Marine and Offshore",
+    "speciality": "Ammonia Bunkering Engineer",
+    "confidence": 0.75,
+    "reason": "Shore-based ammonia bunkering fuel infrastructure engineering is a specialized area that does not fit existing specialities."
+  },
+  {
+    "tag": "Virtual Production (VP) Art Direction",
+    "tag_id": "4696",
+    "action": "assign_existing",
+    "category": "Media",
+    "speciality": "Art Director",
+    "confidence": 0.9,
+    "reason": "Virtual production art direction is closely related to the role of an art director in the media industry."
+  },
+  {
+    "tag": "Regulatory Controls on Controlled and Prohibited Goods",
+    "tag_id": "4698",
+    "action": "assign_existing",
+    "category": "Legal Services",
+    "speciality": "Compliance Advisory Executive",
+    "confidence": 0.9,
+    "reason": "Regulatory controls are closely related to compliance and legal advisory roles."
+  },
+  {
+    "tag": "Consumer Protection Regulatory Management",
+    "tag_id": "4704",
+    "action": "assign_existing",
+    "category": "Legal Services",
+    "speciality": "Compliance Advisory Executive",
+    "confidence": 0.9,
+    "reason": "Consumer protection regulations fall under compliance and legal advisory roles."
+  },
+  {
+    "tag": "Autonomous Vehicle Equipment and System Operation",
+    "tag_id": "4708",
+    "action": "propose_new_speciality",
+    "category": "Engineering Services",
+    "speciality": "Autonomous Vehicle Operations Specialist",
+    "confidence": 0.8,
+    "reason": "The operation of autonomous vehicle systems requires specialized engineering knowledge not covered by existing specialities."
+  },
+  {
+    "tag": "Harmonised System Code Classification",
+    "tag_id": "4710",
+    "action": "assign_existing",
+    "category": "Logistics",
+    "speciality": "Logistics Contracts Executive / Logistics Operations Executive",
+    "confidence": 0.85,
+    "reason": "Harmonised System Code Classification is relevant to logistics and trade operations."
+  },
+  {
+    "tag": "Supervise Safe Lifting Operations",
+    "tag_id": "4722",
+    "action": "assign_existing",
+    "category": "Workplace Safety and Health",
+    "speciality": "Workplace Safety and Health Officer",
+    "confidence": 0.9,
+    "reason": "Supervising safe lifting operations is directly related to workplace safety practices."
+  },
+  {
+    "tag": "Creative Video Editing for Formats and Genres for Non-scripted Formats",
+    "tag_id": "4749",
+    "action": "assign_existing",
+    "category": "Media",
+    "speciality": "Video Editor (Colour Grading, Online Editing)",
+    "confidence": 0.9,
+    "reason": "The skill 'Creative Video Editing for Formats and Genres for Non-scripted Formats' aligns closely with video editing roles in the media industry."
+  },
+  {
+    "tag": "Preventive Health",
+    "tag_id": "4750",
+    "action": "assign_existing",
+    "category": "Healthcare",
+    "speciality": "Preventive Health Specialist",
+    "confidence": 0.85,
+    "reason": "The skill 'Preventive Health' is directly related to roles in healthcare focusing on preventive measures."
+  },
+  {
+    "tag": "Perform Basic Maintenance Works",
+    "tag_id": "4751",
+    "action": "assign_existing",
+    "category": "Workplace Safety and Health",
+    "speciality": "Maintenance Technician",
+    "confidence": 0.8,
+    "reason": "The skill 'Perform Basic Maintenance Works' fits well within the context of workplace safety and health roles."
+  },
+  {
+    "tag": "General Waste and Recyclable Waste Collection and Management",
+    "tag_id": "4756",
+    "action": "assign_existing",
+    "category": "Environmental Services",
+    "speciality": "Waste Management Consultant",
+    "confidence": 0.9,
+    "reason": "The skill 'General Waste and Recyclable Waste Collection and Management' is relevant to waste management roles in environmental services."
+  },
+  {
+    "tag": "Supervise Metal Scaffold Erection",
+    "tag_id": "4761",
+    "action": "assign_existing",
+    "category": "Workplace Safety and Health",
+    "speciality": "Workplace Safety and Health Officer",
+    "confidence": 0.85,
+    "reason": "The skill 'Supervise Metal Scaffold Erection' is pertinent to safety roles in construction and workplace safety."
+  },
+  {
+    "tag": "Generative AI Model Selection in Financial Services",
+    "tag_id": "4766",
+    "action": "assign_existing",
+    "category": "Financial Services",
+    "speciality": "Generative AI Model Selection in Financial Services",
+    "confidence": 0.9,
+    "reason": "The skill directly relates to the application of AI in financial services, which is a recognized area within the Financial Services category."
+  },
+  {
+    "tag": "Game Extended Reality Development",
+    "tag_id": "4767",
+    "action": "propose_new_speciality",
+    "category": "Media",
+    "speciality": "Extended Reality Game Development",
+    "confidence": 0.8,
+    "reason": "The skill focuses on game development in extended reality, which is a growing field in media but does not fit neatly into existing specialities."
+  },
+  {
+    "tag": "Sludge and Greasy Waste Collection and Management",
+    "tag_id": "4776",
+    "action": "assign_existing",
+    "category": "Environmental Services",
+    "speciality": "Waste Management Consultant",
+    "confidence": 0.85,
+    "reason": "The skill pertains to the management of waste collection and aligns with waste management practices in environmental services."
+  },
+  {
+    "tag": "Community Building Through Arts Learning Experiences",
+    "tag_id": "4777",
+    "action": "assign_existing",
+    "category": "Arts",
+    "speciality": "Community Development Executive",
+    "confidence": 0.75,
+    "reason": "The skill involves community building through arts, which fits within the arts category focused on community engagement."
+  },
+  {
+    "tag": "Implement Incident Management Process",
+    "tag_id": "4785",
+    "action": "assign_existing",
+    "category": "Workplace Safety and Health",
+    "speciality": "Workplace Safety and Health Officer",
+    "confidence": 0.9,
+    "reason": "The skill is about implementing incident management processes, which is crucial in workplace safety and health."
+  },
+  {
+    "tag": "Lookdev",
+    "tag_id": "4790",
+    "action": "propose_new_speciality",
+    "category": "Design",
+    "speciality": "Look Development Artist",
+    "confidence": 0.9,
+    "reason": "Lookdev is a specialized skill within the design field, particularly in visual effects and animation, which does not have a specific existing speciality."
+  },
+  {
+    "tag": "Perform Design for Safety Professional Duties",
+    "tag_id": "4805",
+    "action": "assign_existing",
+    "category": "Workplace Safety and Health",
+    "speciality": "Workplace Safety and Health Officer",
+    "confidence": 0.8,
+    "reason": "Performing design for safety professional duties aligns with the responsibilities of a Workplace Safety and Health Officer."
+  },
+  {
+    "tag": "LED Volume Workflow Design",
+    "tag_id": "4815",
+    "action": "propose_new_speciality",
+    "category": "Design",
+    "speciality": "LED Volume Designer",
+    "confidence": 0.85,
+    "reason": "LED Volume Workflow Design is a specific skill related to modern production techniques in design, particularly in film and virtual production, which does not have a specific existing speciality."
+  },
+  {
+    "tag": "High Dynamic Range (HDR) Video",
+    "tag_id": "4838",
+    "action": "assign_existing",
+    "category": "Media",
+    "speciality": "Video Editor",
+    "confidence": 0.75,
+    "reason": "High Dynamic Range (HDR) Video is a relevant skill for video editors, as it pertains to the quality and presentation of video content."
+  },
+  {
+    "tag": "Temporary Import and Export Schemes",
+    "tag_id": "4845",
+    "action": "assign_existing",
+    "category": "Logistics",
+    "speciality": "Import Export Manager",
+    "confidence": 0.8,
+    "reason": "Temporary Import and Export Schemes are directly related to the responsibilities of an Import Export Manager."
+  },
+  {
+    "tag": "Establish Biosecurity Management System",
+    "tag_id": "4847",
+    "action": "assign_existing",
+    "category": "Agrifood",
+    "speciality": "Biosecurity Manager",
+    "confidence": 0.9,
+    "reason": "The skill 'Establish Biosecurity Management System' aligns with the responsibilities of a Biosecurity Manager in the Agrifood sector."
+  },
+  {
+    "tag": "Strategic Goods Control Management",
+    "tag_id": "4848",
+    "action": "propose_new_speciality",
+    "category": "Media",
+    "speciality": "Voice Actor",
+    "confidence": 0.85,
+    "reason": "The skill 'Voice Acting' is specific to the Media industry and does not fit into existing specialities."
+  },
+  {
+    "tag": "Voice Acting",
+    "tag_id": "4852",
+    "action": "assign_existing",
+    "category": "Arts",
+    "speciality": "Voice Actor",
+    "confidence": 0.8,
+    "reason": "Voice acting is a recognized specialty within the Arts category, particularly in performance and media."
+  },
+  {
+    "tag": "Organisational and Regulatory Governance",
+    "tag_id": "4866",
+    "action": "assign_existing",
+    "category": "Legal Services",
+    "speciality": "Compliance Analyst",
+    "confidence": 0.75,
+    "reason": "The skill 'Organisational and Regulatory Governance' is closely related to compliance roles in Legal Services."
+  },
+  {
+    "tag": "Learning Environment Design",
+    "tag_id": "4868",
+    "action": "propose_new_speciality",
+    "category": "Training and Adult Education",
+    "speciality": "Learning Environment Designer",
+    "confidence": 0.8,
+    "reason": "The skill 'Learning Environment Design' is specific to creating educational environments and does not fit existing specialities."
+  },
+  {
+    "tag": "Art Form Experience and Knowledge",
+    "tag_id": "4876",
+    "action": "assign_existing",
+    "category": "Arts",
+    "speciality": "Artist",
+    "confidence": 0.9,
+    "reason": "The skill 'Art Form Experience and Knowledge' aligns well with the category of Arts, as it directly relates to the knowledge and experience required in various art forms."
+  },
+  {
+    "tag": "Classroom Management and Guidance of Children's Behaviour",
+    "tag_id": "4894",
+    "action": "assign_existing",
+    "category": "Early Childhood",
+    "speciality": "Early Intervention Educator",
+    "confidence": 0.85,
+    "reason": "'Classroom Management and Guidance of Children's Behaviour' is a crucial skill for educators in early childhood settings, making it suitable for this category."
+  },
+  {
+    "tag": "Systems Architecture",
+    "tag_id": "4897",
+    "action": "assign_existing",
+    "category": "Infocomm Technology",
+    "speciality": "Systems Architect",
+    "confidence": 0.9,
+    "reason": "'Systems Architecture' is a fundamental skill in the field of Infocomm Technology, particularly relevant for roles focused on designing and managing complex systems."
+  },
+  {
+    "tag": "Demand Analysis and Optimisation",
+    "tag_id": "4906",
+    "action": "assign_existing",
+    "category": "Logistics",
+    "speciality": "Demand Management Manager",
+    "confidence": 0.8,
+    "reason": "'Demand Analysis and Optimisation' is essential for roles in logistics that focus on managing and optimizing supply chain demand."
+  },
+  {
+    "tag": "Operate Scissor Lift",
+    "tag_id": "4915",
+    "action": "assign_existing",
+    "category": "Workplace Safety and Health",
+    "speciality": "Workplace Safety and Health Officer",
+    "confidence": 0.75,
+    "reason": "'Operate Scissor Lift' is a skill relevant to workplace safety, particularly in environments where equipment operation is critical for safety compliance."
+  },
+  {
+    "tag": "Bio-Psycho-Social (BPS) Risk and Red Flags Identification",
+    "tag_id": "4923",
+    "action": "assign_existing",
+    "category": "Healthcare",
+    "speciality": "Senior Nurse Clinician",
+    "confidence": 0.9,
+    "reason": "The skill relates to identifying risks and red flags in a bio-psycho-social context, which is relevant to healthcare professionals, particularly nurses."
+  },
+  {
+    "tag": "Goal Setting in Rehabilitation/Nutritional Therapy",
+    "tag_id": "4938",
+    "action": "assign_existing",
+    "category": "Healthcare",
+    "speciality": "Occupational Therapist",
+    "confidence": 0.85,
+    "reason": "Goal setting in rehabilitation and nutritional therapy is a key aspect of occupational therapy, making this skill relevant to the specialty."
+  },
+  {
+    "tag": "Disability Awareness",
+    "tag_id": "4950",
+    "action": "assign_existing",
+    "category": "Social Service",
+    "speciality": "Counsellor",
+    "confidence": 0.8,
+    "reason": "Disability awareness is crucial for counsellors working with individuals with disabilities, making this skill applicable to the social service sector."
+  },
+  {
+    "tag": "Non-Tariff Measures Management",
+    "tag_id": "4952",
+    "action": "assign_existing",
+    "category": "Wholesale Trade",
+    "speciality": "Trade Finance Manager",
+    "confidence": 0.75,
+    "reason": "Non-tariff measures management is relevant to trade finance and logistics, which falls under wholesale trade."
+  },
+  {
+    "tag": "Tariff and Tax Measures Management",
+    "tag_id": "4965",
+    "action": "assign_existing",
+    "category": "Wholesale Trade",
+    "speciality": "Trade Finance Manager",
+    "confidence": 0.75,
+    "reason": "Tariff and tax measures management is essential for professionals in trade finance, making this skill relevant to the wholesale trade category."
+  },
+  {
+    "tag": "Future Care Plan Development",
+    "tag_id": "4976",
+    "action": "assign_existing",
+    "category": "Healthcare",
+    "speciality": "Care Staff",
+    "confidence": 0.9,
+    "reason": "Future Care Plan Development is closely related to roles in healthcare, particularly those involved in patient care and support."
+  },
+  {
+    "tag": "Electric Vehicle and Hybrid Electric Vehicle Battery Management",
+    "tag_id": "4977",
+    "action": "assign_existing",
+    "category": "Energy and Power",
+    "speciality": "Electricity Transmission and Distribution Department Manager",
+    "confidence": 0.85,
+    "reason": "Electric Vehicle and Hybrid Electric Vehicle Battery Management falls under energy management and power systems."
+  },
+  {
+    "tag": "Learning Technology Design",
+    "tag_id": "4983",
+    "action": "assign_existing",
+    "category": "Training and Adult Education",
+    "speciality": "Learning Technology Designer",
+    "confidence": 0.95,
+    "reason": "Learning Technology Design directly relates to the development of educational technologies and instructional design."
+  },
+  {
+    "tag": "Aquaculture Techniques and Breeding Programme Management",
+    "tag_id": "4986",
+    "action": "assign_existing",
+    "category": "Agrifood",
+    "speciality": "Aquaculture Technician",
+    "confidence": 0.9,
+    "reason": "Aquaculture Techniques and Breeding Programme Management is relevant to roles in aquaculture and fisheries management."
+  },
+  {
+    "tag": "Perform Work At Height",
+    "tag_id": "5008",
+    "action": "assign_existing",
+    "category": "Workplace Safety and Health",
+    "speciality": "Workplace Safety and Health Officer",
+    "confidence": 0.9,
+    "reason": "Perform Work At Height is a critical safety skill relevant to workplace safety and health roles."
+  },
+  {
+    "tag": "Relationships and Sexuality Education",
+    "tag_id": "5021",
+    "action": "propose_new_speciality",
+    "category": "Social Service",
+    "speciality": "Relationships and Sexuality Educator",
+    "confidence": 0.9,
+    "reason": "This skill directly relates to educating individuals about relationships and sexuality, which fits within the social service sector focused on education and support."
+  },
+  {
+    "tag": "Microfabrication",
+    "tag_id": "5042",
+    "action": "assign_existing",
+    "category": "Precision Engineering",
+    "speciality": "Engineer",
+    "confidence": 0.8,
+    "reason": "Microfabrication is a specialized engineering process that falls under precision engineering, where engineers work on the design and production of micro-scale devices."
+  },
+  {
+    "tag": "Autonomous Vehicles Principles Applications",
+    "tag_id": "5048",
+    "action": "propose_new_speciality",
+    "category": "Engineering Services",
+    "speciality": "Autonomous Vehicles Engineer",
+    "confidence": 0.85,
+    "reason": "The principles and applications of autonomous vehicles require specialized knowledge in engineering, which is not fully captured by existing specialities."
+  },
+  {
+    "tag": "Bias Identification and Mitigation",
+    "tag_id": "5059",
+    "action": "propose_new_speciality",
+    "category": "Training and Adult Education",
+    "speciality": "Bias Mitigation Trainer",
+    "confidence": 0.75,
+    "reason": "Bias identification and mitigation is a critical skill in training and education, particularly in promoting inclusivity and diversity in various sectors."
+  },
+  {
+    "tag": "Emergency Preparedness and Management",
+    "tag_id": "5065",
+    "action": "assign_existing",
+    "category": "Workplace Safety and Health",
+    "speciality": "Workplace Safety and Health Officer",
+    "confidence": 0.9,
+    "reason": "Emergency preparedness and management is a key responsibility of workplace safety and health officers, making this a relevant assignment."
+  },
+  {
+    "tag": "Virtual Production Workflow Design",
+    "tag_id": "5115",
+    "action": "propose_new_speciality",
+    "category": "Media",
+    "speciality": "Virtual Production Specialist",
+    "confidence": 0.9,
+    "reason": "Virtual production is a growing field in media that combines physical and digital elements, and there is no existing speciality that directly addresses this skill."
+  },
+  {
+    "tag": "Stunts and Fight Performance",
+    "tag_id": "5118",
+    "action": "assign_existing",
+    "category": "Media",
+    "speciality": "Stunt Coordinator",
+    "confidence": 0.85,
+    "reason": "Stunts and fight performance are integral to film and media production, aligning well with the existing role of a stunt coordinator."
+  },
+  {
+    "tag": "Camera Tracking / Matchmove",
+    "tag_id": "5119",
+    "action": "assign_existing",
+    "category": "Media",
+    "speciality": "Camera Tracking Specialist",
+    "confidence": 0.8,
+    "reason": "Camera tracking and matchmove are essential skills in visual effects and animation, fitting well within the media category."
+  },
+  {
+    "tag": "Fabric and Material Design",
+    "tag_id": "5132",
+    "action": "assign_existing",
+    "category": "Design",
+    "speciality": "Textile Designer",
+    "confidence": 0.75,
+    "reason": "Fabric and material design is a key aspect of design, particularly in fashion and interior design, which aligns with existing specialities."
+  },
+  {
+    "tag": "Perform Rotating Equipment Fitting Work",
+    "tag_id": "5134",
+    "action": "assign_existing",
+    "category": "Engineering Services",
+    "speciality": "Mechanical Technician",
+    "confidence": 0.8,
+    "reason": "Performing rotating equipment fitting work is a mechanical task that fits well within the engineering services category."
+  },
+  {
+    "tag": "Vendor and Partnership Management",
+    "tag_id": "5141",
+    "action": "assign_existing",
+    "category": "Logistics",
+    "speciality": "Business Development Manager / Sales and Marketing Manager / Vertical Sales Account Manager / Key Account Manager / Project Cargo Sales Manager / Route Development Manager / Trade Lane Manager",
+    "confidence": 0.8,
+    "reason": "Vendor and Partnership Management is closely related to business development and sales roles in logistics."
+  },
+  {
+    "tag": "Additive Manufacturing of Metallic Components",
+    "tag_id": "5149",
+    "action": "propose_new_speciality",
+    "category": "Precision Engineering",
+    "speciality": "Additive Manufacturing Specialist",
+    "confidence": 0.9,
+    "reason": "Additive Manufacturing of Metallic Components is a specialized skill that fits within the precision engineering domain."
+  },
+  {
+    "tag": "Prompt Engineering",
+    "tag_id": "5151",
+    "action": "propose_new_speciality",
+    "category": "Infocomm Technology",
+    "speciality": "AI Prompt Engineer",
+    "confidence": 0.85,
+    "reason": "Prompt Engineering is a new and emerging skill in the field of artificial intelligence and machine learning."
+  },
+  {
+    "tag": "Perform Metal Scaffold Erection",
+    "tag_id": "5154",
+    "action": "assign_existing",
+    "category": "Workplace Safety and Health",
+    "speciality": "Workplace Safety and Health Officer",
+    "confidence": 0.75,
+    "reason": "Performing Metal Scaffold Erection is relevant to safety practices in construction and workplace safety."
+  },
+  {
+    "tag": "Technical Video Editing",
+    "tag_id": "5166",
+    "action": "assign_existing",
+    "category": "Media",
+    "speciality": "Video Editor (Colour Grading, Online Editing)",
+    "confidence": 0.9,
+    "reason": "Technical Video Editing directly relates to roles in media production and editing."
+  },
+  {
+    "tag": "Caregiver Role Acceptance and Responsibilities",
+    "tag_id": "5172",
+    "action": "assign_existing",
+    "category": "Social Service",
+    "speciality": "Care Staff",
+    "confidence": 0.9,
+    "reason": "The skill 'Caregiver Role Acceptance and Responsibilities' aligns closely with the responsibilities of a Care Staff in the Social Service sector."
+  },
+  {
+    "tag": "Apply Workplace Safety and Health Practices",
+    "tag_id": "5182",
+    "action": "assign_existing",
+    "category": "Workplace Safety and Health",
+    "speciality": "Workplace Safety and Health Officer",
+    "confidence": 0.95,
+    "reason": "The skill 'Apply Workplace Safety and Health Practices' is directly related to the role of a Workplace Safety and Health Officer."
+  },
+  {
+    "tag": "Virtual Production Coordination",
+    "tag_id": "5205",
+    "action": "propose_new_speciality",
+    "category": "Media",
+    "speciality": "Virtual Production Coordinator",
+    "confidence": 0.85,
+    "reason": "The skill 'Virtual Production Coordination' does not fit into existing specialities and is specific to the emerging field of virtual production in media."
+  },
+  {
+    "tag": "Cinematography for hybrid productions",
+    "tag_id": "5208",
+    "action": "propose_new_speciality",
+    "category": "Media",
+    "speciality": "Cinematographer for Hybrid Productions",
+    "confidence": 0.8,
+    "reason": "The skill 'Cinematography for hybrid productions' is a specialized area that combines traditional cinematography with new hybrid production techniques, which is not currently represented."
+  },
+  {
+    "tag": "Autonomous Vehicle Incident Management",
+    "tag_id": "5214",
+    "action": "propose_new_speciality",
+    "category": "Transport",
+    "speciality": "Autonomous Vehicle Incident Manager",
+    "confidence": 0.75,
+    "reason": "The skill 'Autonomous Vehicle Incident Management' is a new and specialized role that does not fit into existing categories or specialities."
+  },
+  {
+    "tag": "Motion Graphics",
+    "tag_id": "5215",
+    "action": "propose_new_speciality",
+    "category": "Design",
+    "speciality": "Motion Graphics Designer",
+    "confidence": 0.9,
+    "reason": "Motion graphics is a specific area within design that focuses on creating animated graphic designs, which fits well under the Design category."
+  },
+  {
+    "tag": "Workplace Performance Diagnosis",
+    "tag_id": "5219",
+    "action": "propose_new_speciality",
+    "category": "Workplace Safety and Health",
+    "speciality": "Workplace Performance Consultant",
+    "confidence": 0.85,
+    "reason": "Workplace performance diagnosis relates to assessing and improving workplace safety and health, which aligns with the objectives of the Workplace Safety and Health category."
+  },
+  {
+    "tag": "Low-Temperature Gasification and Pyrolysis for E-waste Recycling",
+    "tag_id": "5220",
+    "action": "propose_new_speciality",
+    "category": "Environmental Services",
+    "speciality": "E-waste Recycling Specialist",
+    "confidence": 0.8,
+    "reason": "Low-temperature gasification and pyrolysis for e-waste recycling is a specialized process that fits within environmental services focused on waste management and recycling."
+  },
+  {
+    "tag": "Client Education",
+    "tag_id": "5227",
+    "action": "assign_existing",
+    "category": "Training and Adult Education",
+    "speciality": "Client Education",
+    "confidence": 0.95,
+    "reason": "Client education is a key component of training and adult education, focusing on educating clients about products or services."
+  },
+  {
+    "tag": "Electric Vehicle Brake System Maintenance",
+    "tag_id": "5229",
+    "action": "assign_existing",
+    "category": "Marine and Offshore",
+    "speciality": "Electric Vehicle Maintenance Technician",
+    "confidence": 0.9,
+    "reason": "Electric vehicle brake system maintenance is relevant to the marine and offshore industry, particularly in the context of electric propulsion systems."
+  },
+  {
+    "tag": "Generative AI Model Development and Fine Tuning",
+    "tag_id": "5230",
+    "action": "propose_new_speciality",
+    "category": "Infocomm Technology",
+    "speciality": "Generative AI Engineer",
+    "confidence": 0.9,
+    "reason": "Generative AI Model Development and Fine Tuning fits within the Infocomm Technology category, but there is no existing speciality that specifically addresses generative AI."
+  },
+  {
+    "tag": "Perform Process Pipe Fitting work",
+    "tag_id": "5236",
+    "action": "assign_existing",
+    "category": "Engineering Services",
+    "speciality": "Technician / Coordinator (Engineering Construction)",
+    "confidence": 0.8,
+    "reason": "Performing process pipe fitting work is a technical skill that aligns well with the responsibilities of a technician in engineering services."
+  },
+  {
+    "tag": "Lesson Planning",
+    "tag_id": "5237",
+    "action": "assign_existing",
+    "category": "Training and Adult Education",
+    "speciality": "Learning Facilitator",
+    "confidence": 0.85,
+    "reason": "Lesson planning is a core responsibility of a learning facilitator, making this a suitable match."
+  },
+  {
+    "tag": "National Service Preparation for Care Recipient",
+    "tag_id": "5246",
+    "action": "assign_existing",
+    "category": "Healthcare",
+    "speciality": "Healthcare Assistant / Basic Care Assistant / Nursing Aide",
+    "confidence": 0.75,
+    "reason": "National Service Preparation for Care Recipient relates to healthcare support roles, aligning with the responsibilities of a healthcare assistant."
+  },
+  {
+    "tag": "Rigging for Camera Supports",
+    "tag_id": "5250",
+    "action": "assign_existing",
+    "category": "Media",
+    "speciality": "Camera Operator (Specialty Camera Operation, Electronic News Gathering and Electronic Field Production Operation)",
+    "confidence": 0.8,
+    "reason": "Rigging for camera supports is a skill relevant to camera operation in media production."
+  },
+  {
+    "tag": "Post-School Pathways Navigation",
+    "tag_id": "5256",
+    "action": "propose_new_speciality",
+    "category": "Training and Adult Education",
+    "speciality": "Post-School Pathways Navigator",
+    "confidence": 0.9,
+    "reason": "This skill focuses on guiding individuals through post-school options, which aligns with the objectives of training and adult education."
+  },
+  {
+    "tag": "Trade Remedy Measures Management",
+    "tag_id": "5280",
+    "action": "propose_new_speciality",
+    "category": "Trade Associations and Chambers",
+    "speciality": "Trade Remedy Measures Manager",
+    "confidence": 0.85,
+    "reason": "This skill involves managing trade remedy measures, which is relevant to trade associations and chambers that deal with trade regulations."
+  },
+  {
+    "tag": "Character Design",
+    "tag_id": "5288",
+    "action": "propose_new_speciality",
+    "category": "Arts",
+    "speciality": "Character Designer",
+    "confidence": 0.95,
+    "reason": "Character design is a key aspect of the arts, particularly in animation and gaming, making it a suitable speciality."
+  },
+  {
+    "tag": "Render Management",
+    "tag_id": "5291",
+    "action": "propose_new_speciality",
+    "category": "Media",
+    "speciality": "Render Manager",
+    "confidence": 0.9,
+    "reason": "Render management is crucial in media production, especially in visual effects and animation, aligning well with the media category."
+  },
+  {
+    "tag": "Intimacy Movement Choreography and Direction",
+    "tag_id": "5292",
+    "action": "propose_new_speciality",
+    "category": "Arts",
+    "speciality": "Intimacy Movement Choreographer",
+    "confidence": 0.8,
+    "reason": "This skill pertains to choreography in performance arts, particularly in intimate scenes, fitting well within the arts category."
+  },
+  {
+    "tag": "Perform Plant Civil Work",
+    "tag_id": "5294",
+    "action": "assign_existing",
+    "category": "Built Environment",
+    "speciality": "Civil and Structural Engineer",
+    "confidence": 0.9,
+    "reason": "The skill 'Perform Plant Civil Work' aligns with the responsibilities of a Civil and Structural Engineer in the Built Environment category."
+  },
+  {
+    "tag": "Virtual Lighting Management",
+    "tag_id": "5299",
+    "action": "assign_existing",
+    "category": "Design",
+    "speciality": "Lighting Designer",
+    "confidence": 0.85,
+    "reason": "The skill 'Virtual Lighting Management' is closely related to the role of a Lighting Designer, which falls under the Design category."
+  },
+  {
+    "tag": "Creative Video Editing for Formats and Genres for Fiction Narrative",
+    "tag_id": "5313",
+    "action": "assign_existing",
+    "category": "Media",
+    "speciality": "Video Editor",
+    "confidence": 0.95,
+    "reason": "The skill 'Creative Video Editing for Formats and Genres for Fiction Narrative' directly corresponds to the role of a Video Editor in the Media category."
+  },
+  {
+    "tag": "Respond to Fire Incident in Workplace",
+    "tag_id": "5316",
+    "action": "assign_existing",
+    "category": "Workplace Safety and Health",
+    "speciality": "Workplace Safety and Health Officer",
+    "confidence": 0.9,
+    "reason": "The skill 'Respond to Fire Incident in Workplace' is relevant to the responsibilities of a Workplace Safety and Health Officer."
+  },
+  {
+    "tag": "Learning Space Design",
+    "tag_id": "5324",
+    "action": "propose_new_speciality",
+    "category": "Design",
+    "speciality": "Learning Space Designer",
+    "confidence": 0.8,
+    "reason": "The skill 'Learning Space Design' does not fit into existing specialities and suggests a focus on designing educational environments."
+  },
+  {
+    "tag": "Respond to Fire Emergency in Buildings",
+    "tag_id": "5325",
+    "action": "assign_existing",
+    "category": "Workplace Safety and Health",
+    "speciality": "Workplace Safety and Health Officer",
+    "confidence": 0.9,
+    "reason": "The skill 'Respond to Fire Emergency in Buildings' is directly related to workplace safety and health protocols."
+  },
+  {
+    "tag": "Digital Integrated Circuit Design",
+    "tag_id": "5340",
+    "action": "assign_existing",
+    "category": "Electronics",
+    "speciality": "Engineer",
+    "confidence": 0.85,
+    "reason": "Digital Integrated Circuit Design is a core skill in the electronics engineering field."
+  },
+  {
+    "tag": "Trade Document Data Standards Compliance",
+    "tag_id": "5342",
+    "action": "assign_existing",
+    "category": "Wholesale Trade",
+    "speciality": "Logistics Contracts Executive / Logistics Operations Executive / Logistics Operations Specialist",
+    "confidence": 0.8,
+    "reason": "Trade Document Data Standards Compliance is essential for logistics and trade operations."
+  },
+  {
+    "tag": "Perform Man-Lock Attendant Duties for Compressed Air Work",
+    "tag_id": "5343",
+    "action": "assign_existing",
+    "category": "Workplace Safety and Health",
+    "speciality": "Workplace Safety and Health Officer",
+    "confidence": 0.85,
+    "reason": "Performing Man-Lock Attendant Duties for Compressed Air Work is a safety-related task."
+  },
+  {
+    "tag": "Art Form History and Culture",
+    "tag_id": "5348",
+    "action": "assign_existing",
+    "category": "Arts",
+    "speciality": "Art Department Assistant / Set Dresser",
+    "confidence": 0.75,
+    "reason": "Art Form History and Culture is relevant to roles in the arts, particularly in production and design."
+  },
+  {
+    "tag": "Art Department Graphic Design",
+    "tag_id": "5359",
+    "action": "assign_existing",
+    "category": "Media",
+    "speciality": "Graphic Designer",
+    "confidence": 0.9,
+    "reason": "Art Department Graphic Design aligns closely with roles in the Media category, specifically under Graphic Designer."
+  },
+  {
+    "tag": "Erect Metal Scaffold in Marine industry",
+    "tag_id": "5364",
+    "action": "assign_existing",
+    "category": "Marine and Offshore",
+    "speciality": "Technician",
+    "confidence": 0.85,
+    "reason": "Erecting metal scaffolds is a technical skill relevant to the Marine and Offshore industry, where technicians are often involved in such tasks."
+  },
+  {
+    "tag": "Virtual Production Camera Tracking",
+    "tag_id": "5371",
+    "action": "assign_existing",
+    "category": "Media",
+    "speciality": "Virtual Production Specialist",
+    "confidence": 0.8,
+    "reason": "Virtual Production Camera Tracking is a specialized skill within the Media industry, particularly in film and digital content production."
+  },
+  {
+    "tag": "Photojournalism",
+    "tag_id": "5384",
+    "action": "assign_existing",
+    "category": "Media",
+    "speciality": "Photojournalist",
+    "confidence": 0.95,
+    "reason": "Photojournalism directly corresponds to the skill of capturing newsworthy events through photography, fitting well within the Media category."
+  }
+]

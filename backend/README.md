@@ -32,7 +32,32 @@ This reads the workbooks and writes `skillsfuture/skillsfuture_taxonomy.sql`.
 It does not connect to MySQL or modify the existing database. The generated SQL
 creates parallel `sf_categories`, `sf_specialities`, `sf_tags`, and
 `sf_speciality_tags` tables, using the existing `services` table. Review the
-generated file before importing it.
+generated file before importing it. Check it first with:
+
+```bash
+python skillsfuture/validate_skillsfuture_taxonomy.py
+```
+
+The validator is also read-only: it checks row shape, duplicate IDs/names,
+duplicate speciality/tag links, broken references, dead-end categories,
+specialities without tags, and unused tags.
+
+To create AI classification proposals for unused tags, put the OpenAI settings
+in `backend/.env` and run `python skillsfuture/classify_unmapped_skills.py`.
+The
+script loads `.env` automatically and writes pending JSON
+and CSV review files only; it does not modify MySQL or generate executable SQL.
+Review and approve proposals before adding an approval-to-SQL step.
+
+Validate proposals against the hierarchy with:
+
+```bash
+python skillsfuture/validate_classification_proposals.py
+```
+
+This creates annotated JSON and CSV files. `assign_existing` proposals are only
+valid when the category and speciality exist exactly and the speciality belongs
+to that category. Invalid proposals are marked `needs_review`.
 
 ## Score taxonomy quality
 
