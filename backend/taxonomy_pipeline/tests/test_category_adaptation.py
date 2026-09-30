@@ -8,6 +8,7 @@ def _datasets() -> dict[str, TaxonomyDataset]:
         "original": TaxonomyDataset(
             name="original",
             categories=[{"id": 1, "name": "Banking", "service_id": 1}],
+            specialities=[{"id": 1, "name": "Retail Banking", "category_id": 1}],
         ),
         "skillsfuture": TaxonomyDataset(
             name="skillsfuture",
@@ -64,6 +65,77 @@ def test_matched_source_category_reuses_the_existing_baseline_id():
     assert placement["action"] == "SKIP_DUPLICATE"
     assert placement["target_category_id"] == 1
     assert placement["needs_review"] is False
+
+
+def test_matched_category_and_matched_speciality_resolves_both():
+    # Baseline has "Retail Banking" (id 1) under the matched category, exactly
+    # matching the source speciality tag 9001 hangs off - both levels resolve.
+    result = _run([9001])
+
+    placement = result.details["placements"][0]
+    assert placement["speciality_action"] == "SKIP_DUPLICATE"
+    assert placement["target_speciality_id"] == 1
+    assert placement["target_speciality_name"] == "Retail Banking"
+
+
+def test_matched_category_with_no_baseline_speciality_proposes_a_new_one():
+    # Category "Banking" matches, but nothing under it matches "Astronaut
+    # Training" - only the category matches this time (9002's own category
+    # "Space Exploration" is unmatched in other tests; here we point it at
+    # the matched "Banking" category instead to isolate the speciality check).
+    datasets = _datasets()
+    datasets["skillsfuture"].specialities[1]["category_id"] = 501  # under "Banking", not "Space Exploration"
+    result = CategoryAdaptationMetric().run(
+        datasets, {"baseline": "original", "incoming": "skillsfuture", "new_tag_ids": [9002]}
+    )
+
+    placement = result.details["placements"][0]
+    assert placement["action"] == "SKIP_DUPLICATE"  # category still matches
+    assert placement["speciality_action"] == "NEW_SPECIALITY"
+    assert placement["target_speciality_id"] == "skillsfuture:602"
+    assert placement["target_speciality_name"] == "Astronaut Training"
+
+
+def test_new_category_cascades_to_new_speciality(monkeypatch):
+    # A brand new category has no baseline specialities to compare against at
+    # all, so its speciality is automatically proposed too, not left blank.
+    monkeypatch.setattr(category_adaptation, "SemanticMatcher", _FakeSemanticMatcher)
+    result = _run([9002], semantic_model="test-model", add_candidate_semantic_threshold=0.5)
+
+    placement = result.details["placements"][0]
+    assert placement["action"] == "NEW_CATEGORY"
+    assert placement["speciality_action"] == "NEW_SPECIALITY"
+    assert placement["target_speciality_id"] == "skillsfuture:602"
+
+
+def test_review_ambiguous_category_skips_speciality_resolution(monkeypatch):
+    # No point proposing or matching a speciality under a category that
+    # isn't itself placed anywhere yet.
+    class DisagreeingSemanticMatcher:
+        def __init__(self, model_name):
+            assert model_name == "test-model"
+
+        def best_matches(self, queries, choices):
+            return [(choices[0] if choices else None, 0.1) for _ in queries]
+
+    monkeypatch.setattr(category_adaptation, "SemanticMatcher", DisagreeingSemanticMatcher)
+    result = _run([9002], semantic_model="test-model", threshold=1)  # low threshold -> close_spelling tier reachable
+
+    placement = result.details["placements"][0]
+    assert placement["action"] == "REVIEW_AMBIGUOUS"
+    assert "speciality_action" not in placement
+
+
+def test_tag_with_specialities_under_two_categories_produces_two_placements():
+    datasets = _datasets()
+    datasets["skillsfuture"].speciality_tags.append({"id": 703, "speciality_id": 602, "tag_id": 9001})
+    result = CategoryAdaptationMetric().run(
+        datasets, {"baseline": "original", "incoming": "skillsfuture", "new_tag_ids": [9001]}
+    )
+
+    placements = result.details["placements"]
+    assert len(placements) == 2
+    assert {p["source_speciality_id"] for p in placements} == {601, 602}
 
 
 def test_unmatched_source_category_becomes_new_category_even_without_semantic_model():
