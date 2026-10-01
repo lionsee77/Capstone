@@ -2,8 +2,9 @@
   {
     "source_dataset": "categorized-skills",
     "tag_id": "42",
-    "original_tag": "Data visualization",
+    "tag": "Data visualization",
     "original_classification": "classified",
+    "service": "Subject",
     "category": "Data analytics",
     "speciality": "Data presentation",
     "confidence": 0.95,
@@ -12,8 +13,9 @@
   {
     "source_dataset": "categorized-skills",
     "tag_id": "42",
-    "original_tag": "Data visualization",
+    "tag": "Data visualization",
     "original_classification": "classified",
+    "service": "Subject",
     "category": "Data analytics",
     "speciality": "Business communication",
     "confidence": 0.85,
@@ -22,8 +24,9 @@
   {
     "source_dataset": "categorized-skills",
     "tag_id": "43",
-    "original_tag": "Data visualisation",
+    "tag": "Data visualisation",
     "original_classification": "classified",
+    "service": "Subject",
     "category": "Data analytics",
     "speciality": "Data presentation",
     "confidence": 0.94,
@@ -32,8 +35,9 @@
   {
     "source_dataset": "categorized-skills",
     "tag_id": "44",
-    "original_tag": "SQL",
+    "tag": "SQL",
     "original_classification": "classified",
+    "service": "Subject",
     "category": "Data analytics",
     "speciality": "Data presentation",
     "confidence": 0.8,

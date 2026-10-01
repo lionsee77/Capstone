@@ -7,6 +7,7 @@ def _datasets() -> dict[str, TaxonomyDataset]:
     return {
         "original": TaxonomyDataset(
             name="original",
+            services=[{"id": 1, "name": "Industry"}],
             categories=[{"id": 1, "name": "Banking", "service_id": 1}],
             specialities=[{"id": 1, "name": "Retail Banking", "category_id": 1}],
         ),
@@ -65,6 +66,8 @@ def test_matched_source_category_reuses_the_existing_baseline_id():
     assert placement["action"] == "SKIP_DUPLICATE"
     assert placement["target_category_id"] == 1
     assert placement["needs_review"] is False
+    assert placement["target_service_id"] == 1
+    assert placement["target_service_name"] == "Industry"
 
 
 def test_matched_category_and_matched_speciality_resolves_both():
@@ -124,6 +127,33 @@ def test_review_ambiguous_category_skips_speciality_resolution(monkeypatch):
     placement = result.details["placements"][0]
     assert placement["action"] == "REVIEW_AMBIGUOUS"
     assert "speciality_action" not in placement
+
+
+def test_multiple_specialities_under_one_unresolved_category_collapse_to_one_row(monkeypatch):
+    # Two specialities under the same still-unresolved category would
+    # otherwise produce two byte-identical rows (the speciality never gets
+    # looked at while the category itself is undecided) - collapse to one.
+    class DisagreeingSemanticMatcher:
+        def __init__(self, model_name):
+            assert model_name == "test-model"
+
+        def best_matches(self, queries, choices):
+            return [(choices[0] if choices else None, 0.1) for _ in queries]
+
+    datasets = _datasets()
+    datasets["skillsfuture"].specialities.append({"id": 603, "name": "Zero Gravity Training", "category_id": 502})
+    datasets["skillsfuture"].speciality_tags.append({"id": 703, "speciality_id": 603, "tag_id": 9002})
+    monkeypatch.setattr(category_adaptation, "SemanticMatcher", DisagreeingSemanticMatcher)
+    result = CategoryAdaptationMetric().run(
+        datasets,
+        {"baseline": "original", "incoming": "skillsfuture", "new_tag_ids": [9002],
+         "semantic_model": "test-model", "threshold": 1},
+    )
+
+    placements = result.details["placements"]
+    assert len(placements) == 1
+    assert placements[0]["action"] == "REVIEW_AMBIGUOUS"
+    assert "source_speciality_id" not in placements[0]
 
 
 def test_tag_with_specialities_under_two_categories_produces_two_placements():
@@ -206,7 +236,8 @@ def test_new_category_service_id_defaults_from_matched_categories_in_the_same_ru
     result = _run([9001, 9002], semantic_model="test-model", add_candidate_semantic_threshold=0.5)
 
     by_tag = {p["tag_id"]: p for p in result.details["placements"]}
-    assert by_tag[9002]["service_id"] == 1
+    assert by_tag[9002]["target_service_id"] == 1
+    assert by_tag[9002]["target_service_name"] == "Industry"
 
 
 def test_tag_with_no_speciality_link_is_flagged_not_placed():

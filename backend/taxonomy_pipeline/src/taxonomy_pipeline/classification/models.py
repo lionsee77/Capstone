@@ -18,16 +18,20 @@ CanonicalTagId = TaxonomyId | NonBlankText
 
 
 class ClassificationOutput(BaseModel):
-    """One proposed placement; unresolved records keep all three placement values null."""
+    """One proposed placement; unresolved records keep all four placement values null.
+
+    See ../../../CLASSIFICATION_OUTPUT_CONTRACT.md - the nine-field revision
+    (`tag` replacing `original_tag`, plus the explicit `service` tier).
+    """
 
     model_config = ConfigDict(strict=True, extra="forbid", json_schema_extra={
         "oneOf": [
             {"properties": {
-                "category": {"type": "string"}, "speciality": {"type": "string"},
+                "service": {"type": "string"}, "category": {"type": "string"}, "speciality": {"type": "string"},
                 "confidence": {"type": "number"},
             }},
             {"properties": {
-                "category": {"type": "null"}, "speciality": {"type": "null"},
+                "service": {"type": "null"}, "category": {"type": "null"}, "speciality": {"type": "null"},
                 "confidence": {"type": "null"},
             }},
         ],
@@ -35,8 +39,9 @@ class ClassificationOutput(BaseModel):
 
     source_dataset: NonBlankText
     tag_id: NonBlankText
-    original_tag: NonBlankText
+    tag: NonBlankText
     original_classification: Literal["classified", "unclassified"]
+    service: NonBlankText | None
     category: NonBlankText | None
     speciality: NonBlankText | None
     confidence: Confidence | None
@@ -45,9 +50,9 @@ class ClassificationOutput(BaseModel):
     @model_validator(mode="after")
     # Require either a complete placement or an explicitly unresolved record.
     def check_placement(self) -> Self:
-        values = (self.category, self.speciality, self.confidence)
+        values = (self.service, self.category, self.speciality, self.confidence)
         if any(value is None for value in values) and not all(value is None for value in values):
-            raise ValueError("category, speciality, and confidence must be all present or all null")
+            raise ValueError("service, category, speciality, and confidence must be all present or all null")
         return self
 
 

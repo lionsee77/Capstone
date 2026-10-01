@@ -120,6 +120,13 @@ def _outcomes_by_incoming_id(comparison: dict[str, Any], new_action: str) -> dic
                 "target_name": None,
                 "closest_baseline_name": ambiguous.get("closest_baseline_name"),
                 "closest_baseline_score": ambiguous.get("closest_baseline_score"),
+                # The semantic near-miss is often the more useful hint than
+                # the lexical one - "Built Environment" is pure coincidental
+                # letter overlap with "Profit Improvement" (57.1 lexical) but
+                # genuinely close in meaning to "Construction & Engineering"
+                # (0.5352 semantic) - both are worth keeping, not just lexical.
+                "closest_semantic_baseline_name": ambiguous.get("closest_semantic_baseline_name"),
+                "closest_semantic_score": ambiguous.get("closest_semantic_score"),
             }
         for incoming_id in ambiguous["incoming_ids"]:
             outcomes[incoming_id] = outcome
@@ -225,6 +232,7 @@ class CategoryAdaptationMetric(Metric):
         category_outcomes = _outcomes_by_incoming_id(category_comparison, NEW_CATEGORY)
 
         baseline_categories_by_id = {row.get("id"): row for row in baseline.categories}
+        baseline_services_by_id = {row.get("id"): row.get("name") for row in baseline.services}
         matched_baseline_rows = [
             baseline_categories_by_id[outcome["target_id"]]
             for outcome in category_outcomes.values()
@@ -276,16 +284,26 @@ class CategoryAdaptationMetric(Metric):
                     {"tag_id": tag_id, "tag_name": tag_name, "action": NO_SOURCE_CATEGORY, "needs_review": True}
                 )
                 continue
+            seen_unresolved_category_ids: set[Any] = set()
             for entry in entries:
                 category, speciality = entry["category"], entry["speciality"]
                 category_outcome = category_outcomes[category.get("id")]
+                if category_outcome["action"] not in RESOLVED_CATEGORY_ACTIONS:
+                    # The category itself didn't resolve, so which speciality
+                    # it came through changes nothing about this placement -
+                    # several specialities under the same unresolved category
+                    # would otherwise produce pure duplicate rows. Collapse
+                    # to one row per (tag, category) instead of one per
+                    # (tag, speciality) here; resolved categories still get a
+                    # row per speciality below, since those genuinely differ.
+                    if category.get("id") in seen_unresolved_category_ids:
+                        continue
+                    seen_unresolved_category_ids.add(category.get("id"))
                 placement: dict[str, Any] = {
                     "tag_id": tag_id,
                     "tag_name": tag_name,
                     "source_category_id": category.get("id"),
                     "source_category_name": category.get("name"),
-                    "source_speciality_id": speciality.get("id"),
-                    "source_speciality_name": speciality.get("name"),
                     "action": category_outcome["action"],
                     "category_match_type": category_outcome["match_type"],
                     "category_score": category_outcome["score"],
@@ -301,10 +319,27 @@ class CategoryAdaptationMetric(Metric):
                 if category_outcome["action"] == "REVIEW_AMBIGUOUS":
                     placement["closest_baseline_name"] = category_outcome.get("closest_baseline_name")
                     placement["closest_baseline_score"] = category_outcome.get("closest_baseline_score")
-                if category_outcome["action"] == NEW_CATEGORY:
-                    placement["service_id"] = _assign_service(matched_baseline_rows)
+                    placement["closest_semantic_baseline_name"] = category_outcome.get(
+                        "closest_semantic_baseline_name"
+                    )
+                    placement["closest_semantic_score"] = category_outcome.get("closest_semantic_score")
+                if category_outcome["action"] in ("SKIP_DUPLICATE", "SKIP_SEMANTIC_DUPLICATE"):
+                    # A matched category already has a real service in the
+                    # baseline - look it up, don't guess.
+                    placement["target_service_id"] = baseline_categories_by_id[category_outcome["target_id"]].get(
+                        "service_id"
+                    )
+                    placement["target_service_name"] = baseline_services_by_id.get(placement["target_service_id"])
+                elif category_outcome["action"] == NEW_CATEGORY:
+                    placement["target_service_id"] = _assign_service(matched_baseline_rows)
+                    placement["target_service_name"] = baseline_services_by_id.get(placement["target_service_id"])
 
                 if category_outcome["action"] in RESOLVED_CATEGORY_ACTIONS:
+                    # The speciality genuinely distinguishes placements once
+                    # the category resolves - unlike the unresolved case
+                    # above, keep one row per (tag, speciality) here.
+                    placement["source_speciality_id"] = speciality.get("id")
+                    placement["source_speciality_name"] = speciality.get("name")
                     speciality_outcome = speciality_outcomes.get(speciality.get("id"))
                     if speciality_outcome is not None:
                         placement["speciality_action"] = speciality_outcome["action"]

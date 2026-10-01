@@ -2,8 +2,9 @@
   {
     "source_dataset": "plain-skills",
     "tag_id": "48",
-    "original_tag": "General practice",
+    "tag": "General practice",
     "original_classification": "unclassified",
+    "service": null,
     "category": null,
     "speciality": null,
     "confidence": null,

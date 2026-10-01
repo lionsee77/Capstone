@@ -37,7 +37,7 @@ def test_json_fixtures_round_trip_without_extra_metadata(filename: str) -> None:
     records = CLASSIFICATION_OUTPUTS.validate_json(raw)
     assert json.loads(CLASSIFICATION_OUTPUTS.dump_json(records)) == json.loads(raw)
     assert set(records[0].model_dump()) == {
-        "source_dataset", "tag_id", "original_tag", "original_classification",
+        "source_dataset", "tag_id", "tag", "original_classification", "service",
         "category", "speciality", "confidence", "reason",
     }
 
@@ -57,7 +57,7 @@ def test_confidence_accepts_zero_through_one(placement: dict[str, object], confi
     assert ClassificationOutput.model_validate(placement).confidence == confidence
 
 
-@pytest.mark.parametrize("field", ["category", "speciality", "confidence"])
+@pytest.mark.parametrize("field", ["service", "category", "speciality", "confidence"])
 # Require unresolved records to clear the whole placement instead of leaving a partial path.
 def test_partial_placements_are_rejected(placement: dict[str, object], field: str) -> None:
     placement[field] = None
@@ -65,7 +65,7 @@ def test_partial_placements_are_rejected(placement: dict[str, object], field: st
         ClassificationOutput.model_validate(placement)
 
 
-@pytest.mark.parametrize("field", ["source_dataset", "tag_id", "original_tag", "category", "speciality", "reason"])
+@pytest.mark.parametrize("field", ["source_dataset", "tag_id", "tag", "service", "category", "speciality", "reason"])
 # Reject blank identifiers and explanations while preserving meaningful original text.
 def test_blank_text_is_rejected(placement: dict[str, object], field: str) -> None:
     placement[field] = " \t\n"
@@ -74,7 +74,7 @@ def test_blank_text_is_rejected(placement: dict[str, object], field: str) -> Non
 
 
 @pytest.mark.parametrize("field", [
-    "source_dataset", "tag_id", "original_tag", "original_classification",
+    "source_dataset", "tag_id", "tag", "original_classification", "service",
     "category", "speciality", "confidence", "reason",
 ])
 # Require every agreed field even when an unresolved record supplies explicit nulls.
@@ -88,7 +88,7 @@ def test_missing_fields_are_rejected(placement: dict[str, object], field: str) -
     ("tag_id", 42), ("original_classification", "B"), ("original_classification", True),
     ("category", ["Data analytics"]), ("comparison_result_id", "upstream-42"),
 ])
-# Keep the simple eight-field format strict instead of accepting legacy or coerced inputs.
+# Keep the simple nine-field format strict instead of accepting legacy or coerced inputs.
 def test_wrong_types_and_extra_metadata_are_rejected(
     placement: dict[str, object], field: str, value: object,
 ) -> None:
@@ -98,9 +98,9 @@ def test_wrong_types_and_extra_metadata_are_rejected(
 
 
 # Preserve source text exactly so normalization remains an explicit matching step.
-def test_original_tag_text_is_preserved(placement: dict[str, object]) -> None:
-    placement["original_tag"] = "  DATA Visualization!  "
-    assert ClassificationOutput.model_validate(placement).original_tag == "  DATA Visualization!  "
+def test_tag_text_is_preserved(placement: dict[str, object]) -> None:
+    placement["tag"] = "  DATA Visualization!  "
+    assert ClassificationOutput.model_validate(placement).tag == "  DATA Visualization!  "
 
 
 @pytest.mark.parametrize("raw", ['[{"tag_id":', '{"tag_id": "42"}', "null"])
@@ -123,7 +123,7 @@ def test_fixtures_cover_multiple_placements_source_collisions_and_invalid_paths(
     assert case_a[0].tag_id == case_a[1].tag_id == case_b[0].tag_id
     assert case_a[0].speciality != case_a[1].speciality
     assert case_a[0].source_dataset != case_b[0].source_dataset
-    assert case_b[2].original_tag == case_b[3].original_tag == "Python"
+    assert case_b[2].tag == case_b[3].tag == "Python"
     assert case_b[2].category != case_b[3].category
 
 
