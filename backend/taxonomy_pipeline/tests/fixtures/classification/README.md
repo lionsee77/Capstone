@@ -28,5 +28,9 @@ matcher scores cover semantic-only candidates and similarity chains without down
 Resolution tests apply explicit review decisions, assign stable temporary IDs, and
 collect approved links. Additional synthetic cases cover all four services, new paths,
 conflicting decisions, baseline changes, and source IDs from arbitrary datasets.
+Unflagged tags accept all supplied paths automatically; duplicate candidates stay
+pending. Explicit review decisions override automatic acceptance.
 The review fixture is for tests only; it does not approve the real reference exports.
-Merge preview construction remains pending.
+Preview tests build the combined snapshot, validate structural changes, and export
+CSV rows. They cover baseline defects, blocked additions, partial reviews, existing
+links, reproducibility, Unicode/CSV quoting, and spreadsheet formula escaping.

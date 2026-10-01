@@ -114,7 +114,8 @@ Names below are illustrative. Producers may reuse Ankit's paths or propose new o
 The model, JSON Schema, and fixtures implement this nine-field contract. Batch
 validation checks taxonomy paths and supports explicit temporary adapters for older
 exports. Deduplication groups hierarchy paths and suggests overlapping tag pairs.
-Resolution applies reviewed tag groups and approved links; merge preview construction remains pending.
+Resolution accepts unflagged classifications and applies explicit duplicate decisions. Preview construction validates
+the combined snapshot and exports a CSV for review.
 
 - [JSON Schema](schemas/classification_output.schema.json)
 - [Python validator](src/taxonomy_pipeline/classification/models.py): `CLASSIFICATION_OUTPUTS.validate_json(payload)`
@@ -235,6 +236,16 @@ Use `resolve_outputs(deduplication, taxonomy, decisions)` from
 report, independent of producer filenames, branch formats, and source dataset names.
 The nine-field producer contract is unchanged.
 
+Valid source tags with no duplicate candidates are accepted automatically, keeping
+all supplied placements and creating any required category/speciality nodes under
+their supplied parents. Tags named in duplicate candidate pairs remain pending until
+reviewed. Skipped semantic checks remain visible and make the report partial; they
+do not hold every otherwise eligible tag. Invalid/unresolved/skipped intake rows stay omitted.
+
+Explicit decisions override this default, including exclusion, deferral, reuse, and
+restricting approved paths. Automatically accepted tags get an explanatory source
+disposition; `decisions` contains only supplied reviews, not fabricated human decisions.
+
 `ReviewDecision` is an internal review format:
 
 | Field | Meaning |
@@ -247,8 +258,9 @@ The nine-field producer contract is unchanged.
 | `approved_paths` | Explicit service/category/speciality paths, supporting existing and proposed nodes |
 | `approved_speciality_ids` | Alternative approval by existing speciality ID |
 
-Only placements proposed by the group's members can be approved. Equivalence alone
-does not approve links: both approval lists default to empty. `exclude` and `defer`
+Only placements proposed by the group's members can be approved. For an explicit
+review decision, equivalence alone does not approve links: both approval lists default
+to empty. Automatic acceptance includes all supplied paths for unflagged tags. `exclude` and `defer`
 cannot approve links. Reuse preserves the baseline label.
 
 ```python
@@ -270,7 +282,8 @@ resolution = resolve_outputs(deduplication, taxonomy, [decision])
 - One multi-member accepted decision confirms equivalence. Separate accepted decisions
   retain distinct tags, even for identical names. Disjoint `reuse` decisions targeting
   the same baseline tag consolidate into one record.
-- Missing decisions remain `pending`. Excluded and deferred sources retain their
+- Candidate participants without decisions remain `pending`; unflagged tags are
+  accepted with their supplied paths. Excluded and deferred sources retain their
   evidence and reasons. Exact repeated decisions are collapsed; overlapping or
   contradictory decisions raise `ValueError` before a result is returned.
 - New hierarchy IDs hash the normalized full parent path. New tag IDs hash sorted
@@ -289,3 +302,55 @@ resolution = resolve_outputs(deduplication, taxonomy, [decision])
 
 See [synthetic review decisions](tests/fixtures/classification/review_decisions.json).
 This stage returns proposed changes without modifying the baseline or writing to a database.
+
+## Merge preview CSV
+
+Build the preview from resolution and the same baseline, then export it:
+
+```python
+from taxonomy_pipeline.classification.preview import build_preview
+from taxonomy_pipeline.classification.export import export_preview_csv
+
+preview = build_preview(resolution, taxonomy)
+export_preview_csv(preview, destination / "preview.csv")
+```
+
+`preview.csv` contains four row types. Filter `row_type=placement` for the review table.
+
+| Row type | Contents |
+|---|---|
+| `placement` | Source dataset/ID/tag, original classification, four-tier path, confidence/reason, canonical tag/ID, category/speciality IDs, change labels, and review reason |
+| `summary` | Baseline fingerprint, unique addition/reuse counts, source dispositions, and original input record counts |
+| `omission` | Counts of records omitted upstream, grouped by status; individual records remain in `validation.json` |
+| `check` | Baseline defects, introduced errors, skipped checks, and supporting metric failures |
+
+Placement statuses are `proposed` (ready for addition in the preview), `reused`, `pending`, `deferred`, `excluded`,
+`unapproved`, or `blocked`. Change columns mark approved nodes/links as `new` or
+`existing`. Unflagged valid tags become `proposed` automatically; pending tags need
+duplicate review. Explicit canonical mappings do not approve every source placement: an unapproved
+placement remains unapproved even when another member links the same canonical tag there.
+
+The CSV retains distinct confidence/reason variants for a source placement. It does
+not repeat identical evidence rows or dump the entire baseline. CSV row counts are
+therefore different from original input-record counts and unique tag/link counts.
+`omitted_records` counts upstream omissions; pending/deferred/excluded sources and
+unapproved placements have separate counters. Omitted source details cannot be recovered
+from deduplication's aggregate counts alone; use the intake report for those details.
+
+The in-memory `MergePreview.taxonomy` contains a copy of the baseline plus approved
+additions in parent-first order. Tags without approved links are omitted. Existing
+nodes and links are reused; same-name concepts remain separate when reviewed separately.
+The builder verifies the baseline fingerprint and rechecks the resolution against its
+recorded decisions. It checks IDs, parent/link endpoints, and duplicate link pairs
+explicitly, with `IntegrityMetric` retained as supporting evidence.
+
+Existing baseline defects are reported separately. Introduced errors block the whole
+batch: the returned taxonomy contains only the baseline, addition counts are zero,
+and affected review rows are marked `blocked`. A changed baseline requires rerunning
+resolution. `validation.complete` means structural checks passed without introduced
+errors; `partial` still records upstream omissions or incomplete review/checks.
+Neither flag authorizes a database write.
+
+UTF-8 CSV output supports Excel and standard CSV readers. Formula-like source text
+is prefixed with an apostrophe in the CSV; model evidence remains unchanged.
+Exporting to the same path replaces that file. CLI-managed run directories are still pending.

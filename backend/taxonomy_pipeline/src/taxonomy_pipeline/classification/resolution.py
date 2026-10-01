@@ -1,7 +1,8 @@
 """Resolve reviewed concepts and placements independently of producer export formats.
 
-Inputs are a deduplication report, its baseline, and explicit review decisions.
-No matching or automatic approval happens here. Temporary IDs describe proposed
+Inputs are a deduplication report, its baseline, and optional review decisions.
+Unflagged tags retain their supplied classifications; duplicate candidates need
+review. No automatic tag merging happens here. Temporary IDs describe proposed
 nodes; assigning database IDs and building the combined preview are later steps.
 """
 from __future__ import annotations
@@ -139,6 +140,28 @@ def _prepare_decisions(
     return prepared
 
 
+# Accept supplied placements for unflagged sources, allowing explicit decisions to override the default.
+def _default_decisions(
+    report: DeduplicationReport, tags: dict[SourceKey, TagProposal], decisions: Sequence[ReviewDecision],
+) -> list[ReviewDecision]:
+    flagged: set[SourceKey] = set()
+    for pair in report.candidates:
+        left, right = _source_key(pair.left), _source_key(pair.right)
+        if left not in tags or right not in tags or left == right:
+            raise ValueError("Duplicate candidates must reference two distinct eligible source tags")
+        flagged.update((left, right))
+    reviewed = {_source_key(member) for decision in decisions for member in decision.members}
+    defaults = []
+    for key in sorted(tags.keys() - flagged - reviewed):
+        paths = _tag_paths(tags[key])
+        defaults.append(ReviewDecision(
+            members=[tags[key].source.model_copy(deep=True)], action="create",
+            reason="Automatically accepted supplied classification: no duplicate candidate for this source tag",
+            approved_paths=[paths[path] for path in sorted(paths)],
+        ))
+    return defaults
+
+
 # Approve only placements supplied by group members, supporting both baseline IDs and new paths.
 def _approved_paths(
     decision: ReviewDecision, tags: dict[SourceKey, TagProposal],
@@ -180,7 +203,7 @@ def _canonical_tag(
 
 
 # Fingerprint the supplied baseline independently of table row ordering.
-def _snapshot_id(taxonomy: TaxonomyDataset) -> str:
+def taxonomy_snapshot_id(taxonomy: TaxonomyDataset) -> str:
     data = taxonomy.model_dump(mode="json")
     for key, value in data.items():
         if isinstance(value, list):
@@ -194,7 +217,9 @@ def resolve_outputs(
 ) -> ResolutionReport:
     """Return stable canonical mappings and approved nodes for preview construction.
 
-    Missing decisions stay pending. Separate accepted groups remain separate even
+    Unflagged tags and their supplied paths are accepted by default. Candidate
+    participants without decisions stay pending. Explicit decisions take precedence.
+    Separate accepted groups remain separate even
     when matching suggested equivalence; one multi-member decision confirms a merge.
     Contradictory decisions or changed baseline paths raise ValueError before a
     result is returned. Partial upstream evidence is retained and clearly marked.
@@ -204,6 +229,7 @@ def resolve_outputs(
     tags = _index_tags(report)
     nodes = _resolve_hierarchy(report, taxonomy, tags)
     prepared = _prepare_decisions(decisions, tags)
+    defaults = _default_decisions(report, tags, prepared)
     canonical: dict[int | str, CanonicalTag] = {}
     mappings: list[CanonicalMapping] = []
     dispositions: dict[SourceKey, SourceDisposition] = {}
@@ -213,7 +239,7 @@ def resolve_outputs(
         (row["speciality_id"], row["tag_id"]) for row in taxonomy.speciality_tags
         if type(row.get("speciality_id")) is int and type(row.get("tag_id")) is int
     }
-    for decision in prepared:
+    for decision in prepared + defaults:
         accepted = decision.action in {"reuse", "create"}
         approved = _approved_paths(decision, tags, nodes)
         if accepted:
@@ -239,7 +265,8 @@ def resolve_outputs(
     for key in sorted(tags.keys() - dispositions.keys()):
         paths = _tag_paths(tags[key])
         dispositions[key] = SourceDisposition(
-            source=tags[key].source.model_copy(deep=True), status="pending", reason="No review decision supplied",
+            source=tags[key].source.model_copy(deep=True), status="pending",
+            reason="Potential duplicate: review whether to merge or keep this source tag separate",
             unapproved_paths=[paths[path] for path in sorted(paths)],
         )
     for tag in canonical.values():
@@ -261,7 +288,7 @@ def resolve_outputs(
         counts[f"added_{level}_nodes"] = sum(node.level == level and not node.existing for node in hierarchy)
         counts[f"reused_{level}_nodes"] = sum(node.level == level and node.existing for node in hierarchy)
     return ResolutionReport(
-        baseline_snapshot_id=_snapshot_id(taxonomy), evidence=report.model_copy(deep=True), decisions=prepared,
+        baseline_snapshot_id=taxonomy_snapshot_id(taxonomy), evidence=report.model_copy(deep=True), decisions=prepared,
         hierarchy=hierarchy, tags=resolved_tags,
         mappings=sorted(mappings, key=lambda mapping: _source_key(mapping.source)), links=resolved_links,
         dispositions=[dispositions[key] for key in sorted(dispositions)], counts=counts,

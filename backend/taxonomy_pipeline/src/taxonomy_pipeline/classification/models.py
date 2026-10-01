@@ -10,6 +10,7 @@ from typing import Annotated, Any, Literal, Self
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, TypeAdapter, model_validator
 
 from ..datasets.base import TaxonomyDataset
+from ..models import MetricResult
 
 NonBlankText = Annotated[str, StringConstraints(pattern=r"\S")]
 Confidence = Annotated[float, Field(ge=0, le=1, allow_inf_nan=False)]
@@ -312,6 +313,42 @@ class PreviewCounts(BaseModel):
     reused_tags: int = Field(default=0, ge=0)
     added_links: int = Field(default=0, ge=0)
     omitted_records: int = Field(default=0, ge=0)
+    added_categories: int = Field(default=0, ge=0)
+    reused_categories: int = Field(default=0, ge=0)
+    added_specialities: int = Field(default=0, ge=0)
+    reused_specialities: int = Field(default=0, ge=0)
+    reused_links: int = Field(default=0, ge=0)
+    pending_sources: int = Field(default=0, ge=0)
+    deferred_sources: int = Field(default=0, ge=0)
+    excluded_sources: int = Field(default=0, ge=0)
+    unapproved_placements: int = Field(default=0, ge=0)
+
+
+class PreviewRow(BaseModel):
+    """Flat review rows shared by the CSV exporter and future UI consumers."""
+
+    row_type: Literal["placement", "summary", "omission", "check"] = "placement"
+    status: str
+    source_dataset: str = ""
+    tag_id: str = ""
+    tag: str = ""
+    original_classification: str = ""
+    service: str = ""
+    category: str = ""
+    speciality: str = ""
+    confidence: Confidence | None = None
+    reason: str = ""
+    canonical_tag_id: CanonicalTagId | None = None
+    canonical_tag: str = ""
+    category_id: CanonicalTagId | None = None
+    speciality_id: CanonicalTagId | None = None
+    category_change: str = ""
+    speciality_change: str = ""
+    tag_change: str = ""
+    link_change: str = ""
+    review_reason: str = ""
+    note: str = ""
+    count: int | None = None
 
 
 class MergePreview(BaseModel):
@@ -326,3 +363,8 @@ class MergePreview(BaseModel):
     decisions: list[ReviewDecision] = Field(default_factory=list)
     counts: PreviewCounts = Field(default_factory=PreviewCounts)
     partial: bool = True
+    blocked: bool = False
+    rows: list[PreviewRow] = Field(default_factory=list)
+    resolution: ResolutionReport | None = None
+    baseline_integrity: MetricResult | None = None
+    preview_integrity: MetricResult | None = None

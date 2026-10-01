@@ -220,8 +220,10 @@ def test_resolved_content_is_stable_when_inputs_and_decisions_are_reordered(base
     assert first.model_dump(exclude={"evidence"}) == second.model_dump(exclude={"evidence"})
     expanded = dedup([row("z", "Unrelated"), row("x", "First", category="New")], baseline)
     later = resolve_outputs(expanded, baseline, decisions[:1])
-    assert next(tag.id for tag in first.tags if tag.name == "First") == later.tags[0].id
-    assert first.hierarchy == later.hierarchy
+    assert next(tag.id for tag in first.tags if tag.name == "First") == next(
+        tag.id for tag in later.tags if tag.name == "First"
+    )
+    assert all(node in later.hierarchy for node in first.hierarchy)
 
 
 @pytest.mark.parametrize("changes", [
@@ -367,10 +369,59 @@ def test_structured_source_keys_avoid_delimiter_collisions(baseline: TaxonomyDat
 
 
 # A result can be edited for presentation without changing any caller-owned evidence or decisions.
-def test_result_evidence_and_pending_sources_are_detached(baseline: TaxonomyDataset) -> None:
+def test_result_evidence_and_automatically_accepted_sources_are_detached(baseline: TaxonomyDataset) -> None:
     report = dedup([row()], baseline)
     original = report.model_dump_json()
     result = resolve_outputs(report, baseline)
     result.evidence.tags[0].source.tag_id = "edited"
     result.dispositions[0].source.tag_id = "also edited"
     assert report.model_dump_json() == original
+
+
+# Unflagged source tags keep all supplied placements, including new hierarchy nodes, without manual decisions.
+def test_unflagged_tags_and_new_paths_are_accepted_automatically(baseline: TaxonomyDataset) -> None:
+    report = dedup([
+        row(category="Novel", speciality="Reporting", confidence=0.0),
+        row(category="Novel", speciality="Operations"),
+    ], baseline)
+    result = resolve_outputs(report, baseline)
+    assert result.counts["accepted_sources"] == 1 and result.counts["pending_sources"] == 0
+    assert len(result.tags) == 1 and len(result.links) == 2
+    assert result.counts["added_category_nodes"] == 1 and result.counts["added_speciality_nodes"] == 2
+    assert "Automatically accepted" in result.dispositions[0].reason
+    assert result.decisions == []  # Automatic policy is not a fabricated human review.
+    assert not result.partial
+
+
+# Only sources named in duplicate candidates are held when unrelated proposals share the same batch.
+def test_candidates_hold_only_their_members_while_other_sources_proceed(baseline: TaxonomyDataset) -> None:
+    report = dedup([
+        row("a", "Python", category="Programming"),
+        row("b", "Python", source_dataset="wildlife", category="Animals"),
+        row("c", "Payroll", service="Function", category="Finance"),
+    ], baseline)
+    result = resolve_outputs(report, baseline)
+    assert result.counts["pending_sources"] == 2 and result.counts["accepted_sources"] == 1
+    assert [tag.name for tag in result.tags] == ["Payroll"]
+    assert all(node.path[0] == "Function" for node in result.hierarchy)
+    assert all("Potential duplicate" in item.reason for item in result.dispositions if item.status == "pending")
+    assert result.partial and result.evidence.skipped_checks
+
+
+@pytest.mark.parametrize("action", ["exclude", "defer", "reuse", "create"])
+# Explicit decisions override automatic placement acceptance, including deliberate omission of links.
+def test_explicit_decisions_override_automatic_acceptance(baseline: TaxonomyDataset, action: str) -> None:
+    result = resolve_outputs(dedup([row(category="New")], baseline), baseline, [decision(
+        action=action, existing_tag_id=501 if action == "reuse" else None,
+    )])
+    assert not result.links and not result.hierarchy
+    assert result.dispositions[0].status == {"exclude": "excluded", "defer": "deferred"}.get(action, "accepted")
+    assert result.dispositions[0].reason == "Reviewed"
+
+
+# Candidate references are validated before default acceptance so broken evidence cannot silently release tags.
+def test_unknown_duplicate_candidate_source_is_rejected(baseline: TaxonomyDataset) -> None:
+    report = dedup([row("a", "Python"), row("b", "Python")], baseline)
+    report.candidates[0].right = report.candidates[0].right.model_copy(update={"tag_id": "unknown"})
+    with pytest.raises(ValueError, match="Duplicate candidates"):
+        resolve_outputs(report, baseline)
