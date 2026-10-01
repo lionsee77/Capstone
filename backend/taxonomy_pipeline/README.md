@@ -15,9 +15,12 @@ one implementation of "what a run does," not two.
 taxonomy_pipeline/
 ├── configs/                          # example pipeline configs
 ├── src/taxonomy_pipeline/
-│   ├── datasets/                     # pluggable taxonomy sources
+│   ├── datasets/                     # pluggable taxonomy and reference sources
+│   │   ├── __init__.py               #   source registry - register new `type:` values here
 │   │   ├── base.py                   #   TaxonomySource protocol, canonical TaxonomyDataset
-│   │   └── sql_dump.py               #   reads plain .sql dump files (today's only source)
+│   │   ├── sql_dump.py               #   reads plain .sql dump files
+│   │   ├── ssic.py                   #   SSIC 2025 industry classification workbook
+│   │   └── ssoc.py                   #   SSOC 2024 occupation classification workbook
 │   ├── metrics/                      # pluggable quality checks
 │   │   ├── base.py                   #   Metric ABC
 │   │   ├── integrity.py              #   duplicates, orphans, dead ends
@@ -26,11 +29,13 @@ taxonomy_pipeline/
 │   │   ├── saturation.py             #   new-items curve across ordered incoming sources
 │   │   └── registry.py               #   METRICS dict - register new metrics here
 │   ├── config.py                     # YAML/JSON pipeline config (datasets + metrics)
+│   ├── models.py                     # MetricResult / RunReport - one report shape everywhere
 │   ├── pipeline.py                   # run_pipeline(config) -> RunReport
 │   ├── db.py                         # SQLite run history
 │   ├── api/app.py                    # FastAPI: /metrics, /runs
 │   └── cli.py                        # `taxonomy-pipeline run|serve`
 └── tests/
+    └── fixtures/                     # tiny synthetic SQL dumps used by the tests
 ```
 
 ## Classification output contract
@@ -64,8 +69,8 @@ pip install -e ".[dev]"
 ```
 
 `pip install -e .` makes the package importable and gives you the
-`taxonomy-pipeline` console command; `[dev]` additionally pulls in `pytest`
-and `httpx` (for the FastAPI test client).
+`taxonomy-pipeline` console command; `[dev]` additionally pulls in `pytest`,
+`httpx` (for the FastAPI test client) and `ruff`.
 
 The supplied SkillsFuture comparison also enables optional semantic matching.
 Install it once with `pip install -e ".[dev,semantic]"`. The first semantic
@@ -86,7 +91,10 @@ taxonomies against SSIC 2025 and SSOC 2024 for breadth, and compares
 SkillsFuture concepts against the original taxonomy for `saturation` (see
 [below](#saturation-new-items-curve)). Prints the full JSON report to stdout
 and a one-line-per-metric summary to stderr; pass
-`--output report.json` to write the report to a file instead.
+`--output report.json` to write the report to a file instead (git-ignored;
+about 22 MB for this comparison, because every saturation entry lists its
+parents). Every run is also saved to SQLite run history; pass `--no-save` to
+skip that.
 
 ## Saturation: new-items curve
 
@@ -172,6 +180,78 @@ new_placement_rate, review_other_level, cumulative_known_concepts}`.
 Matches also report `matched_source` and `baseline_status`; matches to
 inactive (`status='0'`) rows are counted in `matched_inactive`.
 
+### Saturation settings
+
+Defaults come from `SaturationMetric.default_params`
+(`src/taxonomy_pipeline/metrics/saturation.py`); the last column is what
+`configs/original_vs_skillsfuture.yaml` uses.
+
+| Param | Default | Meaning | SkillsFuture config |
+|---|---|---|---|
+| `baseline` | - | Existing taxonomy dataset name | `original` |
+| `incoming` | - | One dataset name or an ordered list; each is one point on the curve | `[skillsfuture]` |
+| `threshold` | 90 | RapidFuzz score (0-100) for a "close spelling"; never enough on its own | 90 |
+| `semantic_model` | none | Optional sentence-transformers model; without it only exact/spelling evidence is used | `all-MiniLM-L6-v2` |
+| `semantic_threshold` | 0.70 | Cosine similarity for a meaning match; also used by the parent check | 0.70 |
+| `semantic_threshold_by_level` | `{}` | Per incoming level override of `semantic_threshold` for concept matching | `{specialities: 0.80}` |
+| `add_candidate_lexical_threshold` | 60 | `ADD_CANDIDATE` needs the best spelling score at every level below this | 60 |
+| `add_candidate_semantic_threshold` | 0.50 | ...and (with a model) the best meaning score below this; otherwise `REVIEW_AMBIGUOUS` | 0.50 |
+| `cross_level` | true | Also search the other levels of the known taxonomy | true |
+
+### Reading the saturation report
+
+For the integration team: everything is under
+`results[metric_id == "saturation"].details.by_concept_level.<categories|specialities|tags>`
+(the last incoming source; `details.steps[i]` has the same block per source).
+Each incoming concept appears in exactly one list:
+
+| Verdict (`recommended_action`) | List | What to do |
+|---|---|---|
+| `SKIP_DUPLICATE` | `exact_match_details`, `fuzzy_match_details` | Nothing - already in the taxonomy |
+| `SKIP_SEMANTIC_DUPLICATE` | `semantic_match_details` | Nothing (spot-check meaning matches if in doubt) |
+| `REVIEW_NEW_PLACEMENT` | `new_placement_details` | Known concept, new parent: decide whether to add it under `unmatched_incoming_parents` |
+| `REVIEW_OTHER_LEVEL` | `other_level_match_details` | Similar concept at another level: confirm it really is the same concept |
+| `ADD_CANDIDATE` | `ambiguous_concepts` | New: decide where to place it, using `parents` |
+| `REVIEW_AMBIGUOUS` | `ambiguous_concepts` | Partly similar: check against `closest_baseline_name` / `closest_semantic_baseline_name` |
+
+`reason` values: `no_close_match` (ADD), `partial_similarity` and
+`close_spelling_unconfirmed` (REVIEW_AMBIGUOUS), `parent_differs` and
+`existing_has_no_parent` (NEW_PLACEMENT), `parent_not_comparable`
+(OTHER_LEVEL). Skipped duplicates carry `parent_check`: `same_parent`,
+`no_incoming_parent` or `not_checked_for_tags`.
+
+Useful fields on every entry: `incoming_ids` (all source rows grouped into
+the concept), `incoming_name`, `parent_status` / `parents` (from the incoming
+source), and for matches `baseline_id` / `baseline_name` / `baseline_level`
+plus `matched_source` (which dataset the match came from).
+
+Example - export every new skill with its SkillsFuture job roles to CSV:
+
+```python
+import csv
+import json
+
+with open("report.json") as f:
+    report = json.load(f)
+saturation = next(r for r in report["results"] if r["metric_id"] == "saturation")["details"]
+skills = saturation["by_concept_level"]["tags"]["ambiguous_concepts"]
+
+with open("add_candidate_skills.csv", "w", newline="") as f:
+    writer = csv.writer(f)
+    writer.writerow(["incoming_ids", "name", "parent_status", "parents"])
+    for concept in skills:
+        if concept["recommended_action"] == "ADD_CANDIDATE":
+            writer.writerow([
+                " ".join(str(i) for i in concept["incoming_ids"]),
+                concept["incoming_name"],
+                concept["parent_status"],
+                "; ".join(parent["name"] for parent in concept["parents"]),
+            ])
+```
+
+Swap `tags` for `specialities` / `categories`, or the list and verdict, to
+export other groups.
+
 ## Industry and occupational breadth
 
 The `breadth` metric returns separate estimated lexical coverage scores:
@@ -229,8 +309,9 @@ taxonomy-pipeline serve --reload
   configs, as JSON); dataset paths must be absolute paths on the server. It
   returns `{run_id, status: "queued"}` immediately and runs the pipeline in
   the background.
-- `GET /runs/{run_id}` - poll for status; once `"done"` or `"failed"`, the
-  full report is in the response.
+- `GET /runs/{run_id}` - poll for status, which moves `"queued"` ->
+  `"running"` -> `"done"` or `"failed"`; once finished, the full report is
+  in the response.
 - `GET /runs` - recent run history.
 
 Every run (CLI or API) is persisted to `taxonomy_pipeline.sqlite3` next to
@@ -249,6 +330,11 @@ datasets:
     table_map:               # canonical concept -> actual table name; omit a
       categories: sf_categories  # concept to default it to its own name
 ```
+
+A table counts as present if the dump has a `CREATE TABLE` or an `INSERT`
+for it; a concept whose table is missing entirely is loaded as empty but
+reported as absent (`TaxonomyDataset.has_table()`), so metrics can skip a
+check instead of passing it on no data.
 
 To add a new source type (a live MariaDB connection, a CSV export, ...):
 implement `TaxonomySource.load()` (see `datasets/base.py`) and register a
@@ -307,6 +393,14 @@ the CLI's stdout, `GET /runs/{run_id}`, or the SQLite `report_json` column:
 }
 ```
 
+A check inside a metric that can't run on a given dataset is reported as
+`null`, not as an empty "all clean" result, and named with a reason in that
+result's `details.skipped_checks` - e.g. integrity's
+`orphans.categories_without_service` is `null` for a dataset that has no
+`services` table (like `skillsfuture`). A `services` table that exists but
+is empty is still checked, so every category pointing at a service is
+reported as an orphan.
+
 A metric erroring (bad params, unknown dataset) does **not** fail the whole
 run - `status` stays `"done"` with that one result marked `"error"`; only a
 dataset that fails to *load* fails the whole run, since nothing downstream
@@ -339,6 +433,11 @@ Ruff linting and the test suite run in CI (see the root
 - **`saturation`** recommendations are review aids, not database
   operations. Its thresholds are not yet calibrated against a hand-labelled
   set of pairs, and with only SkillsFuture loaded the curve has one point.
+  When a SkillsFuture skill matches both an original tag and an original
+  speciality equally well, the tag is reported (same level wins ties), even
+  though SF skills correspond more closely to original specialities. Most
+  `REVIEW_OTHER_LEVEL` job roles are weak title -> keyword matches
+  (e.g. "Technician" -> tag "tech").
 - **`breadth`** and the fuzzy layer of **`integrity`** use lexical
   (RapidFuzz) matching only. Saturation additionally supports an optional
   `sentence-transformers` embedding model for semantic candidates.
