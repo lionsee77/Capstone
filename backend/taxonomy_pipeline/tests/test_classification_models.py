@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import json
+import re
+from itertools import product
 from pathlib import Path
 
 import pytest
@@ -37,8 +39,8 @@ def test_json_fixtures_round_trip_without_extra_metadata(filename: str) -> None:
     records = CLASSIFICATION_OUTPUTS.validate_json(raw)
     assert json.loads(CLASSIFICATION_OUTPUTS.dump_json(records)) == json.loads(raw)
     assert set(records[0].model_dump()) == {
-        "source_dataset", "tag_id", "original_tag", "original_classification",
-        "category", "speciality", "confidence", "reason",
+        "source_dataset", "tag_id", "tag", "original_classification",
+        "service", "category", "speciality", "confidence", "reason",
     }
 
 
@@ -57,15 +59,42 @@ def test_confidence_accepts_zero_through_one(placement: dict[str, object], confi
     assert ClassificationOutput.model_validate(placement).confidence == confidence
 
 
-@pytest.mark.parametrize("field", ["category", "speciality", "confidence"])
+@pytest.mark.parametrize(
+    "null_fields", [flags for flags in product((False, True), repeat=4) if any(flags) and not all(flags)],
+)
 # Require unresolved records to clear the whole placement instead of leaving a partial path.
-def test_partial_placements_are_rejected(placement: dict[str, object], field: str) -> None:
-    placement[field] = None
+def test_partial_placements_are_rejected(placement: dict[str, object], null_fields: tuple[bool, ...]) -> None:
+    for field, clear in zip(("service", "category", "speciality", "confidence"), null_fields, strict=True):
+        if clear:
+            placement[field] = None
     with pytest.raises(ValidationError, match="all present or all null"):
         ClassificationOutput.model_validate(placement)
 
 
-@pytest.mark.parametrize("field", ["source_dataset", "tag_id", "original_tag", "category", "speciality", "reason"])
+@pytest.mark.parametrize("service", ["Industry", "Function", "Subject", "Others"])
+# Accept each contract service without attempting taxonomy lookup in the data model.
+def test_supported_services_are_accepted(placement: dict[str, object], service: str) -> None:
+    placement["service"] = service
+    assert ClassificationOutput.model_validate(placement).service == service
+
+
+@pytest.mark.parametrize("service", ["Unknown", "subject", " Subject ", 1, True, ["Subject"]])
+# Require an exact service name instead of normalizing or coercing producer values.
+def test_unsupported_services_are_rejected(placement: dict[str, object], service: object) -> None:
+    placement["service"] = service
+    with pytest.raises(ValidationError):
+        ClassificationOutput.model_validate(placement)
+
+
+@pytest.mark.parametrize("tag", [None, "", " \t\n", 42])
+# Keep a meaningful source tag mandatory even when no placement was found.
+def test_unresolved_records_still_require_tag_text(placement: dict[str, object], tag: object) -> None:
+    placement.update(service=None, category=None, speciality=None, confidence=None, tag=tag)
+    with pytest.raises(ValidationError):
+        ClassificationOutput.model_validate(placement)
+
+
+@pytest.mark.parametrize("field", ["source_dataset", "tag_id", "tag", "service", "category", "speciality", "reason"])
 # Reject blank identifiers and explanations while preserving meaningful original text.
 def test_blank_text_is_rejected(placement: dict[str, object], field: str) -> None:
     placement[field] = " \t\n"
@@ -74,8 +103,8 @@ def test_blank_text_is_rejected(placement: dict[str, object], field: str) -> Non
 
 
 @pytest.mark.parametrize("field", [
-    "source_dataset", "tag_id", "original_tag", "original_classification",
-    "category", "speciality", "confidence", "reason",
+    "source_dataset", "tag_id", "tag", "original_classification",
+    "service", "category", "speciality", "confidence", "reason",
 ])
 # Require every agreed field even when an unresolved record supplies explicit nulls.
 def test_missing_fields_are_rejected(placement: dict[str, object], field: str) -> None:
@@ -87,8 +116,9 @@ def test_missing_fields_are_rejected(placement: dict[str, object], field: str) -
 @pytest.mark.parametrize(("field", "value"), [
     ("tag_id", 42), ("original_classification", "B"), ("original_classification", True),
     ("category", ["Data analytics"]), ("comparison_result_id", "upstream-42"),
+    ("tag", None), ("tag", 42), ("original_tag", "Data visualization"), ("proposed_tag", "Data visualization"),
 ])
-# Keep the simple eight-field format strict instead of accepting legacy or coerced inputs.
+# Keep the simple nine-field format strict instead of accepting legacy or coerced inputs.
 def test_wrong_types_and_extra_metadata_are_rejected(
     placement: dict[str, object], field: str, value: object,
 ) -> None:
@@ -98,9 +128,20 @@ def test_wrong_types_and_extra_metadata_are_rejected(
 
 
 # Preserve source text exactly so normalization remains an explicit matching step.
-def test_original_tag_text_is_preserved(placement: dict[str, object]) -> None:
-    placement["original_tag"] = "  DATA Visualization!  "
-    assert ClassificationOutput.model_validate(placement).original_tag == "  DATA Visualization!  "
+def test_tag_text_is_preserved(placement: dict[str, object]) -> None:
+    placement["tag"] = "  DATA Visualization!  "
+    assert ClassificationOutput.model_validate(placement).tag == "  DATA Visualization!  "
+
+
+# Reject legacy payloads explicitly so compatibility handling stays outside the contract.
+def test_previous_eight_field_payload_is_rejected(placement: dict[str, object]) -> None:
+    placement["original_tag"] = placement.pop("tag")
+    del placement["service"]
+    with pytest.raises(ValidationError) as error:
+        ClassificationOutput.model_validate(placement)
+    assert {(item["loc"], item["type"]) for item in error.value.errors()} == {
+        (("tag",), "missing"), (("service",), "missing"), (("original_tag",), "extra_forbidden"),
+    }
 
 
 @pytest.mark.parametrize("raw", ['[{"tag_id":', '{"tag_id": "42"}', "null"])
@@ -113,17 +154,19 @@ def test_invalid_json_or_non_array_payloads_are_rejected(raw: str) -> None:
 # Ensure fixtures cover valid and invalid paths without implementing taxonomy validation here.
 def test_fixtures_cover_multiple_placements_source_collisions_and_invalid_paths() -> None:
     baseline = TaxonomyDataset.model_validate_json((FIXTURES / "taxonomy.json").read_text(encoding="utf-8"))
-    categories = {row["id"]: row["name"] for row in baseline.categories}
-    paths = {(categories[row["category_id"]], row["name"]) for row in baseline.specialities}
+    services = {row["id"]: row["name"] for row in baseline.services}
+    categories = {row["id"]: (services[row["service_id"]], row["name"]) for row in baseline.categories}
+    paths = {(*categories[row["category_id"]], row["name"]) for row in baseline.specialities}
     case_a = CLASSIFICATION_OUTPUTS.validate_json((FIXTURES / "case_a.json").read_text(encoding="utf-8"))
     case_b = CLASSIFICATION_OUTPUTS.validate_json((FIXTURES / "case_b.json").read_text(encoding="utf-8"))
     invalid = CLASSIFICATION_OUTPUTS.validate_json((FIXTURES / "invalid_placements.json").read_text(encoding="utf-8"))
-    assert all((row.category, row.speciality) in paths for row in case_a + case_b)
-    assert all((row.category, row.speciality) not in paths for row in invalid)
+    assert all((row.service, row.category, row.speciality) in paths for row in case_a + case_b)
+    assert all((row.service, row.category, row.speciality) not in paths for row in invalid)
+    assert any(("Subject", row.category, row.speciality) in paths and row.service == "Function" for row in invalid)
     assert case_a[0].tag_id == case_a[1].tag_id == case_b[0].tag_id
     assert case_a[0].speciality != case_a[1].speciality
     assert case_a[0].source_dataset != case_b[0].source_dataset
-    assert case_b[2].original_tag == case_b[3].original_tag == "Python"
+    assert case_b[2].tag == case_b[3].tag == "Python"
     assert case_b[2].category != case_b[3].category
 
 
@@ -180,3 +223,13 @@ def test_supporting_records_round_trip_as_a_preview() -> None:
 def test_published_json_schema_matches_the_model() -> None:
     path = Path(__file__).parents[1] / "schemas" / "classification_output.schema.json"
     assert json.loads(path.read_text(encoding="utf-8")) == CLASSIFICATION_OUTPUTS.json_schema()
+
+
+# Ensure the examples producers copy from the contract pass the consumer's validation.
+def test_contract_json_examples_round_trip() -> None:
+    path = Path(__file__).parents[1] / "CLASSIFICATION_OUTPUT_CONTRACT.md"
+    examples = re.findall(r"```json\n(.*?)\n```", path.read_text(encoding="utf-8"), re.DOTALL)
+    assert examples
+    for example in examples:
+        records = CLASSIFICATION_OUTPUTS.validate_json(example)
+        assert json.loads(CLASSIFICATION_OUTPUTS.dump_json(records)) == json.loads(example)

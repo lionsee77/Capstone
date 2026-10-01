@@ -2,10 +2,13 @@
   "$defs": {
     "ClassificationOutput": {
       "additionalProperties": false,
-      "description": "One proposed placement; unresolved records keep all three placement values null.",
+      "description": "One proposed placement; unresolved records keep the path and confidence null.",
       "oneOf": [
         {
           "properties": {
+            "service": {
+              "type": "string"
+            },
             "category": {
               "type": "string"
             },
@@ -19,6 +22,9 @@
         },
         {
           "properties": {
+            "service": {
+              "type": "null"
+            },
             "category": {
               "type": "null"
             },
@@ -42,9 +48,9 @@
           "title": "Tag Id",
           "type": "string"
         },
-        "original_tag": {
+        "tag": {
           "pattern": "\\S",
-          "title": "Original Tag",
+          "title": "Tag",
           "type": "string"
         },
         "original_classification": {
@@ -54,6 +60,23 @@
           ],
           "title": "Original Classification",
           "type": "string"
+        },
+        "service": {
+          "anyOf": [
+            {
+              "enum": [
+                "Industry",
+                "Function",
+                "Subject",
+                "Others"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Service"
         },
         "category": {
           "anyOf": [
@@ -101,8 +124,9 @@
       "required": [
         "source_dataset",
         "tag_id",
-        "original_tag",
+        "tag",
         "original_classification",
+        "service",
         "category",
         "speciality",
         "confidence",

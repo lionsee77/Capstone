@@ -2,8 +2,9 @@
   {
     "source_dataset": "plain-skills",
     "tag_id": "42",
-    "original_tag": "Data visualization",
+    "tag": "Data visualization",
     "original_classification": "unclassified",
+    "service": "Subject",
     "category": "Data analytics",
     "speciality": "Business communication",
     "confidence": 0.88,
@@ -12,8 +13,9 @@
   {
     "source_dataset": "plain-skills",
     "tag_id": "45",
-    "original_tag": "Visualizing data",
+    "tag": "Visualizing data",
     "original_classification": "unclassified",
+    "service": "Subject",
     "category": "Data analytics",
     "speciality": "Data presentation",
     "confidence": 0.9,
@@ -22,8 +24,9 @@
   {
     "source_dataset": "plain-skills",
     "tag_id": "46",
-    "original_tag": "Python",
+    "tag": "Python",
     "original_classification": "unclassified",
+    "service": "Subject",
     "category": "Data analytics",
     "speciality": "Programming",
     "confidence": 0.9,
@@ -32,8 +35,9 @@
   {
     "source_dataset": "plain-skills",
     "tag_id": "47",
-    "original_tag": "Python",
+    "tag": "Python",
     "original_classification": "unclassified",
+    "service": "Subject",
     "category": "Biology",
     "speciality": "Zoology",
     "confidence": 0.9,
