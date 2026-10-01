@@ -28,8 +28,10 @@ Industry -> Banking -> Regulatory Reporting (Basel/IFRS9) -> ifrs9
 [speciality_tags](../sql-files-nus/speciality_tags.sql) joins `speciality_id` and
 `tag_id`; it is not a fifth tier. A tag can belong to multiple specialities.
 
-Producers supply all four tiers explicitly. The category must belong to the supplied
-service, and the speciality must belong to that category. Ambiguous paths need review.
+Producers supply all four tiers explicitly. Categories and specialities may already
+exist or be proposed additions. Reuse a category only within the supplied service,
+and a speciality only within that category. Matching names under different parents
+remain separate placements; existing nodes are not moved. Ambiguous reuse needs review.
 The payload's `tag_id` is the source dataset's ID, not Ankit's `tags.id`.
 
 ## Fields
@@ -54,7 +56,7 @@ Service, category, and speciality describe its **proposed Ankit placement**.
 
 ## Examples
 
-Names below are illustrative; use the agreed Ankit taxonomy when producing outputs.
+Names below are illustrative. Producers may reuse Ankit's paths or propose new ones.
 
 ```json
 [
@@ -109,12 +111,119 @@ Names below are illustrative; use the agreed Ankit taxonomy when producing outpu
 
 ## Implementation reference
 
-The model, JSON Schema, and fixtures implement this nine-field contract, including
-`tag` and the explicit `service` field. Field validation is implemented; checking
-placements against the taxonomy and adapting older producer exports remain pending.
+The model, JSON Schema, and fixtures implement this nine-field contract. Batch
+validation checks taxonomy paths and supports explicit temporary adapters for older
+exports. Deduplication groups hierarchy paths and suggests overlapping tag pairs;
+reviewed tag consolidation and merge preview construction remain pending.
 
 - [JSON Schema](schemas/classification_output.schema.json)
 - [Python validator](src/taxonomy_pipeline/classification/models.py): `CLASSIFICATION_OUTPUTS.validate_json(payload)`
 - [Case A fixture](tests/fixtures/classification/case_a.json)
 - [Case B fixture](tests/fixtures/classification/case_b.json)
 - [All fixture scenarios](tests/fixtures/classification/README.md)
+
+## Temporary intake for current exports
+
+Use [validate_outputs](src/taxonomy_pipeline/classification/validation.py) to combine
+named JSON batches. Without adapter options, inputs must follow the nine-field contract.
+
+- `case_a_inputs`: legacy eight-field files; maps `original_tag` to `tag`.
+- `case_b_sources`: legacy seven-field files mapped to their source dataset names;
+  sets `original_classification` to `unclassified` and keeps `action` in raw evidence.
+- Both adapters temporarily set `service` to `Industry` for populated placements,
+  recorded as a `temporary_service` finding. Unresolved placements remain all-null.
+  Current nine-field inputs retain their explicit service; this default only applies
+  to legacy exports until producers supply the field.
+- Missing categories/specialities are valid proposed additions. The supplied service
+  must exist. Ambiguous existing nodes and malformed matching taxonomy rows need review.
+- Case B actions remain raw evidence. `assign_existing`, `propose_new_category`, and
+  `propose_new_speciality` all pass through the same reuse/addition checks.
+- `skip_case_a_handoffs=True`: temporarily skips legacy Case A rows with all-null
+  placements and the explicit phrase `route to Case B` in their reason. Skips remain
+  in the report and do not participate in cross-branch conflict checks. Default: false.
+
+Run from `backend/taxonomy_pipeline/`:
+
+```python
+import json
+from pathlib import Path
+
+from taxonomy_pipeline.classification.validation import validate_outputs
+from taxonomy_pipeline.datasets.sql_dump import SqlDumpSource
+
+backend = Path("..")
+taxonomy = SqlDumpSource("ankit-original", sorted((backend / "sql-files-nus").glob("*.sql"))).load()
+inputs = {
+    name: (backend / "reference_data" / name).read_text(encoding="utf-8")
+    for name in ("case_a_output.json", "classification_proposals.json")
+}
+report = validate_outputs(
+    inputs, taxonomy,
+    case_a_inputs={"case_a_output.json"},
+    case_b_sources={"classification_proposals.json": "skillsfuture"},
+    skip_case_a_handoffs=True,
+)
+destination = Path("../../exports/classification-intake")
+destination.mkdir(parents=True, exist_ok=True)
+(destination / "validation.json").write_text(report.model_dump_json(indent=2), encoding="utf-8")
+(destination / "merged_outputs.json").write_text(
+    json.dumps([row.model_dump(mode="json") for row in report.merged_outputs], indent=2),
+    encoding="utf-8",
+)
+```
+
+`merged_outputs` contains only unique valid placements in the nine-field format.
+Repeated placements for the same source identity and normalized full path are collapsed;
+different source tags are never merged. Raw rows retain their individual scores and reasons.
+
+The report includes every row's `origin` (file and zero-based index), `raw` data,
+adapted `candidate`, validated `output` where available, resolved `target` IDs,
+`status`, `findings`, and `duplicate_of` reference. Within a resolved target, null
+`category_id` or `speciality_id` means that node is a proposed addition at the output's
+named path. A new category always requires a new speciality under it. These null IDs
+do not mean the classification is unresolved; its nine output fields remain populated.
+`new_category` and `new_speciality` findings identify additions without triggering review.
+
+Statuses are `valid`, `duplicate`, `unresolved`, `review`, `invalid`, and `skipped`.
+Conflicting source text/classification flags and ambiguous reuse require review.
+Unreadable files appear in `input_errors`; `complete` only means all files parsed as
+arrays. A valid proposal is eligible for the merge preview; validation does not create
+nodes or write to the database.
+
+## Deduplication
+
+Pass the intake report to `deduplicate_outputs`:
+
+```python
+from taxonomy_pipeline.classification.deduplication import deduplicate_outputs
+
+deduplication = deduplicate_outputs(report)
+(destination / "deduplication.json").write_text(
+    deduplication.model_dump_json(indent=2), encoding="utf-8",
+)
+```
+
+- `tags` groups eligible placements by `(source_dataset, tag_id)`, retaining source
+  text, classification, scores, reasons, and original file/row references.
+- `hierarchy` groups categories by service/name and specialities by the full parent
+  path, using intake's normalization. Each group retains raw label variants and
+  existing IDs; null IDs indicate new nodes. Names under different parents stay separate.
+- `candidates` lists each distinct tag pair once, with source references, match types,
+  separate lexical/semantic scores, and shared proposed paths. Tag evidence is in `tags`.
+  No tag identities are merged automatically, even for identical names or high scores.
+- `omitted_counts` accounts for skipped, unresolved, invalid, and review records;
+  repeated unresolved records are also omitted. Valid repeated placements remain as evidence.
+
+Name checks reuse saturation's `match_key`; lexical matching uses the same RapidFuzz
+ratio. Defaults are `lexical_threshold=0.9` and `semantic_threshold=0.7`, both on 0..1.
+All qualifying pairs are retained; similarity chains do not create approved groups.
+The candidate's `similarity` is the largest available name score, not a probability
+or approval; inspect the separate scores and placement context.
+
+Semantic checks are optional at runtime. Supply an existing
+`taxonomy_pipeline.metrics.saturation.SemanticMatcher` as `semantic_matcher` to use
+the shared embedding implementation. Without a matcher, name/lexical checks run and
+`skipped_checks.semantic` explains the omission. Matcher failures likewise retain
+name-based results with an explicit finding. `complete` requires readable input files
+and all applicable matching checks to run; it does not mean the candidate decisions
+are resolved. No baseline tag comparison, database writes, or preview construction occur.

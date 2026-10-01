@@ -1,6 +1,10 @@
 {
   "name": "classification-baseline-v1",
-  "services": [{"id": 1, "name": "Subject"}],
+  "services": [
+    {"id": 1, "name": "Subject"},
+    {"id": 2, "name": "Industry"},
+    {"id": 3, "name": "Function"}
+  ],
   "categories": [
     {"id": 10, "name": "Data analytics", "service_id": 1},
     {"id": 20, "name": "Biology", "service_id": 1}

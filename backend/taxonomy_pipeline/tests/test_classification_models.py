@@ -15,6 +15,7 @@ from taxonomy_pipeline.classification.models import (
     ClassificationOutput,
     DuplicateCandidate,
     MergePreview,
+    PlacementTarget,
     PreviewCounts,
     ReviewDecision,
     SourceTagRef,
@@ -233,3 +234,16 @@ def test_contract_json_examples_round_trip() -> None:
     for example in examples:
         records = CLASSIFICATION_OUTPUTS.validate_json(example)
         assert json.loads(CLASSIFICATION_OUTPUTS.dump_json(records)) == json.loads(example)
+
+
+@pytest.mark.parametrize("category_id,speciality_id", [(10, 120), (10, None), (None, None)])
+# Allow existing paths and new child nodes without assigning premature database IDs.
+def test_placement_target_supports_proposed_additions(category_id: int | None, speciality_id: int | None) -> None:
+    target = PlacementTarget(service_id=1, category_id=category_id, speciality_id=speciality_id)
+    assert PlacementTarget.model_validate_json(target.model_dump_json()) == target
+
+
+# An existing speciality cannot be reused underneath a newly proposed category.
+def test_existing_speciality_requires_existing_parent() -> None:
+    with pytest.raises(ValidationError, match="existing speciality requires an existing category"):
+        PlacementTarget(service_id=1, category_id=None, speciality_id=120)
