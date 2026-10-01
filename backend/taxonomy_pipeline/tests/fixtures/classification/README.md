@@ -11,6 +11,7 @@ Synthetic data for developing validation and merge previews without Lionel's rep
 | `invalid_placements.json` | Historical filename: paths absent from the baseline, now accepted as proposed additions |
 | `legacy_case_a.json` | Legacy classified placement and an all-null Case B handoff |
 | `legacy_case_b.json` | Legacy existing/new path proposals, without source dataset or service |
+| `review_decisions.json` | Synthetic decisions merging visualization variants, reusing SQL, and keeping both Python meanings separate |
 
 Tag `42` appears in both datasets; its source identities must remain distinct.
 The visualization tags are duplicate candidates for review. The Python tags should
@@ -24,4 +25,8 @@ placements stay all-null. Tests cover ambiguity, source conflicts, and handoff s
 Deduplication tests use these fixtures for within/across-branch candidates, distinct
 same-name concepts, multiple placements, and preserved source identities. Synthetic
 matcher scores cover semantic-only candidates and similarity chains without downloads.
-Reviewed tag consolidation and merge preview construction remain pending.
+Resolution tests apply explicit review decisions, assign stable temporary IDs, and
+collect approved links. Additional synthetic cases cover all four services, new paths,
+conflicting decisions, baseline changes, and source IDs from arbitrary datasets.
+The review fixture is for tests only; it does not approve the real reference exports.
+Merge preview construction remains pending.

@@ -92,7 +92,8 @@ def _existing_node(
 
 
 # Reuse nodes within their supplied parents and mark missing child nodes as proposed additions.
-def _resolve_path(candidate: dict[str, Any], taxonomy: TaxonomyDataset) -> PlacementTarget:
+def resolve_placement_path(candidate: dict[str, Any], taxonomy: TaxonomyDataset) -> PlacementTarget:
+    """Resolve parent-scoped IDs for intake and revalidation before reviewed consolidation."""
     service = _existing_node(taxonomy.services, candidate["service"])
     if service is None:
         raise ValueError("missing_service: the taxonomy must contain the supplied service")
@@ -133,7 +134,7 @@ def _validate_record(
         if case:
             record.findings.append("temporary_service: Industry assumed for this legacy placement")
         try:
-            record.target = _resolve_path(candidate, taxonomy)
+            record.target = resolve_placement_path(candidate, taxonomy)
         except ValueError as exc:
             record.status = "review"
             record.findings.append(str(exc))

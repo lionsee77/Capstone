@@ -113,8 +113,8 @@ Names below are illustrative. Producers may reuse Ankit's paths or propose new o
 
 The model, JSON Schema, and fixtures implement this nine-field contract. Batch
 validation checks taxonomy paths and supports explicit temporary adapters for older
-exports. Deduplication groups hierarchy paths and suggests overlapping tag pairs;
-reviewed tag consolidation and merge preview construction remain pending.
+exports. Deduplication groups hierarchy paths and suggests overlapping tag pairs.
+Resolution applies reviewed tag groups and approved links; merge preview construction remains pending.
 
 - [JSON Schema](schemas/classification_output.schema.json)
 - [Python validator](src/taxonomy_pipeline/classification/models.py): `CLASSIFICATION_OUTPUTS.validate_json(payload)`
@@ -227,3 +227,65 @@ the shared embedding implementation. Without a matcher, name/lexical checks run 
 name-based results with an explicit finding. `complete` requires readable input files
 and all applicable matching checks to run; it does not mean the candidate decisions
 are resolved. No baseline tag comparison, database writes, or preview construction occur.
+
+## Resolve reviewed tags and links
+
+Use `resolve_outputs(deduplication, taxonomy, decisions)` from
+`taxonomy_pipeline.classification.resolution`. This consumes the shared deduplication
+report, independent of producer filenames, branch formats, and source dataset names.
+The nine-field producer contract is unchanged.
+
+`ReviewDecision` is an internal review format:
+
+| Field | Meaning |
+|---|---|
+| `members` | Source references (`source_dataset`, `tag_id`) covered by one decision |
+| `action` | `create`, `reuse`, `exclude`, or `defer` |
+| `reason` | Required review explanation |
+| `existing_tag_id` | Required only for `reuse`; must identify one baseline tag |
+| `canonical_name` | For `create`: choose one member's unchanged source label when labels differ; inferred when all match |
+| `approved_paths` | Explicit service/category/speciality paths, supporting existing and proposed nodes |
+| `approved_speciality_ids` | Alternative approval by existing speciality ID |
+
+Only placements proposed by the group's members can be approved. Equivalence alone
+does not approve links: both approval lists default to empty. `exclude` and `defer`
+cannot approve links. Reuse preserves the baseline label.
+
+```python
+from taxonomy_pipeline.classification.models import ReviewDecision, TaxonomyPath
+from taxonomy_pipeline.classification.resolution import resolve_outputs
+
+# Example approval for a source identity present in the deduplication report.
+decision = ReviewDecision(
+    members=[{"source_dataset": "categorized-skills", "tag_id": "42"}],
+    action="create",
+    approved_paths=[TaxonomyPath(
+        service="Subject", category="Data analytics", speciality="Data presentation",
+    )],
+    reason="Reviewed concept and placement.",
+)
+resolution = resolve_outputs(deduplication, taxonomy, [decision])
+```
+
+- One multi-member accepted decision confirms equivalence. Separate accepted decisions
+  retain distinct tags, even for identical names. Disjoint `reuse` decisions targeting
+  the same baseline tag consolidate into one record.
+- Missing decisions remain `pending`. Excluded and deferred sources retain their
+  evidence and reasons. Exact repeated decisions are collapsed; overlapping or
+  contradictory decisions raise `ValueError` before a result is returned.
+- New hierarchy IDs hash the normalized full parent path. New tag IDs hash sorted
+  source identities. Separate `new:category:`, `new:speciality:`, and `new:tag:`
+  namespaces keep them distinct from integer baseline IDs. Group membership changes
+  produce a new tag ID; changing input order does not.
+- `ResolutionReport` contains approved hierarchy nodes, canonical tags, mappings,
+  unique links, source dispositions, counts, decisions, and the full deduplication
+  evidence. Hierarchy nodes without approved links are omitted. Unapproved placements
+  remain visible; repeated links are collapsed and baseline links marked `existing`.
+- Path reuse is rechecked against the supplied baseline. Changed or ambiguous targets
+  require revalidation. A content fingerprint identifies the baseline used for resolution.
+  It does not prove that an older deduplication report used that exact snapshot.
+- `partial` is true for incomplete upstream checks, omitted input records, pending or
+  deferred sources, or accepted tags with unapproved placements. It is not merge approval.
+
+See [synthetic review decisions](tests/fixtures/classification/review_decisions.json).
+This stage returns proposed changes without modifying the baseline or writing to a database.

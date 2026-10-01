@@ -186,6 +186,16 @@ class DeduplicationReport(BaseModel):
     candidates: list[DuplicateCandidate]
 
 
+class TaxonomyPath(BaseModel):
+    """Approve an existing or proposed speciality without needing a database ID first."""
+
+    model_config = ConfigDict(strict=True, extra="forbid")
+
+    service: Literal["Industry", "Function", "Subject", "Others"]
+    category: NonBlankText
+    speciality: NonBlankText
+
+
 class ReviewDecision(BaseModel):
     """Group equivalence and approved links are recorded explicitly and separately."""
 
@@ -196,14 +206,18 @@ class ReviewDecision(BaseModel):
     reason: NonBlankText
     existing_tag_id: TaxonomyId | None = None
     approved_speciality_ids: list[TaxonomyId] = Field(default_factory=list)
+    approved_paths: list[TaxonomyPath] = Field(default_factory=list)
+    canonical_name: NonBlankText | None = None
 
     @model_validator(mode="after")
     # Require an existing target only for reuse and prevent links on excluded or deferred groups.
     def check_action(self) -> Self:
         if (self.action == "reuse") != (self.existing_tag_id is not None):
             raise ValueError("existing_tag_id is required only for reuse")
-        if self.action in {"exclude", "defer"} and self.approved_speciality_ids:
+        if self.action in {"exclude", "defer"} and (self.approved_speciality_ids or self.approved_paths):
             raise ValueError("excluded or deferred groups cannot approve speciality links")
+        if self.action != "create" and self.canonical_name is not None:
+            raise ValueError("canonical_name is allowed only for new tags")
         return self
 
 
@@ -235,6 +249,58 @@ class CanonicalMapping(BaseModel):
 
     source: SourceTagRef
     canonical_tag_id: CanonicalTagId
+
+
+class ResolvedHierarchyNode(BaseModel):
+    """An approved path node with a baseline ID or stable temporary ID and its parent."""
+
+    level: Literal["category", "speciality"]
+    id: CanonicalTagId
+    parent_id: CanonicalTagId
+    name: NonBlankText
+    path: list[str]
+    existing: bool
+
+
+class CanonicalTag(BaseModel):
+    """One explicitly accepted concept with every source member preserved."""
+
+    id: CanonicalTagId
+    name: NonBlankText
+    existing: bool
+    members: list[SourceTagRef]
+
+
+class ResolvedLink(BaseModel):
+    """A unique approved speciality/tag pair, including links already in the baseline."""
+
+    speciality_id: CanonicalTagId
+    tag_id: CanonicalTagId
+    existing: bool
+
+
+class SourceDisposition(BaseModel):
+    """Account for each eligible source tag and placements not approved for linking."""
+
+    source: SourceTagRef
+    status: Literal["accepted", "excluded", "deferred", "pending"]
+    reason: NonBlankText
+    unapproved_paths: list[TaxonomyPath] = Field(default_factory=list)
+
+
+class ResolutionReport(BaseModel):
+    """Resolved additions and reuse for a later preview, retaining complete deduplication evidence."""
+
+    baseline_snapshot_id: NonBlankText
+    evidence: DeduplicationReport
+    decisions: list[ReviewDecision]
+    hierarchy: list[ResolvedHierarchyNode]
+    tags: list[CanonicalTag]
+    mappings: list[CanonicalMapping]
+    links: list[ResolvedLink]
+    dispositions: list[SourceDisposition]
+    counts: dict[str, int]
+    partial: bool
 
 
 class PreviewCounts(BaseModel):
