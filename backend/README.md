@@ -47,6 +47,8 @@ python skillsfuture/validate_skillsfuture_taxonomy.py
 The validator is also read-only: it checks row shape, duplicate IDs/names,
 duplicate speciality/tag links, broken references, dead-end categories,
 specialities without tags, and unused tags.
+Unused tags are expected inputs for the Case B classifier and should not be
+treated as a reason to block that workflow.
 
 The generated SQL uses parallel `sf_` tables so the original taxonomy is not
 overwritten:
@@ -80,10 +82,25 @@ For example:
 python skillsfuture/classify_unmapped_skills.py --batch-size 5
 ```
 
+The classifier maps generated tag IDs back to the source workbook skill IDs,
+so skill descriptions are included in the model prompt. It checkpoints completed
+batches in a hidden JSON file and resumes automatically after an interrupted
+run. A successful run removes the checkpoint.
+
+By default, the classifier reads `../taxonomy_pipeline/report.json` and
+classifies only Case B tags: entries marked `ADD_CANDIDATE` with
+`parent_status=NO_PARENT`. This avoids sending saturation duplicates or
+`REVIEW_AMBIGUOUS` entries to the paid classifier. Tags with
+`ADD_CANDIDATE` and `HAS_PARENT` belong to the separate Case A workflow.
+
+Use `--report path/to/report.json` to select a different report. If the report
+is unavailable, the classifier falls back to unused tags from the generated SQL;
+this fallback does not perform saturation duplicate filtering.
+
 Outputs are written to `skillsfuture/classification_proposals.json` and
 `skillsfuture/classification_proposals.csv`. Both outputs use the fields in
 `classification_output.schema.json`; the JSON output is validated against the
-schema before it is written. Each record also includes an `action`: 
+schema before it is written. Each record also includes an `action`:
 `assign_existing`, `propose_new_speciality`, or `propose_new_category`.
 Review and approve proposals before adding an approval-to-SQL step.
 

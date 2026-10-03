@@ -74,6 +74,7 @@ def main() -> int:
         return 2
 
     errors: list[str] = []
+    warnings: list[str] = []
     counts = {table: len(table_rows) for table, table_rows in rows.items()}
     for table, expected in TABLES.items():
         if not rows[table]:
@@ -115,17 +116,21 @@ def main() -> int:
             errors.append(f"dead-end speciality {speciality_id} ({specialities[speciality_id][1]}): no tags")
     for tag_id in tags:
         if tag_id not in tag_ids_in_links:
-            errors.append(f"unused tag {tag_id} ({tags[tag_id][1]})")
+            warnings.append(f"unused tag {tag_id} ({tags[tag_id][1]})")
 
     print(f"Validated: {args.sql}")
     for table, count in counts.items():
         print(f"  {table:<22} {count:>6} rows")
+    if warnings:
+        print(f"\nWARNINGS: {len(warnings)}")
+        for warning in warnings:
+            print(f"  - {warning}")
     if errors:
-        print(f"\nFAILED: {len(errors)} issue(s)")
+        print(f"\nFAILED: {len(errors)} error(s)")
         for error in errors:
             print(f"  - {error}")
         return 1
-    print("\nPASSED: no duplicate, broken-reference, or dead-end records found")
+    print("\nPASSED: no blocking errors found")
     return 0
 
 

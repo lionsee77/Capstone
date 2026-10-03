@@ -52,6 +52,8 @@ def main() -> int:
         if category is None or speciality is None:
             if category is not None or speciality is not None or record["confidence"] is not None:
                 errors.append("unresolved records must have null category, speciality, and confidence")
+            if action == "assign_existing":
+                errors.append("assign_existing cannot have an unresolved classification path")
         else:
             category_id = category_ids.get(normalise(category))
             speciality_exists = category_id is not None and (category_id, normalise(speciality)) in speciality_pairs
