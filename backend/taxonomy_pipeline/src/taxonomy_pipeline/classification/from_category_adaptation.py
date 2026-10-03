@@ -78,9 +78,14 @@ def _category_reason(placement: dict[str, Any]) -> str:
             )
         return f"Source category '{name}' has no confident match; needs manual review."
     if action == "REVIEW_NEW_PLACEMENT":
+        unmatched = placement.get("unmatched_incoming_parents") or []
+        existing = placement.get("existing_parents") or []
+        detail = ""
+        if unmatched and existing:
+            detail = f" (source gives it '{', '.join(unmatched)}'; baseline already has '{', '.join(existing)}')"
         return (
             f"Source category '{name}' matches existing category '{placement['target_category_name']}', but "
-            "under a different parent than the source gives it; needs manual review."
+            f"under a different parent than the source gives it{detail}; needs manual review."
         )
     if action == "REVIEW_OTHER_LEVEL":
         return f"Source category '{name}' matches an existing concept at a different level; needs manual review."
@@ -140,7 +145,20 @@ def build_classification_outputs(placements: list[dict[str, Any]], source_datase
                 # all four or none, so this record stays fully unresolved
                 # even though the category itself is known; `reason` still
                 # says so for a human reading the record.
-                if speciality_action not in _RESOLVED_SPECIALITY_ACTIONS:
+                if speciality_action == "REVIEW_NEW_PLACEMENT":
+                    unmatched = placement.get("speciality_unmatched_incoming_parents") or []
+                    existing = placement.get("speciality_existing_parents") or []
+                    detail = ""
+                    if unmatched and existing:
+                        detail = (
+                            f" (source gives it '{', '.join(unmatched)}'; "
+                            f"baseline already has '{', '.join(existing)}')"
+                        )
+                    reason += (
+                        f" Speciality matches existing '{placement.get('target_speciality_name')}', but under a "
+                        f"different category than the source gives it{detail}; needs manual review."
+                    )
+                elif speciality_action not in _RESOLVED_SPECIALITY_ACTIONS:
                     reason += " No speciality could be resolved for this placement."
                 if service_name is None:
                     reason += " No service could be determined for this placement."

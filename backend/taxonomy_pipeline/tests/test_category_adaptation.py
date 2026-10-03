@@ -1,3 +1,5 @@
+import numpy as np
+
 from taxonomy_pipeline.datasets.base import TaxonomyDataset
 from taxonomy_pipeline.metrics import category_adaptation
 from taxonomy_pipeline.metrics.category_adaptation import CategoryAdaptationMetric
@@ -267,3 +269,83 @@ def test_unknown_tag_id_reports_an_error():
     result = _run([99999])
     assert result.status == "error"
     assert "99999" in result.summary
+
+
+def test_category_with_a_mismatched_service_is_flagged_for_review_not_crashed():
+    # The source category matches an existing baseline category by name, but
+    # the source's own services table says it belongs to a different service
+    # than the baseline records for that category - saturation's matcher
+    # calls this REVIEW_NEW_PLACEMENT. _outcomes_by_incoming_id used to never
+    # read that outcome list at all, so category_outcomes[category_id] raised
+    # KeyError here and aborted the whole run. This only shows up once a
+    # source actually has its own services table (SkillsFuture today doesn't,
+    # which is why it was never caught before).
+    datasets = _datasets()
+    datasets["skillsfuture"].services = [{"id": 9, "name": "Totally Different Service"}]
+    datasets["skillsfuture"].categories[0]["service_id"] = 9  # category 501 "Banking"
+    result = CategoryAdaptationMetric().run(
+        datasets, {"baseline": "original", "incoming": "skillsfuture", "new_tag_ids": [9001]}
+    )
+
+    assert result.status == "ok"
+    placement = result.details["placements"][0]
+    assert placement["action"] == "REVIEW_NEW_PLACEMENT"
+    assert placement["needs_review"] is True
+    assert placement["unmatched_incoming_parents"] == ["Totally Different Service"]
+    assert placement["existing_parents"] == ["Industry"]
+    assert "speciality_action" not in placement  # category unresolved -> speciality never checked
+
+
+class _InconsistentSemanticMatcher:
+    """best_matches() (used to decide the category-level match) and
+    similarity() (used separately by _uncovered_parents to recheck parent
+    coverage) are two different calls on the real SemanticMatcher too -
+    nothing guarantees they agree on every pair. This fake keeps
+    best_matches confident so the category resolves, but similarity low, to
+    deterministically exercise "category matched, but this speciality's own
+    parent link looks uncovered" - a real embedding model can land here too.
+    """
+
+    def __init__(self, model_name):
+        assert model_name == "test-model"
+
+    def best_matches(self, queries, choices):
+        return [(choices[0] if choices else None, 0.65) for _ in queries]
+
+    def similarity(self, queries, choices):
+        return np.zeros((len(queries), len(choices)))
+
+
+def test_speciality_with_an_uncovered_parent_is_flagged_for_review_not_dropped(monkeypatch):
+    # Same gap one level down, and one that's live today: SkillsFuture
+    # specialities do have parent categories. speciality_outcomes.get(...)
+    # used to return None here, so the record was reported as "no speciality
+    # could be resolved" instead of being flagged for review.
+    datasets = {
+        "original": TaxonomyDataset(
+            name="original",
+            services=[{"id": 1, "name": "Industry"}],
+            categories=[{"id": 1, "name": "Information Technology", "service_id": 1}],
+            specialities=[{"id": 1, "name": "Infocomm Specialist", "category_id": 1}],
+        ),
+        "skillsfuture": TaxonomyDataset(
+            name="skillsfuture",
+            categories=[{"id": 501, "name": "Infocomm Tech", "service_id": 1}],
+            specialities=[{"id": 601, "name": "Infocomm Specialist", "category_id": 501}],
+            tags=[{"id": 9001, "name": "cloud computing"}],
+            speciality_tags=[{"id": 701, "speciality_id": 601, "tag_id": 9001}],
+        ),
+    }
+    monkeypatch.setattr(category_adaptation, "SemanticMatcher", _InconsistentSemanticMatcher)
+    result = CategoryAdaptationMetric().run(
+        datasets,
+        {"baseline": "original", "incoming": "skillsfuture", "new_tag_ids": [9001], "semantic_model": "test-model"},
+    )
+
+    assert result.status == "ok"
+    placement = result.details["placements"][0]
+    assert placement["action"] in ("SKIP_DUPLICATE", "SKIP_SEMANTIC_DUPLICATE")  # category itself resolved fine
+    assert placement["speciality_action"] == "REVIEW_NEW_PLACEMENT"
+    assert placement["needs_review"] is True
+    assert placement["speciality_unmatched_incoming_parents"] == ["Infocomm Tech"]
+    assert placement["speciality_existing_parents"] == ["Information Technology"]

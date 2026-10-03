@@ -14,6 +14,8 @@ one implementation of "what a run does," not two.
 ```text
 taxonomy_pipeline/
 ├── configs/                          # example pipeline configs
+├── scripts/
+│   └── run_case_a.py                 # saturation -> category_adaptation -> classification output, end to end
 ├── src/taxonomy_pipeline/
 │   ├── datasets/                     # pluggable taxonomy and reference sources
 │   │   ├── __init__.py               #   source registry - register new `type:` values here
@@ -27,7 +29,11 @@ taxonomy_pipeline/
 │   │   ├── depth.py                  #   branching factor
 │   │   ├── breadth.py                #   coverage vs. a reference dataset
 │   │   ├── saturation.py             #   new-items curve across ordered incoming sources
+│   │   ├── category_adaptation.py    #   Case A: place a new source's own categories/specialities (see below)
 │   │   └── registry.py               #   METRICS dict - register new metrics here
+│   ├── classification/                # Case A/B -> consumer handoff (see "Classification output contract")
+│   │   ├── models.py                 #   ClassificationOutput and the shared contract models
+│   │   └── from_category_adaptation.py #  serializes category_adaptation's placements into the contract
 │   ├── config.py                     # YAML/JSON pipeline config (datasets + metrics)
 │   ├── models.py                     # MetricResult / RunReport - one report shape everywhere
 │   ├── pipeline.py                   # run_pipeline(config) -> RunReport
@@ -50,12 +56,13 @@ tests/fixtures/classification/                 # sample outputs and taxonomy sna
 tests/test_classification_models.py            # contract validation tests
 ```
 
-Both branches supply exactly eight fields: `source_dataset`, `tag_id`,
-`original_tag`, `original_classification`, `category`, `speciality`, `confidence`,
+Both branches supply exactly nine fields: `source_dataset`, `tag_id`, `tag`,
+`original_classification`, `service`, `category`, `speciality`, `confidence`,
 and `reason`. Parse an array with `CLASSIFICATION_OUTPUTS.validate_json(payload)`
 from `taxonomy_pipeline.classification.models`. Unresolved placements use explicit
-`null` values for category, speciality, and confidence. The model checks types and
-complete placements; checking names against the taxonomy is not yet implemented.
+`null` values for service, category, speciality, and confidence. The model checks
+types and complete placements; checking names against the taxonomy is not yet
+implemented.
 
 See the [classification output contract](CLASSIFICATION_OUTPUT_CONTRACT.md) for fields,
 examples and handoff rules.
@@ -251,6 +258,93 @@ with open("add_candidate_skills.csv", "w", newline="") as f:
 
 Swap `tags` for `specialities` / `categories`, or the list and verdict, to
 export other groups.
+
+## Category adaptation (Case A)
+
+`category_adaptation` is the next step after saturation for tags a saturation
+run already flagged as new (`ADD_CANDIDATE`) **and** that have a resolvable
+source category of their own (saturation's own `parent_status ==
+HAS_PARENT` on that tag - tags with `NO_PARENT` have nothing of their own to
+place and are Case B's job instead, not this metric's).
+
+It adapts the incoming source's own category/speciality structure onto the
+baseline, one level at a time, reusing saturation's exact/lexical/semantic
+matcher rather than reimplementing it:
+
+1. **Category, one level up**: each new tag's source category is matched
+   against every baseline category. A confident match reuses that baseline
+   category's real ID; no confident match proposes a `NEW_CATEGORY`.
+2. **Speciality, one level down, scoped to that category**: the same
+   matcher runs again, but only against the baseline specialities that sit
+   under whichever category just resolved (never the whole baseline
+   speciality table). A `NEW_CATEGORY` has nothing under it yet, so its
+   specialities all cascade to `NEW_SPECIALITY` automatically.
+
+A category match that needs review (`REVIEW_AMBIGUOUS`, `REVIEW_NEW_PLACEMENT`,
+`REVIEW_OTHER_LEVEL`, or an invalid name) is never auto-resolved and its
+speciality is never evaluated either - resolving a speciality under an
+unconfirmed category would look like a confident placement when the
+foundation under it isn't confirmed.
+
+### Params
+
+Defaults come from `CategoryAdaptationMetric.default_params`
+(`src/taxonomy_pipeline/metrics/category_adaptation.py`).
+
+| Param | Default | Meaning |
+|---|---|---|
+| `baseline` | - | Existing taxonomy dataset name |
+| `incoming` | - | The one source dataset name being adapted |
+| `new_tag_ids` | - | Required; the confirmed-new tag IDs to place (from saturation's `ADD_CANDIDATE` + `HAS_PARENT` tags) |
+| `threshold` | 90 | RapidFuzz score (0-100) for a "close spelling"; never enough on its own |
+| `semantic_model` | none | Optional sentence-transformers model; without it only exact/spelling evidence is used |
+| `semantic_threshold` | 0.6 | Cosine similarity for a meaning match, used for both categories and specialities. Lower than saturation's tag default (0.70): categories are broader, less precisely-worded concepts, and real runs show correct matches scoring as low as 0.63-0.69 |
+| `add_candidate_lexical_threshold` | 60 | Below this *and* the semantic threshold, nothing is even close - `NEW_CATEGORY`/`NEW_SPECIALITY` instead of `REVIEW_AMBIGUOUS` |
+| `add_candidate_semantic_threshold` | 0.5 | See above |
+
+### Actions
+
+Every placement has a category-level `action` and, once the category
+resolves, a `speciality_action`:
+
+| Action | Level | Meaning |
+|---|---|---|
+| `SKIP_DUPLICATE` / `SKIP_SEMANTIC_DUPLICATE` | category, speciality | Matched an existing baseline node; reuse its real ID |
+| `NEW_CATEGORY` | category | No existing category matches; propose a new one |
+| `NEW_SPECIALITY` | speciality | No existing speciality under the resolved category matches (or the category itself is brand new); propose a new one |
+| `REVIEW_AMBIGUOUS` | category, speciality | Partial similarity at best; both the closest lexical and closest semantic baseline names are surfaced for review |
+| `REVIEW_NEW_PLACEMENT` | category, speciality | Matches a known concept, but under a different parent than the source gives it (`unmatched_incoming_parents` vs `existing_parents`) |
+| `REVIEW_OTHER_LEVEL` | category | Matches a known concept at a different taxonomy level |
+| `INVALID_CATEGORY_NAME` | category | Source category name is blank or a placeholder |
+| `NO_SOURCE_CATEGORY` | tag | The tag has no source category/speciality in this dataset at all - Case A has nothing to place it against; route to Case B |
+
+A resolved category (`SKIP_*` or `NEW_CATEGORY`) also carries `target_service_id`/
+`target_service_name`: looked up directly from the baseline for a matched
+category, or guessed by majority vote across whichever *other* source
+categories matched in the same run for a brand new one (`None` if nothing
+else in the run matched anything to vote from - the placement then stays
+fully unresolved, since the classification contract requires service,
+category, speciality and confidence to be all-present or all-null together).
+
+### Running it end to end
+
+`scripts/run_case_a.py` wires saturation and `category_adaptation` together
+and serializes the result into the classification output contract - this
+stands in for CLI commands that don't exist yet for this part of the pipeline:
+
+```bash
+.venv/bin/python scripts/run_case_a.py
+.venv/bin/python scripts/run_case_a.py --config configs/original_vs_skillsfuture.yaml \
+    --baseline original --incoming skillsfuture --output case_a_output.json
+```
+
+It runs saturation, splits `ADD_CANDIDATE` tags by `parent_status` (`HAS_PARENT`
+tag IDs go into `category_adaptation`; `NO_PARENT` ones are reported as the
+Case B handoff count), runs `category_adaptation`, serializes the placements
+via `classification.from_category_adaptation.build_classification_outputs`,
+and validates the result against the contract before writing it out
+(`case_a_output.json`, git-ignored - regenerate it rather than committing it,
+since it goes stale whenever the data or thresholds change).
 
 ## Industry and occupational breadth
 

@@ -109,10 +109,9 @@ Names below are illustrative; use the agreed Ankit taxonomy when producing outpu
 
 ## Implementation reference
 
-This document defines the revised nine-field contract. The model, JSON Schema,
-and fixtures below still use the previous eight-field format and need updating
-to accept `tag` and the explicit `service` field. The examples above are not yet
-accepted by the current validator.
+The model, JSON Schema, and fixtures below implement this nine-field contract,
+including `tag` and the explicit `service` field. The examples above validate
+against the current validator.
 
 - [JSON Schema](schemas/classification_output.schema.json)
 - [Python validator](src/taxonomy_pipeline/classification/models.py): `CLASSIFICATION_OUTPUTS.validate_json(payload)`

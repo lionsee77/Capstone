@@ -153,6 +153,46 @@ def test_review_ambiguous_reason_surfaces_both_lexical_and_semantic_near_misses(
     assert "Profit Improvement" in reason
 
 
+def test_review_new_placement_category_reason_names_the_mismatched_parent():
+    # The category matched an existing one by name, but under a different
+    # parent (e.g. service) than the source gives it - name both sides of
+    # the mismatch, not just a generic "needs manual review".
+    placement = {
+        "tag_id": 9005, "tag_name": "firewall config", "source_category_id": 504,
+        "source_category_name": "Infocomm Tech", "action": "REVIEW_NEW_PLACEMENT",
+        "target_category_id": 1, "target_category_name": "Information Technology",
+        "unmatched_incoming_parents": ["Totally Different Service"], "existing_parents": ["Industry"],
+        "needs_review": True,
+    }
+    records = build_classification_outputs([placement], "skillsfuture")
+
+    record = records[0]
+    assert (record.service, record.category, record.speciality, record.confidence) == (None, None, None, None)
+    assert "Information Technology" in record.reason
+    assert "Totally Different Service" in record.reason
+    assert "Industry" in record.reason
+
+
+def test_review_new_placement_speciality_reason_is_specific_not_generic():
+    # Same mismatch one level down: used to fall back to the same generic
+    # "No speciality could be resolved" text as a truly unresolved placement,
+    # losing the fact that a baseline speciality was actually found.
+    placement = _base(
+        speciality_action="REVIEW_NEW_PLACEMENT",
+        target_speciality_name="Infocomm Specialist",
+        speciality_unmatched_incoming_parents=["Infocomm Tech"],
+        speciality_existing_parents=["Information Technology"],
+    )
+    records = build_classification_outputs([placement], "skillsfuture")
+
+    record = records[0]
+    assert (record.service, record.category, record.speciality, record.confidence) == (None, None, None, None)
+    assert "No speciality could be resolved" not in record.reason
+    assert "Infocomm Specialist" in record.reason
+    assert "Infocomm Tech" in record.reason
+    assert "Information Technology" in record.reason
+
+
 def test_matched_category_with_unresolved_speciality_nulls_the_whole_record():
     # Category (and service) are confidently known, but nothing could be said
     # about a speciality - the contract's all-or-null rule means none of the

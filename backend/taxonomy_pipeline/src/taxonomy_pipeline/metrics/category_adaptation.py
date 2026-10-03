@@ -87,8 +87,19 @@ def _match_against_pool(
 
 def _outcomes_by_incoming_id(comparison: dict[str, Any], new_action: str) -> dict[Any, dict[str, Any]]:
     outcomes: dict[Any, dict[str, Any]] = {}
+    # exact/fuzzy/semantic matches are the "skip, reuse this baseline id" case;
+    # new_placement/other_level matches still found a similar baseline concept
+    # (they carry the same baseline_id/baseline_name/match_type shape via
+    # _match_entry) but flag it for review instead - a category whose source
+    # service doesn't match the baseline's (REVIEW_NEW_PLACEMENT), or one that
+    # matched something at a different taxonomy level (REVIEW_OTHER_LEVEL).
+    # Both used to be silently missing from `outcomes`: a category landing
+    # here made run()'s category_outcomes[category_id] lookup raise KeyError,
+    # and a speciality landing here was reported as "no speciality could be
+    # resolved" instead of "needs review".
     for match in (
         comparison["exact_match_details"] + comparison["fuzzy_match_details"] + comparison["semantic_match_details"]
+        + comparison["new_placement_details"] + comparison["other_level_match_details"]
     ):
         outcome = {
             "action": match["recommended_action"],
@@ -98,6 +109,9 @@ def _outcomes_by_incoming_id(comparison: dict[str, Any], new_action: str) -> dic
             "target_id": match["baseline_id"],
             "target_name": match["baseline_name"],
         }
+        if match["recommended_action"] == "REVIEW_NEW_PLACEMENT":
+            outcome["unmatched_incoming_parents"] = [p["name"] for p in match.get("unmatched_incoming_parents", [])]
+            outcome["existing_parents"] = match.get("existing_parents", [])
         for incoming_id in match["incoming_ids"]:
             outcomes[incoming_id] = outcome
     for ambiguous in comparison["ambiguous_concepts"]:
@@ -323,6 +337,9 @@ class CategoryAdaptationMetric(Metric):
                         "closest_semantic_baseline_name"
                     )
                     placement["closest_semantic_score"] = category_outcome.get("closest_semantic_score")
+                elif category_outcome["action"] == "REVIEW_NEW_PLACEMENT":
+                    placement["unmatched_incoming_parents"] = category_outcome.get("unmatched_incoming_parents")
+                    placement["existing_parents"] = category_outcome.get("existing_parents")
                 if category_outcome["action"] in ("SKIP_DUPLICATE", "SKIP_SEMANTIC_DUPLICATE"):
                     # A matched category already has a real service in the
                     # baseline - look it up, don't guess.
@@ -357,6 +374,11 @@ class CategoryAdaptationMetric(Metric):
                             "SKIP_DUPLICATE", "SKIP_SEMANTIC_DUPLICATE", NEW_SPECIALITY,
                         ):
                             placement["needs_review"] = True
+                        if speciality_outcome["action"] == "REVIEW_NEW_PLACEMENT":
+                            placement["speciality_unmatched_incoming_parents"] = speciality_outcome.get(
+                                "unmatched_incoming_parents"
+                            )
+                            placement["speciality_existing_parents"] = speciality_outcome.get("existing_parents")
 
                 placements.append(placement)
 
