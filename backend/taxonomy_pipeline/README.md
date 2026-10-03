@@ -14,6 +14,9 @@ one implementation of "what a run does," not two.
 ```text
 taxonomy_pipeline/
 ├── configs/                          # example pipeline configs
+├── docs/                             # design notes and future-work references
+│   ├── saturation-coverage-options.md      #   options for deciding "good coverage" from the saturation curve
+│   └── saturation-threshold-calibration.md #   method for choosing saturation thresholds from labelled pairs
 ├── scripts/
 │   └── run_case_a.py                 # saturation -> category_adaptation -> classification output, end to end
 ├── src/taxonomy_pipeline/
@@ -526,12 +529,16 @@ Ruff linting and the test suite run in CI (see the root
 
 - **`saturation`** recommendations are review aids, not database
   operations. Its thresholds are not yet calibrated against a hand-labelled
-  set of pairs, and with only SkillsFuture loaded the curve has one point.
+  set of pairs (method in
+  [`docs/saturation-threshold-calibration.md`](docs/saturation-threshold-calibration.md)),
+  and with only SkillsFuture loaded the curve has one point.
   When a SkillsFuture skill matches both an original tag and an original
   speciality equally well, the tag is reported (same level wins ties), even
   though SF skills correspond more closely to original specialities. Most
   `REVIEW_OTHER_LEVEL` job roles are weak title -> keyword matches
-  (e.g. "Technician" -> tag "tech").
+  (e.g. "Technician" -> tag "tech"). There is no agreed "good coverage"
+  cutoff for the curve yet; candidate methods are collected in
+  [`docs/saturation-coverage-options.md`](docs/saturation-coverage-options.md).
 - **`breadth`** and the fuzzy layer of **`integrity`** use lexical
   (RapidFuzz) matching only. Saturation additionally supports an optional
   `sentence-transformers` embedding model for semantic candidates.
