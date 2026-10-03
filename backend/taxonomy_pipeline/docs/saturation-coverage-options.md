@@ -74,9 +74,12 @@ adding interviews):
 
 Applied here:
 
-> Coverage is acceptable when `new_rate_max ≤ 5%` for **3 consecutive**
+> Coverage is acceptable when `new_rate_max ≤ 10%` for **3 consecutive**
 > incoming sources, with thresholds held fixed.
 
+The team chose 10% rather than the literature's 5% to allow for the
+uncalibrated matcher. Tighten it towards 5% once the thresholds have been
+calibrated (see [`saturation-threshold-calibration.md`](saturation-threshold-calibration.md)).
 Use `new_rate_max` so ambiguous items count against you. Requiring several
 sources in a row stops one convenient source from ending the process early.
 
@@ -263,7 +266,7 @@ every source.
 Example report sentence:
 
 > "Returns diminished after source 4 (elbow). The last 3 sources each added
-> ≤ 5% new concepts (stopping rule). Estimated coverage is ~93% (Chao1), and
+> ≤ 10% new concepts (stopping rule). Estimated coverage is ~93% (Chao1), and
 > 91% of sampled gig requests map to an existing concept (demand coverage)."
 
 ## Preconditions
