@@ -9,6 +9,12 @@ provides Adminer for visual browsing and a Python/MySQL taxonomy audit.
 backend/
 ├── sql-files-nus/        # Original SQL dumps
 ├── skillsfuture/         # SkillsFuture Excel sources and taxonomy generator
+│   ├── generate_skillsfuture_taxonomy.py
+│   ├── classify_unmapped_skills.py
+│   ├── validate_skillsfuture_taxonomy.py
+│   ├── validate_classification_proposals.py
+│   ├── AI_TAXONOMY_PIPELINE_PLAN.md
+│   └── *.xlsx              # SkillsFuture source workbooks
 ├── audit/                # Taxonomy audit module and report notebook
 ├── taxonomy_pipeline/    # Taxonomy quality scoring (CLI + FastAPI) - own README, own deps
 ├── compose.yaml          # MySQL, Adminer and audit services
@@ -42,11 +48,43 @@ The validator is also read-only: it checks row shape, duplicate IDs/names,
 duplicate speciality/tag links, broken references, dead-end categories,
 specialities without tags, and unused tags.
 
+The generated SQL uses parallel `sf_` tables so the original taxonomy is not
+overwritten:
+
+```text
+services → sf_categories → sf_specialities → sf_speciality_tags → sf_tags
+```
+
 To create AI classification proposals for unused tags, put the OpenAI settings
 in `backend/.env` and run `python skillsfuture/classify_unmapped_skills.py`.
-The
-script loads `.env` automatically and writes pending JSON
-and CSV review files only; it does not modify MySQL or generate executable SQL.
+The script loads `.env` automatically and writes pending JSON and CSV review
+files only; it does not modify MySQL or generate executable SQL.
+
+Create the local environment file from the template:
+
+```bash
+cp .env.example .env
+```
+
+Set at least:
+
+```env
+OPENAI_API_KEY=your-openai-api-key
+OPENAI_MODEL=gpt-4o-mini
+```
+
+The classifier supports `--batch-size`, `--model`, and `--debug-response`.
+For example:
+
+```bash
+python skillsfuture/classify_unmapped_skills.py --batch-size 5
+```
+
+Outputs are written to `skillsfuture/classification_proposals.json` and
+`skillsfuture/classification_proposals.csv`. Both outputs use the fields in
+`classification_output.schema.json`; the JSON output is validated against the
+schema before it is written. Each record also includes an `action`: 
+`assign_existing`, `propose_new_speciality`, or `propose_new_category`.
 Review and approve proposals before adding an approval-to-SQL step.
 
 Validate proposals against the hierarchy with:
@@ -55,9 +93,13 @@ Validate proposals against the hierarchy with:
 python skillsfuture/validate_classification_proposals.py
 ```
 
-This creates annotated JSON and CSV files. `assign_existing` proposals are only
-valid when the category and speciality exist exactly and the speciality belongs
-to that category. Invalid proposals are marked `needs_review`.
+This creates annotated JSON and CSV files. It first validates the output against
+`classification_output.schema.json`, then checks tag identity, duplicates,
+services, and category/speciality relationships. Unknown categories or
+specialities are reported as warnings for human review. Invalid records are
+marked `needs_review`. The validated files are written as
+`classification_proposals_validated.json` and
+`classification_proposals_validated.csv` by default.
 
 ## Score taxonomy quality
 

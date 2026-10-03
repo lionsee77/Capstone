@@ -15,6 +15,7 @@ from pathlib import Path
 from openai import AsyncOpenAI
 from openpyxl import load_workbook
 from dotenv import load_dotenv
+from jsonschema import Draft202012Validator
 
 from validate_skillsfuture_taxonomy import load_rows
 
@@ -84,6 +85,7 @@ async def main() -> int:
     parser.add_argument("--sql", type=Path, default=ROOT / "skillsfuture_taxonomy.sql")
     parser.add_argument("--unique", type=Path, default=ROOT / "jobsandskills-skillsfuture-unique-skills-list.xlsx")
     parser.add_argument("--output", type=Path, default=ROOT / "classification_proposals.json")
+    parser.add_argument("--schema", type=Path, default=ROOT / "classification_output.schema.json")
     parser.add_argument("--batch-size", type=int, default=5)
     parser.add_argument("--model", default=os.getenv("OPENAI_MODEL", "gpt-4o-mini"), help="OpenAI model name")
     parser.add_argument("--debug-response", action="store_true", help="print up to 4,000 characters of each raw response")
@@ -115,12 +117,33 @@ async def main() -> int:
         print(f"Processed {min(start + args.batch_size, len(unused))}/{len(unused)}")
 
     proposals = [{"tag": tags.get(proposal["tag_id"], ""), **proposal} for proposal in proposals]
-    args.output.write_text(json.dumps(proposals, indent=2, ensure_ascii=False), encoding="utf-8")
+    classification_output = []
+    for proposal in proposals:
+        unresolved = not proposal.get("category") or not proposal.get("speciality")
+        classification_output.append({
+            "action": proposal["action"],
+            "source_dataset": "SkillsFuture Unique Skills List",
+            "tag_id": str(proposal["tag_id"]),
+            "tag": proposal["tag"],
+            "original_classification": "unclassified",
+            "service": None if unresolved else "Industry",
+            "category": None if unresolved else proposal["category"],
+            "speciality": None if unresolved else proposal["speciality"],
+            "confidence": None if unresolved else proposal.get("confidence"),
+            "reason": proposal.get("reason") or "No classification returned.",
+        })
+    schema = json.loads(args.schema.read_text(encoding="utf-8"))
+    schema_errors = sorted(Draft202012Validator(schema).iter_errors(classification_output), key=lambda error: list(error.path))
+    if schema_errors:
+        details = "; ".join(error.message for error in schema_errors[:5])
+        raise ValueError(f"Generated classification output does not match schema: {details}")
+    args.output.write_text(json.dumps(classification_output, indent=2, ensure_ascii=False), encoding="utf-8")
     with args.output.with_suffix(".csv").open("w", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=["tag_id", "tag", "action", "category", "speciality", "confidence", "reason", "review_status"])
+        fields = ["action", "source_dataset", "tag_id", "tag", "original_classification", "service", "category", "speciality", "confidence", "reason"]
+        writer = csv.DictWriter(f, fieldnames=fields)
         writer.writeheader()
-        for p in proposals: writer.writerow({**p, "tag": tags.get(p["tag_id"], ""), "review_status": "pending"})
-    print(f"Wrote {len(proposals)} proposals to {args.output} and {args.output.with_suffix('.csv')}")
+        writer.writerows(classification_output)
+    print(f"Wrote {len(classification_output)} schema-compliant classifications to {args.output} and {args.output.with_suffix('.csv')}")
     return 0
 
 
