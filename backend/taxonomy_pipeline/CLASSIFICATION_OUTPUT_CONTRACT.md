@@ -114,6 +114,14 @@ Names below are illustrative. Producers may reuse Ankit's paths or propose new o
 
 ## Implementation reference
 
+The model and fixtures implement this nine-field contract. The published JSON Schema
+has not been regenerated: it still rejects extra fields, unlike runtime validation.
+Batch
+validation checks taxonomy paths and supports explicit temporary adapters for older
+exports. Deduplication groups hierarchy paths and suggests overlapping tag pairs.
+Resolution accepts unflagged classifications and applies explicit duplicate decisions. Preview construction validates
+the combined snapshot and exports a CSV for review.
+
 - [JSON Schema](schemas/classification_output.schema.json)
 - [Python validator](src/taxonomy_pipeline/classification/models.py): `CLASSIFICATION_OUTPUTS.validate_json(payload)`
 - [Case A fixture](tests/fixtures/classification/case_a.json)

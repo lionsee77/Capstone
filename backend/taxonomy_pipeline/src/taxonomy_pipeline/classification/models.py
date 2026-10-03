@@ -61,7 +61,7 @@ CLASSIFICATION_OUTPUTS = TypeAdapter(list[ClassificationOutput])
 class LegacyClassificationOutput(BaseModel):
     """Temporary eight-field intake shape, after producer-specific field mapping."""
 
-    model_config = ConfigDict(strict=True, extra="forbid")
+    model_config = ConfigDict(strict=True, extra="ignore")
 
     source_dataset: NonBlankText
     tag_id: NonBlankText
