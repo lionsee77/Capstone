@@ -93,9 +93,11 @@ classifies only Case B tags: entries marked `ADD_CANDIDATE` with
 `REVIEW_AMBIGUOUS` entries to the paid classifier. Tags with
 `ADD_CANDIDATE` and `HAS_PARENT` belong to the separate Case A workflow.
 
-Use `--report path/to/report.json` to select a different report. If the report
-is unavailable, the classifier falls back to unused tags from the generated SQL;
-this fallback does not perform saturation duplicate filtering.
+Use `--report path/to/report.json` to select a different report. The report is
+required for strict Case B behavior: if it is missing, malformed, or contains
+no `ADD_CANDIDATE` + `NO_PARENT` tags, the classifier stops before making any
+AI calls. It never falls back to all unused SQL tags, because that could send
+saturation duplicates or ambiguous records to the classifier.
 
 Outputs are written to `skillsfuture/classification_proposals.json` and
 `skillsfuture/classification_proposals.csv`. Both outputs use the fields in

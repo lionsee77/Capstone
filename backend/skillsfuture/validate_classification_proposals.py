@@ -8,7 +8,7 @@ from pathlib import Path
 
 from jsonschema import Draft202012Validator
 
-from validate_skillsfuture_taxonomy import load_rows
+from validate_skillsfuture_taxonomy import load_rows, parse_value_tuple
 
 ROOT = Path(__file__).parent
 ALLOWED_SERVICES = {"Industry", "Function", "Subject", "Others"}
@@ -19,10 +19,33 @@ def normalise(value: str) -> str:
     return " ".join(str(value or "").casefold().split())
 
 
+def original_hierarchy(sql_dir: Path) -> tuple[set[str], set[tuple[str, str]]]:
+    categories: dict[str, str] = {}
+    specialities: set[tuple[str, str]] = set()
+    for table, path in (("categories", sql_dir / "categories.sql"), ("specialities", sql_dir / "specialities.sql")):
+        current = False
+        for line in path.read_text(encoding="utf-8").splitlines():
+            if line.startswith("INSERT INTO") and f"`{table}`" in line:
+                current = True
+                continue
+            if not current:
+                continue
+            values = parse_value_tuple(line)
+            if values:
+                if table == "categories" and len(values) > 9:
+                    categories[values[0]] = values[1]
+                elif table == "specialities" and len(values) > 8:
+                    specialities.add((categories.get(values[8], values[8]), normalise(values[1])))
+            if line.strip().endswith(";"):
+                current = False
+    return {normalise(name) for name in categories.values()}, {(normalise(category), name) for category, name in specialities}
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--proposals", type=Path, default=ROOT / "classification_proposals.json")
     parser.add_argument("--sql", type=Path, default=ROOT / "skillsfuture_taxonomy.sql")
+    parser.add_argument("--target-sql-dir", type=Path, default=ROOT.parent / "sql-files-nus", help="Ankit taxonomy SQL directory")
     parser.add_argument("--schema", type=Path, default=ROOT / "classification_output.schema.json")
     parser.add_argument("--output", type=Path, default=ROOT / "classification_proposals_validated.json")
     args = parser.parse_args()
@@ -34,8 +57,7 @@ def main() -> int:
         return 1
 
     data = load_rows(args.sql)
-    category_ids = {normalise(row[1]): row[0] for row in data["sf_categories"]}
-    speciality_pairs = {(row[2], normalise(row[1])) for row in data["sf_specialities"]}
+    category_names, speciality_pairs = original_hierarchy(args.target_sql_dir)
     tags = {row[0]: row[1] for row in data["sf_tags"]}
     seen: set[str] = set(); checked = []
     for record in records:
@@ -55,16 +77,16 @@ def main() -> int:
             if action == "assign_existing":
                 errors.append("assign_existing cannot have an unresolved classification path")
         else:
-            category_id = category_ids.get(normalise(category))
-            speciality_exists = category_id is not None and (category_id, normalise(speciality)) in speciality_pairs
+            category_exists = normalise(category) in category_names
+            speciality_exists = (normalise(category), normalise(speciality)) in speciality_pairs
             if action == "assign_existing":
-                if category_id is None: errors.append("assign_existing category does not exist")
+                if not category_exists: errors.append("assign_existing category does not exist in Ankit's taxonomy")
                 elif not speciality_exists: errors.append("assign_existing speciality does not exist under this category")
             elif action == "propose_new_speciality":
-                if category_id is None: errors.append("new speciality must use an existing category")
+                if not category_exists: errors.append("new speciality must use an existing Ankit category")
                 elif speciality_exists: errors.append("proposed speciality already exists under this category")
             elif action == "propose_new_category":
-                if category_id is not None: errors.append("proposed new category already exists")
+                if category_exists: errors.append("proposed new category already exists in Ankit's taxonomy")
         checked.append({**record, "review_status": "needs_review" if errors else "pending", "validation_errors": errors, "validation_warnings": warnings})
 
     args.output.write_text(json.dumps(checked, indent=2, ensure_ascii=False), encoding="utf-8")

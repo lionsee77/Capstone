@@ -10,16 +10,13 @@ import asyncio
 import csv
 import json
 import os
-from collections.abc import Iterable
 from pathlib import Path
 
-from openai import AsyncOpenAI
-from openpyxl import load_workbook
 from dotenv import load_dotenv
 from jsonschema import Draft202012Validator
-
-from validate_skillsfuture_taxonomy import load_rows
-
+from openai import AsyncOpenAI
+from openpyxl import load_workbook
+from validate_skillsfuture_taxonomy import load_rows, parse_value_tuple
 
 ROOT = Path(__file__).parent
 load_dotenv(ROOT.parent / ".env")
@@ -75,7 +72,7 @@ async def classify_batch(client: AsyncOpenAI, prompt: str, batch: list[dict], mo
             missing = sorted(expected - set(collected))
             prompt += f"\nYour last response was incomplete. Return exactly one proposal for these missing tag_id values: {missing}. Do not include any other tag IDs."
             print(f"  Incomplete response; retrying ({attempt}/3), missing {len(missing)}")
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - retry transient API and response errors
             print(f"  Invalid model response; retrying ({attempt}/3): {exc}")
     raise ValueError(f"Model failed to return one valid proposal for every tag in batch: {sorted(expected)}")
 
@@ -88,6 +85,29 @@ def source_skills(path: Path) -> dict[str, dict[str, str]]:
         row = dict(zip(headers, values)); sid = str(row.get("skill_id") or "").strip()
         if sid: result[sid] = {"title": str(row.get("skill_title") or "").strip(), "description": str(row.get("skill_description") or "").strip(), "type": str(row.get("skill_type") or "").strip()}
     return result
+
+
+def original_hierarchy(sql_dir: Path) -> tuple[list[str], list[dict[str, str]]]:
+    """Load Ankit's categories and specialities as placement candidates."""
+    categories: dict[str, str] = {}
+    specialities: list[dict[str, str]] = []
+    for table, path in (("categories", sql_dir / "categories.sql"), ("specialities", sql_dir / "specialities.sql")):
+        current = False
+        for line in path.read_text(encoding="utf-8").splitlines():
+            if line.startswith("INSERT INTO") and f"`{table}`" in line:
+                current = True
+                continue
+            if not current:
+                continue
+            values = parse_value_tuple(line)
+            if values:
+                if table == "categories" and len(values) > 9:
+                    categories[values[0]] = values[1]
+                elif table == "specialities" and len(values) > 8:
+                    specialities.append({"category": categories.get(values[8], values[8]), "name": values[1]})
+            if line.strip().endswith(";"):
+                current = False
+    return sorted(categories.values()), specialities
 
 
 def report_tag_ids(path: Path, actions: set[str], parent_status: str | None = None) -> list[str]:
@@ -104,11 +124,37 @@ def report_tag_ids(path: Path, actions: set[str], parent_status: str | None = No
     return list(dict.fromkeys(tag_ids))
 
 
+def case_b_tag_ids(path: Path, tags: dict[str, str]) -> list[str]:
+    """Return only saturation-approved Case B tags.
+
+    Case B must use the saturation report as its source of truth. Falling back
+    to SQL-derived unused tags could send duplicates or ambiguous records to
+    the paid classifier.
+    """
+    if not path.exists():
+        raise FileNotFoundError(
+            f"Case B report not found: {path}. Generate taxonomy_pipeline/report.json first."
+        )
+
+    try:
+        report_ids = report_tag_ids(path, {"ADD_CANDIDATE"}, "NO_PARENT")
+    except (json.JSONDecodeError, KeyError, StopIteration, TypeError) as exc:
+        raise ValueError(f"Invalid Case B report: {path} ({exc})") from exc
+    input_tag_ids = [tag_id for tag_id in report_ids if tag_id in tags]
+    if not input_tag_ids:
+        raise ValueError(
+            f"No Case B tags found in {path}; expected recommended_action=ADD_CANDIDATE "
+            "and parent_status=NO_PARENT."
+        )
+    return input_tag_ids
+
+
 async def main() -> int:
     global DEBUG_RESPONSE
     parser = argparse.ArgumentParser()
     parser.add_argument("--sql", type=Path, default=ROOT / "skillsfuture_taxonomy.sql")
     parser.add_argument("--unique", type=Path, default=ROOT / "jobsandskills-skillsfuture-unique-skills-list.xlsx")
+    parser.add_argument("--target-sql-dir", type=Path, default=ROOT.parent / "sql-files-nus", help="Ankit taxonomy SQL directory used for proposed placements")
     parser.add_argument("--report", type=Path, default=ROOT.parent / "taxonomy_pipeline" / "report.json", help="taxonomy pipeline report used to select input tags")
     parser.add_argument("--output", type=Path, default=ROOT / "classification_proposals.json")
     parser.add_argument("--schema", type=Path, default=ROOT / "classification_output.schema.json")
@@ -124,26 +170,23 @@ async def main() -> int:
         raise SystemExit("Set a real OPENAI_API_KEY in backend/.env.")
 
     data = load_rows(args.sql)
-    used = {row[2] for row in data["sf_speciality_tags"]}
     tags = {row[0]: row[1] for row in data["sf_tags"]}
     skills = source_skills(args.unique)
     unique_ids = sorted(skills)
     skill_to_tag = {skill_id: str(3000 + index) for index, skill_id in enumerate(unique_ids)}
     tag_to_skill = {tag_id: skill_id for skill_id, tag_id in skill_to_tag.items()}
-    categories = sorted({row[1] for row in data["sf_categories"]})
-    specialities = [{"category": next(row[1] for row in data["sf_categories"] if row[0] == s[2]), "name": s[1]} for s in data["sf_specialities"]]
+    categories, specialities = original_hierarchy(args.target_sql_dir)
     base_url = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1").strip()
     if args.debug_response:
         print(f"OpenAI endpoint: {base_url}")
-        print(f"API key loaded: yes")
+        print("API key loaded: yes")
         print(f"Model: {args.model}")
     client = AsyncOpenAI(api_key=api_key, base_url=base_url)
-    if args.report.exists():
-        input_tag_ids = [tag_id for tag_id in report_tag_ids(args.report, {"ADD_CANDIDATE"}, "NO_PARENT") if tag_id in tags]
-        print(f"Using {len(input_tag_ids)} Case B tag(s) from {args.report} (ADD_CANDIDATE + NO_PARENT)")
-    else:
-        input_tag_ids = [tag_id for tag_id in tags if tag_id not in used]
-        print(f"Report not found at {args.report}; using {len(input_tag_ids)} unused tag(s) from SQL")
+    try:
+        input_tag_ids = case_b_tag_ids(args.report, tags)
+    except (FileNotFoundError, ValueError) as exc:
+        raise SystemExit(str(exc)) from exc
+    print(f"Using {len(input_tag_ids)} Case B tag(s) from {args.report} (ADD_CANDIDATE + NO_PARENT)")
     proposals = json.loads(checkpoint.read_text(encoding="utf-8")) if checkpoint.exists() else []
     input_tag_set = set(input_tag_ids)
     proposals = [proposal for proposal in proposals if str(proposal.get("tag_id")) in input_tag_set]
@@ -157,7 +200,7 @@ async def main() -> int:
         if all(item["tag_id"] in completed for item in batch):
             print(f"Skipped completed batch {min(start + args.batch_size, len(input_tag_ids))}/{len(input_tag_ids)}")
             continue
-        prompt = "Classify each SkillsFuture skill into the taxonomy. Prefer an existing category/speciality. Propose a new one only when no existing option fits. Do not invent a new service; use Industry. Return one proposal per tag_id and copy the original skill title into the tag field exactly.\n\nExisting categories:\n" + json.dumps(categories) + "\nExisting specialities:\n" + json.dumps(specialities) + "\nSkills:\n" + json.dumps(batch)
+        prompt = "Classify each incoming SkillsFuture skill into Ankit's taxonomy. Use only the Ankit services/categories/specialities listed below for existing placements. Propose a new category or speciality only when no suitable Ankit placement exists. The source tag remains a SkillsFuture tag; the proposed placement must target Ankit's taxonomy. Return one proposal per tag_id and copy the original skill title into the tag field exactly.\n\nAnkit categories:\n" + json.dumps(categories) + "\nAnkit specialities:\n" + json.dumps(specialities) + "\nSkillsFuture skills:\n" + json.dumps(batch)
         prompt += "\nReturn ONLY valid JSON matching this shape (no Markdown): " + json.dumps(SCHEMA)
         proposals.extend(await classify_batch(client, prompt, batch, args.model))
         checkpoint.write_text(json.dumps(proposals, indent=2, ensure_ascii=False), encoding="utf-8")
@@ -169,7 +212,7 @@ async def main() -> int:
         unresolved = not proposal.get("category") or not proposal.get("speciality")
         classification_output.append({
             "action": proposal["action"],
-            "source_dataset": "SkillsFuture Unique Skills List",
+            "source_dataset": "skillsfuture",
             "tag_id": str(proposal["tag_id"]),
             "tag": proposal["tag"],
             "original_classification": "unclassified",
