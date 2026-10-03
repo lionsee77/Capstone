@@ -21,7 +21,7 @@ CanonicalTagId = TaxonomyId | NonBlankText
 class ClassificationOutput(BaseModel):
     """One proposed placement; unresolved records keep the path and confidence null."""
 
-    model_config = ConfigDict(strict=True, extra="forbid", json_schema_extra={
+    model_config = ConfigDict(strict=True, extra="ignore", json_schema_extra={
         "oneOf": [
             {"properties": {
                 "service": {"type": "string"},
@@ -190,7 +190,7 @@ class DeduplicationReport(BaseModel):
 class TaxonomyPath(BaseModel):
     """Approve an existing or proposed speciality without needing a database ID first."""
 
-    model_config = ConfigDict(strict=True, extra="forbid")
+    model_config = ConfigDict(strict=True, extra="ignore")
 
     service: Literal["Industry", "Function", "Subject", "Others"]
     category: NonBlankText

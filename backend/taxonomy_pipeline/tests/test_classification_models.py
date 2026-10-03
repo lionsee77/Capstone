@@ -14,6 +14,7 @@ from taxonomy_pipeline.classification.models import (
     CanonicalMapping,
     ClassificationOutput,
     DuplicateCandidate,
+    LegacyClassificationOutput,
     MergePreview,
     PlacementTarget,
     PreviewCounts,
@@ -116,16 +117,31 @@ def test_missing_fields_are_rejected(placement: dict[str, object], field: str) -
 
 @pytest.mark.parametrize(("field", "value"), [
     ("tag_id", 42), ("original_classification", "B"), ("original_classification", True),
-    ("category", ["Data analytics"]), ("comparison_result_id", "upstream-42"),
-    ("tag", None), ("tag", 42), ("original_tag", "Data visualization"), ("proposed_tag", "Data visualization"),
+    ("category", ["Data analytics"]), ("tag", None), ("tag", 42),
 ])
-# Keep the simple nine-field format strict instead of accepting legacy or coerced inputs.
-def test_wrong_types_and_extra_metadata_are_rejected(
+# Keep required classification fields strict without coercing invalid values.
+def test_wrong_types_are_rejected(
     placement: dict[str, object], field: str, value: object,
 ) -> None:
     placement[field] = value
     with pytest.raises(ValidationError):
         ClassificationOutput.model_validate(placement)
+
+
+@pytest.mark.parametrize("legacy", [False, True])
+@pytest.mark.parametrize("value", ["upstream-42", {"scores": [0.8, None]}, None])
+# Ignore extra input fields without storing or serializing them in either classification model.
+def test_extra_fields_are_ignored(placement: dict[str, object], legacy: bool, value: object) -> None:
+    if legacy:
+        del placement["service"]
+    model = LegacyClassificationOutput if legacy else ClassificationOutput
+    record = model.model_validate({
+        **placement, "metadata": value, "original_tag": "Ignored alias", "proposed_tag": "Ignored proposal",
+    })
+    assert record.model_dump() == placement
+    assert json.loads(record.model_dump_json()) == placement
+    assert not hasattr(record, "metadata")
+    assert record.model_extra is None
 
 
 # Preserve source text exactly so normalization remains an explicit matching step.
@@ -141,7 +157,7 @@ def test_previous_eight_field_payload_is_rejected(placement: dict[str, object]) 
     with pytest.raises(ValidationError) as error:
         ClassificationOutput.model_validate(placement)
     assert {(item["loc"], item["type"]) for item in error.value.errors()} == {
-        (("tag",), "missing"), (("service",), "missing"), (("original_tag",), "extra_forbidden"),
+        (("tag",), "missing"), (("service",), "missing"),
     }
 
 
@@ -220,10 +236,12 @@ def test_supporting_records_round_trip_as_a_preview() -> None:
     assert preview.partial
 
 
-# Keep the published producer schema synchronized with the actual Pydantic contract.
-def test_published_json_schema_matches_the_model() -> None:
+# Allow only the documented extra-field policy difference until the published schema is regenerated.
+def test_published_schema_matches_except_for_extra_field_policy() -> None:
     path = Path(__file__).parents[1] / "schemas" / "classification_output.schema.json"
-    assert json.loads(path.read_text(encoding="utf-8")) == CLASSIFICATION_OUTPUTS.json_schema()
+    published = json.loads(path.read_text(encoding="utf-8"))
+    assert published["$defs"]["ClassificationOutput"].pop("additionalProperties") is False
+    assert published == CLASSIFICATION_OUTPUTS.json_schema()
 
 
 # Ensure the examples producers copy from the contract pass the consumer's validation.

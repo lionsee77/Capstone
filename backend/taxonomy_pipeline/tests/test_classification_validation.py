@@ -100,7 +100,7 @@ def test_legacy_files_without_adapter_are_invalid(taxonomy: TaxonomyDataset) -> 
     assert report.merged_outputs == []
 
 
-@pytest.mark.parametrize("field,value", [("confidence", "0.8"), ("extra", True), ("category", None), ("tag_id", 42)])
+@pytest.mark.parametrize("field,value", [("confidence", "0.8"), ("category", None), ("tag_id", 42)])
 # Malformed legacy rows stay visible without discarding the rest of their batch.
 def test_adapter_errors_preserve_raw_rows(taxonomy: TaxonomyDataset, field: str, value: Any) -> None:
     good = load_rows("legacy_case_b.json")[0]
@@ -108,6 +108,54 @@ def test_adapter_errors_preserve_raw_rows(taxonomy: TaxonomyDataset, field: str,
     report = validate_outputs({"b": json.dumps([bad, good])}, taxonomy, case_b_sources={"b": "skillsfuture"})
     assert [row.status for row in report.records] == ["invalid", "valid"]
     assert report.records[0].raw == bad
+
+
+@pytest.mark.parametrize("filename", ["case_a.json", "case_b.json", "legacy_case_a.json", "legacy_case_b.json"])
+# Retain extra input evidence without changing normalized outputs or repeated-placement detection.
+def test_extra_fields_stay_in_raw_evidence_only(taxonomy: TaxonomyDataset, filename: str) -> None:
+    original = load_rows(filename)[0]
+    extras = {"metadata": {"scores": [0.8, None]}, "extra_flag": True, "extra_note": None}
+    case_a = {filename} if filename == "legacy_case_a.json" else set()
+    case_b = {filename: "skillsfuture"} if filename == "legacy_case_b.json" else {}
+    if case_a:
+        extras.update(tag="Ignored alias", service="Subject")
+    if case_b:
+        extras.update(source_dataset="Ignored dataset", original_classification="classified", service="Subject")
+    enriched = {**original, **extras}
+    report = validate_outputs(
+        {filename: json.dumps([enriched, original])}, taxonomy,
+        case_a_inputs=case_a, case_b_sources=case_b,
+    )
+    first, second = report.records
+    assert [first.status, second.status] == ["valid", "duplicate"]
+    assert first.raw == enriched
+    assert first.output == second.output
+    assert first.candidate == second.candidate == first.output.model_dump()
+    assert set(first.candidate) == set(ClassificationOutput.model_fields)
+    assert report.merged_outputs == [first.output]
+    serialized = json.loads(report.model_dump_json())
+    assert serialized["records"][0]["raw"] == enriched
+    assert serialized["merged_outputs"] == [first.output.model_dump()]
+    assert "metadata" not in serialized["records"][0]["output"]
+
+
+@pytest.mark.parametrize("filename", ["legacy_case_a.json", "legacy_case_b.json"])
+# Require legacy fields even when ignored keys or current-contract aliases are supplied.
+def test_legacy_extra_fields_cannot_replace_required_fields(taxonomy: TaxonomyDataset, filename: str) -> None:
+    row = load_rows(filename)[0]
+    case_a = filename == "legacy_case_a.json"
+    del row["original_tag" if case_a else "action"]
+    row.update(metadata={"action": "assign_existing"}, service="Industry")
+    if case_a:
+        row["tag"] = "Cannot replace original_tag"
+    report = validate_outputs(
+        {filename: json.dumps([row])}, taxonomy,
+        case_a_inputs={filename} if case_a else (),
+        case_b_sources={} if case_a else {filename: "skillsfuture"},
+    )
+    assert report.records[0].status == "invalid"
+    assert report.records[0].raw == row
+    assert report.merged_outputs == []
 
 
 @pytest.mark.parametrize("action", ["propose_new_category", "propose_new_speciality", "unsupported"])

@@ -2,8 +2,8 @@
 
 **Producers:** Yi Jie (Case A), Zay Nin (Case B). **Consumer:** Bryan.
 
-Return a JSON array with one object per proposed placement. Both cases use exactly
-the same nine fields. Producers only need to generate JSON; Pydantic is used by
+Return a JSON array with one object per proposed placement. Both cases require
+the same nine fields; additional fields are accepted and ignored. Producers only need to generate JSON; Pydantic is used by
 the consumer to validate it.
 
 ## Ankit's four taxonomy tiers
@@ -12,12 +12,12 @@ the consumer to validate it.
 Service -> Category -> Speciality -> Tag
 ```
 
-| Tier | SQL table | Relationship | Output field |
-|---|---|---|---|
-| Service | [services](../sql-files-nus/services.sql) | Top level: Industry, Function, Subject, or Others | `service` |
-| Category | [categories](../sql-files-nus/categories.sql) | `service_id` refers to `services.id` | `category` |
-| Speciality | [specialities](../sql-files-nus/specialities.sql) | `category_id` refers to `categories.id` | `speciality` |
-| Tag | [tags](../sql-files-nus/tags.sql) | Linked to specialities through `speciality_tags` | `tag` |
+| Tier       | SQL table                                         | Relationship                                      | Output field |
+| ---------- | ------------------------------------------------- | ------------------------------------------------- | ------------ |
+| Service    | [services](../sql-files-nus/services.sql)         | Top level: Industry, Function, Subject, or Others | `service`    |
+| Category   | [categories](../sql-files-nus/categories.sql)     | `service_id` refers to `services.id`              | `category`   |
+| Speciality | [specialities](../sql-files-nus/specialities.sql) | `category_id` refers to `categories.id`           | `speciality` |
+| Tag        | [tags](../sql-files-nus/tags.sql)                 | Linked to specialities through `speciality_tags`  | `tag`        |
 
 Example path from the SQL:
 
@@ -36,19 +36,22 @@ The payload's `tag_id` is the source dataset's ID, not Ankit's `tags.id`.
 
 ## Fields
 
-All nine fields are required. The revised contract permits no extra fields.
+All nine fields are required. Extra fields do not cause validation failure, but are
+excluded from `ClassificationOutput` and its serialized output. Batch intake retains
+the original input, including extras, in each record's `raw` evidence. Required fields
+still undergo strict validation; extras cannot replace missing required fields.
 
-| Field | JSON type | Meaning |
-|---|---|---|
-| `source_dataset` | string | Source dataset name |
-| `tag_id` | string | Original tag ID, e.g. `"42"` |
-| `tag` | string | Unchanged tag text from the source dataset; this is the tag to insert into the database |
-| `original_classification` | string | `"classified"` for Case A; `"unclassified"` for Case B |
-| `service` | string or null | Proposed Ankit service: `"Industry"`, `"Function"`, `"Subject"`, or `"Others"` |
-| `category` | string or null | Proposed Ankit category name |
-| `speciality` | string or null | Proposed Ankit speciality name within that category |
-| `confidence` | number or null | Confidence in this placement, from `0` to `1` inclusive |
-| `reason` | string | Short placement explanation, or why no placement was found |
+| Field                     | JSON type      | Meaning                                                                                 |
+| ------------------------- | -------------- | --------------------------------------------------------------------------------------- |
+| `source_dataset`          | string         | Source dataset name                                                                     |
+| `tag_id`                  | string         | Original tag ID, e.g. `"42"`                                                            |
+| `tag`                     | string         | Unchanged tag text from the source dataset; this is the tag to insert into the database |
+| `original_classification` | string         | `"classified"` for Case A; `"unclassified"` for Case B                                  |
+| `service`                 | string or null | Proposed Ankit service: `"Industry"`, `"Function"`, `"Subject"`, or `"Others"`          |
+| `category`                | string or null | Proposed Ankit category name                                                            |
+| `speciality`              | string or null | Proposed Ankit speciality name within that category                                     |
+| `confidence`              | number or null | Confidence in this placement, from `0` to `1` inclusive                                 |
+| `reason`                  | string         | Short placement explanation, or why no placement was found                              |
 
 `original_classification` describes the tag **in its source dataset**, before Case
 A/B processing. `tag` preserves the source text and supplies the database tag name.
@@ -60,39 +63,39 @@ Names below are illustrative. Producers may reuse Ankit's paths or propose new o
 
 ```json
 [
-  {
-    "source_dataset": "categorized-skills",
-    "tag_id": "42",
-    "tag": "Data visualization",
-    "original_classification": "classified",
-    "service": "Subject",
-    "category": "Data analytics",
-    "speciality": "Data presentation",
-    "confidence": 0.95,
-    "reason": "The supplied category maps to data presentation."
-  },
-  {
-    "source_dataset": "plain-skills",
-    "tag_id": "42",
-    "tag": "Data visualization",
-    "original_classification": "unclassified",
-    "service": "Subject",
-    "category": "Data analytics",
-    "speciality": "Business communication",
-    "confidence": 0.88,
-    "reason": "Visualizing data helps communicate findings."
-  },
-  {
-    "source_dataset": "plain-skills",
-    "tag_id": "48",
-    "tag": "General practice",
-    "original_classification": "unclassified",
-    "service": null,
-    "category": null,
-    "speciality": null,
-    "confidence": null,
-    "reason": "Insufficient context to select a speciality."
-  }
+	{
+		"source_dataset": "categorized-skills",
+		"tag_id": "42",
+		"tag": "Data visualization",
+		"original_classification": "classified",
+		"service": "Subject",
+		"category": "Data analytics",
+		"speciality": "Data presentation",
+		"confidence": 0.95,
+		"reason": "The supplied category maps to data presentation."
+	},
+	{
+		"source_dataset": "plain-skills",
+		"tag_id": "42",
+		"tag": "Data visualization",
+		"original_classification": "unclassified",
+		"service": "Subject",
+		"category": "Data analytics",
+		"speciality": "Business communication",
+		"confidence": 0.88,
+		"reason": "Visualizing data helps communicate findings."
+	},
+	{
+		"source_dataset": "plain-skills",
+		"tag_id": "48",
+		"tag": "General practice",
+		"original_classification": "unclassified",
+		"service": null,
+		"category": null,
+		"speciality": null,
+		"confidence": null,
+		"reason": "Insufficient context to select a speciality."
+	}
 ]
 ```
 
@@ -106,16 +109,10 @@ Names below are illustrative. Producers may reuse Ankit's paths or propose new o
 - Strings must contain non-whitespace text. Use numeric confidence (`0.88`), not a
   quoted number (`"0.88"`), percentage, or boolean.
 - Confidence helps review; it does not approve a placement or confirm duplicate tags.
-- The taxonomy is supplied separately. No comparison results, version fields, or
-  internal review/preview records belong in this payload.
+- The taxonomy is supplied separately. Extra comparison results, version fields, or
+  metadata are ignored and do not affect classification or merge decisions.
 
 ## Implementation reference
-
-The model, JSON Schema, and fixtures implement this nine-field contract. Batch
-validation checks taxonomy paths and supports explicit temporary adapters for older
-exports. Deduplication groups hierarchy paths and suggests overlapping tag pairs.
-Resolution accepts unflagged classifications and applies explicit duplicate decisions. Preview construction validates
-the combined snapshot and exports a CSV for review.
 
 - [JSON Schema](schemas/classification_output.schema.json)
 - [Python validator](src/taxonomy_pipeline/classification/models.py): `CLASSIFICATION_OUTPUTS.validate_json(payload)`
@@ -131,6 +128,8 @@ named JSON batches. Without adapter options, inputs must follow the nine-field c
 - `case_a_inputs`: legacy eight-field files; maps `original_tag` to `tag`.
 - `case_b_sources`: legacy seven-field files mapped to their source dataset names;
   sets `original_classification` to `unclassified` and keeps `action` in raw evidence.
+- Both adapters accept extra keys but select only their expected fields before mapping.
+  Extra values cannot override adapter mappings or the temporary service default.
 - Both adapters temporarily set `service` to `Industry` for populated placements,
   recorded as a `temporary_service` finding. Unresolved placements remain all-null.
   Current nine-field inputs retain their explicit service; this default only applies
@@ -248,15 +247,15 @@ disposition; `decisions` contains only supplied reviews, not fabricated human de
 
 `ReviewDecision` is an internal review format:
 
-| Field | Meaning |
-|---|---|
-| `members` | Source references (`source_dataset`, `tag_id`) covered by one decision |
-| `action` | `create`, `reuse`, `exclude`, or `defer` |
-| `reason` | Required review explanation |
-| `existing_tag_id` | Required only for `reuse`; must identify one baseline tag |
-| `canonical_name` | For `create`: choose one member's unchanged source label when labels differ; inferred when all match |
-| `approved_paths` | Explicit service/category/speciality paths, supporting existing and proposed nodes |
-| `approved_speciality_ids` | Alternative approval by existing speciality ID |
+| Field                     | Meaning                                                                                              |
+| ------------------------- | ---------------------------------------------------------------------------------------------------- |
+| `members`                 | Source references (`source_dataset`, `tag_id`) covered by one decision                               |
+| `action`                  | `create`, `reuse`, `exclude`, or `defer`                                                             |
+| `reason`                  | Required review explanation                                                                          |
+| `existing_tag_id`         | Required only for `reuse`; must identify one baseline tag                                            |
+| `canonical_name`          | For `create`: choose one member's unchanged source label when labels differ; inferred when all match |
+| `approved_paths`          | Explicit service/category/speciality paths, supporting existing and proposed nodes                   |
+| `approved_speciality_ids` | Alternative approval by existing speciality ID                                                       |
 
 Only placements proposed by the group's members can be approved. For an explicit
 review decision, equivalence alone does not approve links: both approval lists default
@@ -317,12 +316,12 @@ export_preview_csv(preview, destination / "preview.csv")
 
 `preview.csv` contains four row types. Filter `row_type=placement` for the review table.
 
-| Row type | Contents |
-|---|---|
+| Row type    | Contents                                                                                                                                                       |
+| ----------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `placement` | Source dataset/ID/tag, original classification, four-tier path, confidence/reason, canonical tag/ID, category/speciality IDs, change labels, and review reason |
-| `summary` | Baseline fingerprint, unique addition/reuse counts, source dispositions, and original input record counts |
-| `omission` | Counts of records omitted upstream, grouped by status; individual records remain in `validation.json` |
-| `check` | Baseline defects, introduced errors, skipped checks, and supporting metric failures |
+| `summary`   | Baseline fingerprint, unique addition/reuse counts, source dispositions, and original input record counts                                                      |
+| `omission`  | Counts of records omitted upstream, grouped by status; individual records remain in `validation.json`                                                          |
+| `check`     | Baseline defects, introduced errors, skipped checks, and supporting metric failures                                                                            |
 
 Placement statuses are `proposed` (ready for addition in the preview), `reused`, `pending`, `deferred`, `excluded`,
 `unapproved`, or `blocked`. Change columns mark approved nodes/links as `new` or

@@ -54,9 +54,9 @@ def _finite_number(value: str) -> float:
 # Map either explicitly selected legacy format into the shared temporary intake shape.
 def _adapt(raw: Any, case: str, source_dataset: str | None) -> dict[str, Any]:
     fields = _CASE_A_FIELDS if case == "case_a" else _CASE_B_FIELDS
-    if not isinstance(raw, dict) or set(raw) != fields:
-        raise ValueError(f"{case} requires exactly these fields: {', '.join(sorted(fields))}")
-    mapped = dict(raw)
+    if not isinstance(raw, dict) or not fields.issubset(raw):
+        raise ValueError(f"{case} requires these fields: {', '.join(sorted(fields))}")
+    mapped = {field: raw[field] for field in sorted(fields)}
     if case == "case_a":
         mapped["tag"] = mapped.pop("original_tag")
     else:
