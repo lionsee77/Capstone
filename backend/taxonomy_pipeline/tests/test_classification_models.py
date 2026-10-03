@@ -236,11 +236,10 @@ def test_supporting_records_round_trip_as_a_preview() -> None:
     assert preview.partial
 
 
-# Allow only the documented extra-field policy difference until the published schema is regenerated.
-def test_published_schema_matches_except_for_extra_field_policy() -> None:
+# Keep the published producer schema synchronized with the runtime Pydantic contract.
+def test_published_json_schema_matches_the_model() -> None:
     path = Path(__file__).parents[1] / "schemas" / "classification_output.schema.json"
     published = json.loads(path.read_text(encoding="utf-8"))
-    assert published["$defs"]["ClassificationOutput"].pop("additionalProperties") is False
     assert published == CLASSIFICATION_OUTPUTS.json_schema()
 
 

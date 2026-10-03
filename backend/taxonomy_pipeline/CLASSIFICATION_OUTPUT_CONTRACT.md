@@ -114,9 +114,9 @@ Names below are illustrative. Producers may reuse Ankit's paths or propose new o
 
 ## Implementation reference
 
-The model and fixtures implement this nine-field contract. The published JSON Schema
-has not been regenerated: it still rejects extra fields, unlike runtime validation.
-Batch
+The model, JSON Schema, and fixtures implement this nine-field contract. Both runtime
+validation and the published schema accept additional fields while retaining only the
+nine contract fields. Batch
 validation checks taxonomy paths and supports explicit temporary adapters for older
 exports. Deduplication groups hierarchy paths and suggests overlapping tag pairs.
 Resolution accepts unflagged classifications and applies explicit duplicate decisions. Preview construction validates

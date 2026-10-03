@@ -1,7 +1,6 @@
 {
   "$defs": {
     "ClassificationOutput": {
-      "additionalProperties": false,
       "description": "One proposed placement; unresolved records keep the path and confidence null.",
       "oneOf": [
         {
