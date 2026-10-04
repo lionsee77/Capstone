@@ -18,9 +18,9 @@ from ..models import MetricResult
 from .base import Metric
 
 _DASH_VARIANTS = re.compile(r"[‐‑‒–—―]")
-_TRAILING_PUNCT = re.compile(r"[.,;:!?]+$")
 
 
+# Normalize names consistently even when trailing punctuation is separated by whitespace.
 def normalize(name: str | None) -> str:
     """Duplicated from (not imported from) `backend/audit/taxonomy_audit.py`'s
     `normalized()`, step for step - that module pulls in `mysql.connector` as
@@ -31,7 +31,7 @@ def normalize(name: str | None) -> str:
     value = unicodedata.normalize("NFKC", name or "").strip().casefold()
     value = _DASH_VARIANTS.sub("-", value)
     value = re.sub(r"\s+", " ", value)
-    return _TRAILING_PUNCT.sub("", value)
+    return value.rstrip(" .,;:!?")
 
 
 def _exact_duplicate_clusters(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:

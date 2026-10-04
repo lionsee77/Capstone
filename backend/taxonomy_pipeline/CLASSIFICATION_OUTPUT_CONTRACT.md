@@ -184,6 +184,10 @@ destination.mkdir(parents=True, exist_ok=True)
 Repeated placements for the same source identity and normalized full path are collapsed;
 different source tags are never merged. Raw rows retain their individual scores and reasons.
 
+Name normalization removes trailing spaces and punctuation together, keeping path keys
+stable across intake and resolution. Regenerate intake and deduplication reports made
+with the old normalization before building previews for affected names.
+
 The report includes every row's `origin` (file and zero-based index), `raw` data,
 adapted `candidate`, validated `output` where available, resolved `target` IDs,
 `status`, `findings`, and `duplicate_of` reference. Within a resolved target, null
