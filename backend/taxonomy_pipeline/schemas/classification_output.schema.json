@@ -1,0 +1,138 @@
+{
+  "$defs": {
+    "ClassificationOutput": {
+      "additionalProperties": false,
+      "description": "One proposed placement; unresolved records keep all four placement values null.\n\nSee ../../../CLASSIFICATION_OUTPUT_CONTRACT.md - the nine-field revision\n(`tag` replacing `original_tag`, plus the explicit `service` tier).",
+      "oneOf": [
+        {
+          "properties": {
+            "service": {
+              "type": "string"
+            },
+            "category": {
+              "type": "string"
+            },
+            "speciality": {
+              "type": "string"
+            },
+            "confidence": {
+              "type": "number"
+            }
+          }
+        },
+        {
+          "properties": {
+            "service": {
+              "type": "null"
+            },
+            "category": {
+              "type": "null"
+            },
+            "speciality": {
+              "type": "null"
+            },
+            "confidence": {
+              "type": "null"
+            }
+          }
+        }
+      ],
+      "properties": {
+        "source_dataset": {
+          "pattern": "\\S",
+          "title": "Source Dataset",
+          "type": "string"
+        },
+        "tag_id": {
+          "pattern": "\\S",
+          "title": "Tag Id",
+          "type": "string"
+        },
+        "tag": {
+          "pattern": "\\S",
+          "title": "Tag",
+          "type": "string"
+        },
+        "original_classification": {
+          "enum": [
+            "classified",
+            "unclassified"
+          ],
+          "title": "Original Classification",
+          "type": "string"
+        },
+        "service": {
+          "anyOf": [
+            {
+              "pattern": "\\S",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Service"
+        },
+        "category": {
+          "anyOf": [
+            {
+              "pattern": "\\S",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Category"
+        },
+        "speciality": {
+          "anyOf": [
+            {
+              "pattern": "\\S",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Speciality"
+        },
+        "confidence": {
+          "anyOf": [
+            {
+              "maximum": 1,
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Confidence"
+        },
+        "reason": {
+          "pattern": "\\S",
+          "title": "Reason",
+          "type": "string"
+        }
+      },
+      "required": [
+        "source_dataset",
+        "tag_id",
+        "tag",
+        "original_classification",
+        "service",
+        "category",
+        "speciality",
+        "confidence",
+        "reason"
+      ],
+      "title": "ClassificationOutput",
+      "type": "object"
+    }
+  },
+  "items": {
+    "$ref": "#/$defs/ClassificationOutput"
+  },
+  "type": "array"
+}
