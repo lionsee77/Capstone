@@ -6,12 +6,20 @@ from __future__ import annotations
 
 from .base import Metric
 from .breadth import BreadthMetric
+from .category_adaptation import CategoryAdaptationMetric
 from .depth import DepthMetric
 from .integrity import IntegrityMetric
 from .saturation import SaturationMetric
 
 METRICS: dict[str, Metric] = {
-    m.id: m for m in (IntegrityMetric(), DepthMetric(), BreadthMetric(), SaturationMetric())
+    m.id: m
+    for m in (
+        IntegrityMetric(),
+        DepthMetric(),
+        BreadthMetric(),
+        SaturationMetric(),
+        CategoryAdaptationMetric(),
+    )
 }
 
 

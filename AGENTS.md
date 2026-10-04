@@ -64,8 +64,12 @@ new work should follow the same shape unless there's a good reason not to.
 - Commit subjects use a conventional-commit-style prefix: `feat:`, `fix:`,
   `chore:`, `ci:`, `docs:`, `init:`. Keep the subject in plain imperative
   language after the prefix.
+- Flow is feature branch -> `dev` -> `main`. Branch from `dev` (the default
+  branch) and open PRs against `dev`; `main` only receives `dev` -> `main`
+  promotion PRs. Both branches carry the same protections and required
+  checks.
 - Land work via PR + merge commit (`Merge pull request #N ...`), not direct
-  pushes to `main`.
+  pushes to `dev` or `main`.
 
 ## Docs
 
