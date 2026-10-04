@@ -89,3 +89,6 @@ docker-compose.override.yml
 
 # Generated taxonomy pipeline output
 backend/taxonomy_pipeline/report.json
+backend/taxonomy_pipeline/case_a_output.json
+backend/skillsfuture/classification_proposals*.json
+backend/skillsfuture/classification_proposals*.csv

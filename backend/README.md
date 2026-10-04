@@ -9,6 +9,12 @@ provides Adminer for visual browsing and a Python/MySQL taxonomy audit.
 backend/
 ├── sql-files-nus/        # Original SQL dumps
 ├── skillsfuture/         # SkillsFuture Excel sources and taxonomy generator
+│   ├── generate_skillsfuture_taxonomy.py
+│   ├── classify_unmapped_skills.py
+│   ├── validate_skillsfuture_taxonomy.py
+│   ├── validate_classification_proposals.py
+│   ├── AI_TAXONOMY_PIPELINE_PLAN.md
+│   └── *.xlsx              # SkillsFuture source workbooks
 ├── audit/                # Taxonomy audit module and report notebook
 ├── taxonomy_pipeline/    # Taxonomy quality scoring (CLI + FastAPI) - own README, own deps
 ├── compose.yaml          # MySQL, Adminer and audit services
@@ -32,7 +38,87 @@ This reads the workbooks and writes `skillsfuture/skillsfuture_taxonomy.sql`.
 It does not connect to MySQL or modify the existing database. The generated SQL
 creates parallel `sf_categories`, `sf_specialities`, `sf_tags`, and
 `sf_speciality_tags` tables, using the existing `services` table. Review the
-generated file before importing it.
+generated file before importing it. Check it first with:
+
+```bash
+python skillsfuture/validate_skillsfuture_taxonomy.py
+```
+
+The validator is also read-only: it checks row shape, duplicate IDs/names,
+duplicate speciality/tag links, broken references, dead-end categories,
+specialities without tags, and unused tags.
+Unused tags are expected inputs for the Case B classifier and should not be
+treated as a reason to block that workflow.
+
+The generated SQL uses parallel `sf_` tables so the original taxonomy is not
+overwritten:
+
+```text
+services → sf_categories → sf_specialities → sf_speciality_tags → sf_tags
+```
+
+To create AI classification proposals for unused tags, put the OpenAI settings
+in `backend/.env` and run `python skillsfuture/classify_unmapped_skills.py`.
+The script loads `.env` automatically and writes pending JSON and CSV review
+files only; it does not modify MySQL or generate executable SQL.
+
+Create the local environment file from the template:
+
+```bash
+cp .env.example .env
+```
+
+Set at least:
+
+```env
+OPENAI_API_KEY=your-openai-api-key
+OPENAI_MODEL=gpt-4o-mini
+```
+
+The classifier supports `--batch-size`, `--model`, and `--debug-response`.
+For example:
+
+```bash
+python skillsfuture/classify_unmapped_skills.py --batch-size 5
+```
+
+The classifier maps generated tag IDs back to the source workbook skill IDs,
+so skill descriptions are included in the model prompt. It checkpoints completed
+batches in a hidden JSON file and resumes automatically after an interrupted
+run. A successful run removes the checkpoint.
+
+By default, the classifier reads `../taxonomy_pipeline/report.json` and
+classifies only Case B tags: entries marked `ADD_CANDIDATE` with
+`parent_status=NO_PARENT`. This avoids sending saturation duplicates or
+`REVIEW_AMBIGUOUS` entries to the paid classifier. Tags with
+`ADD_CANDIDATE` and `HAS_PARENT` belong to the separate Case A workflow.
+
+Use `--report path/to/report.json` to select a different report. The report is
+required for strict Case B behavior: if it is missing, malformed, or contains
+no `ADD_CANDIDATE` + `NO_PARENT` tags, the classifier stops before making any
+AI calls. It never falls back to all unused SQL tags, because that could send
+saturation duplicates or ambiguous records to the classifier.
+
+Outputs are written to `skillsfuture/classification_proposals.json` and
+`skillsfuture/classification_proposals.csv`. Both outputs use the fields in
+`classification_output.schema.json`; the JSON output is validated against the
+schema before it is written. Each record also includes an `action`:
+`assign_existing`, `propose_new_speciality`, or `propose_new_category`.
+Review and approve proposals before adding an approval-to-SQL step.
+
+Validate proposals against the hierarchy with:
+
+```bash
+python skillsfuture/validate_classification_proposals.py
+```
+
+This creates annotated JSON and CSV files. It first validates the output against
+`classification_output.schema.json`, then checks tag identity, duplicates,
+services, and category/speciality relationships. Unknown categories or
+specialities are reported as warnings for human review. Invalid records are
+marked `needs_review`. The validated files are written as
+`classification_proposals_validated.json` and
+`classification_proposals_validated.csv` by default.
 
 ## Score taxonomy quality
 
