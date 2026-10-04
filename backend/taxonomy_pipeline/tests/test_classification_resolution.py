@@ -381,8 +381,8 @@ def test_result_evidence_and_automatically_accepted_sources_are_detached(baselin
 # Unflagged source tags keep all supplied placements, including new hierarchy nodes, without manual decisions.
 def test_unflagged_tags_and_new_paths_are_accepted_automatically(baseline: TaxonomyDataset) -> None:
     report = dedup([
-        row(category="Novel", speciality="Reporting", confidence=0.0),
-        row(category="Novel", speciality="Operations"),
+        row(label="Payroll", category="Novel", speciality="Reporting", confidence=0.0),
+        row(label="Payroll", category="Novel", speciality="Operations"),
     ], baseline)
     result = resolve_outputs(report, baseline)
     assert result.counts["accepted_sources"] == 1 and result.counts["pending_sources"] == 0

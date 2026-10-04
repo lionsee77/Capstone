@@ -1,8 +1,8 @@
 """Resolve reviewed concepts and placements independently of producer export formats.
 
 Inputs are a deduplication report, its baseline, and optional review decisions.
-Unflagged tags retain their supplied classifications; duplicate candidates need
-review. No automatic tag merging happens here. Temporary IDs describe proposed
+Unflagged tags retain their supplied classifications; source duplicate candidates
+and normalized baseline name matches need review. No automatic tag merging happens here. Temporary IDs describe proposed
 nodes; assigning database IDs and building the combined preview are later steps.
 """
 from __future__ import annotations
@@ -140,11 +140,35 @@ def _prepare_decisions(
     return prepared
 
 
-# Accept supplied placements for unflagged sources, allowing explicit decisions to override the default.
+# Identify baseline name matches without assuming that equal labels describe the same concept.
+def _baseline_match_reasons(tags: dict[SourceKey, TagProposal], taxonomy: TaxonomyDataset) -> dict[SourceKey, str]:
+    baseline_names: dict[str, set[str]] = {}
+    for row in taxonomy.tags:
+        name = row.get("name")
+        if not isinstance(name, str):
+            continue
+        normalized = normalize(name)
+        if normalized:
+            evidence = json.dumps({"id": row.get("id"), "name": name}, ensure_ascii=False, sort_keys=True)
+            baseline_names.setdefault(normalized, set()).add(evidence)
+    reasons = {}
+    for key, tag in tags.items():
+        matches = baseline_names.get(normalize(tag.tag))
+        if matches:
+            reasons[key] = (
+                "Potential duplicate: normalized name matches baseline tags: "
+                + "; ".join(sorted(matches))
+                + ". Review whether to reuse an existing tag or create a separate concept."
+            )
+    return reasons
+
+
+# Accept supplied placements only when neither incoming candidates nor baseline names flag the source.
 def _default_decisions(
     report: DeduplicationReport, tags: dict[SourceKey, TagProposal], decisions: Sequence[ReviewDecision],
+    baseline_matches: dict[SourceKey, str],
 ) -> list[ReviewDecision]:
-    flagged: set[SourceKey] = set()
+    flagged: set[SourceKey] = set(baseline_matches)
     for pair in report.candidates:
         left, right = _source_key(pair.left), _source_key(pair.right)
         if left not in tags or right not in tags or left == right:
@@ -217,8 +241,8 @@ def resolve_outputs(
 ) -> ResolutionReport:
     """Return stable canonical mappings and approved nodes for preview construction.
 
-    Unflagged tags and their supplied paths are accepted by default. Candidate
-    participants without decisions stay pending. Explicit decisions take precedence.
+    Unflagged tags and their supplied paths are accepted by default. Source candidate
+    participants and baseline name matches stay pending without decisions. Explicit decisions take precedence.
     Separate accepted groups remain separate even
     when matching suggested equivalence; one multi-member decision confirms a merge.
     Contradictory decisions or changed baseline paths raise ValueError before a
@@ -229,7 +253,8 @@ def resolve_outputs(
     tags = _index_tags(report)
     nodes = _resolve_hierarchy(report, taxonomy, tags)
     prepared = _prepare_decisions(decisions, tags)
-    defaults = _default_decisions(report, tags, prepared)
+    baseline_matches = _baseline_match_reasons(tags, taxonomy)
+    defaults = _default_decisions(report, tags, prepared, baseline_matches)
     canonical: dict[int | str, CanonicalTag] = {}
     mappings: list[CanonicalMapping] = []
     dispositions: dict[SourceKey, SourceDisposition] = {}
@@ -266,7 +291,9 @@ def resolve_outputs(
         paths = _tag_paths(tags[key])
         dispositions[key] = SourceDisposition(
             source=tags[key].source.model_copy(deep=True), status="pending",
-            reason="Potential duplicate: review whether to merge or keep this source tag separate",
+            reason=baseline_matches.get(
+                key, "Potential duplicate: review whether to merge or keep this source tag separate",
+            ),
             unapproved_paths=[paths[path] for path in sorted(paths)],
         )
     for tag in canonical.values():
