@@ -1,0 +1,46 @@
+[
+  {
+    "source_dataset": "categorized-skills",
+    "tag_id": "42",
+    "tag": "Data visualization",
+    "original_classification": "classified",
+    "service": "Subject",
+    "category": "Data analytics",
+    "speciality": "Data presentation",
+    "confidence": 0.95,
+    "reason": "The source category maps to data presentation."
+  },
+  {
+    "source_dataset": "categorized-skills",
+    "tag_id": "42",
+    "tag": "Data visualization",
+    "original_classification": "classified",
+    "service": "Subject",
+    "category": "Data analytics",
+    "speciality": "Business communication",
+    "confidence": 0.85,
+    "reason": "The source also categorizes this skill under communicating findings."
+  },
+  {
+    "source_dataset": "categorized-skills",
+    "tag_id": "43",
+    "tag": "Data visualisation",
+    "original_classification": "classified",
+    "service": "Subject",
+    "category": "Data analytics",
+    "speciality": "Data presentation",
+    "confidence": 0.94,
+    "reason": "The source category maps to data presentation."
+  },
+  {
+    "source_dataset": "categorized-skills",
+    "tag_id": "44",
+    "tag": "SQL",
+    "original_classification": "classified",
+    "service": "Subject",
+    "category": "Data analytics",
+    "speciality": "Data presentation",
+    "confidence": 0.8,
+    "reason": "The source groups SQL reporting under data presentation."
+  }
+]

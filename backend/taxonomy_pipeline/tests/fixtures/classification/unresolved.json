@@ -1,0 +1,13 @@
+[
+  {
+    "source_dataset": "plain-skills",
+    "tag_id": "48",
+    "tag": "General practice",
+    "original_classification": "unclassified",
+    "service": null,
+    "category": null,
+    "speciality": null,
+    "confidence": null,
+    "reason": "Insufficient context to select a speciality."
+  }
+]
