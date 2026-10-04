@@ -15,6 +15,7 @@ from ..datasets.base import CONCEPTS, TaxonomyDataset
 from ..metrics.integrity import IntegrityMetric, normalize
 from ..models import MetricResult
 from .models import (
+    ClassificationOutput,
     MergePreview,
     PreviewCounts,
     PreviewRow,
@@ -103,7 +104,7 @@ def _assemble(resolution: ResolutionReport, baseline: TaxonomyDataset) -> Taxono
     return combined
 
 
-# Expand source evidence into readable proposed, reused, unapproved, or awaiting-review rows.
+# Emit one row per source and normalized path while retaining evidence variants in the resolution report.
 def _placement_rows(resolution: ResolutionReport, blocked: bool) -> list[PreviewRow]:
     nodes = {tuple(node.path): node for node in resolution.hierarchy}
     tags = {tag.id: tag for tag in resolution.tags}
@@ -115,14 +116,18 @@ def _placement_rows(resolution: ResolutionReport, blocked: bool) -> list[Preview
         source = proposal.source.source_dataset, proposal.source.tag_id
         disposition = dispositions[source]
         tag = tags.get(mappings.get(source))
+        placements: dict[tuple[str, str, str], list[ClassificationOutput]] = {}
         for placement in proposal.placements:
             path = placement.service, normalize(placement.category), normalize(placement.speciality)
+            placements.setdefault(path, []).append(placement)
+        unapproved = {
+            (item.service, normalize(item.category), normalize(item.speciality))
+            for item in disposition.unapproved_paths
+        }
+        for path, variants in sorted(placements.items()):
+            placement = min(variants, key=lambda item: item.model_dump_json())
             speciality, category = nodes.get(path), nodes.get(path[:2])
             link = links.get((speciality.id, tag.id)) if speciality and tag else None
-            unapproved = {
-                (item.service, normalize(item.category), normalize(item.speciality))
-                for item in disposition.unapproved_paths
-            }
             approved = disposition.status == "accepted" and path not in unapproved and link is not None
             status = disposition.status if disposition.status != "accepted" else "unapproved"
             if approved:
@@ -132,6 +137,11 @@ def _placement_rows(resolution: ResolutionReport, blocked: bool) -> list[Preview
                 canonical_tag_id=tag.id if tag else None, canonical_tag=tag.name if tag else "",
                 review_reason=disposition.reason,
             )
+            if len(variants) > 1:
+                row.note = (
+                    f"{len(variants)} evidence records share this placement; one representative is shown. "
+                    "All variants are retained in resolution.evidence."
+                )
             if approved:
                 row.category_id, row.speciality_id = category.id, speciality.id
                 row.category_change = "existing" if category.existing else "new"
@@ -213,7 +223,7 @@ def build_preview(resolution: ResolutionReport, baseline: TaxonomyDataset) -> Me
     ) for status, count in sorted(expected.evidence.omitted_counts.items()))
     csv_rows.extend(PreviewRow(row_type="check", status=finding.code, note=finding.message) for finding in findings)
     unresolved_paths = {
-        (row.source_dataset, row.tag_id, row.service, row.category, row.speciality)
+        (row.source_dataset, row.tag_id, row.service, normalize(row.category), normalize(row.speciality))
         for row in rows if row.status in {"pending", "deferred", "unapproved"}
     }
     return MergePreview(
@@ -221,7 +231,8 @@ def build_preview(resolution: ResolutionReport, baseline: TaxonomyDataset) -> Me
         validation=ValidationReport(
             complete=not blocked, findings=findings, duplicate_candidates=expected.evidence.candidates,
             unresolved=[placement for tag in expected.evidence.tags for placement in tag.placements if (
-                placement.source_dataset, placement.tag_id, placement.service, placement.category, placement.speciality,
+                placement.source_dataset, placement.tag_id, placement.service,
+                normalize(placement.category), normalize(placement.speciality),
             ) in unresolved_paths],
         ),
         mappings=[item.model_copy(deep=True) for item in expected.mappings if item.canonical_tag_id in linked],
