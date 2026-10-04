@@ -24,13 +24,14 @@ export const metadata: Metadata = {
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
     <html lang="en" className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}>
-      <body className="flex min-h-full">
+      <body className="flex min-h-full flex-col md:flex-row">
         <Providers>
-          <aside className="w-56 shrink-0 border-r p-4">
-            <p className="mb-4 px-3 text-sm font-semibold">Taxonomy Dashboard</p>
+          {/* Top bar on narrow screens, fixed-width sidebar from md up. */}
+          <aside className="border-b p-4 md:w-56 md:shrink-0 md:border-r md:border-b-0">
+            <p className="mb-2 px-3 text-sm font-semibold md:mb-4">Taxonomy Dashboard</p>
             <AppNav />
           </aside>
-          <main className="flex-1 p-8">{children}</main>
+          <main className="min-w-0 flex-1 p-4 md:p-8">{children}</main>
         </Providers>
       </body>
     </html>

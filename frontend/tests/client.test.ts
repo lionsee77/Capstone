@@ -33,6 +33,22 @@ describe("api client", () => {
     const error = await api.createRun({ datasets: [], metrics: [] }).catch((e: unknown) => e);
     expect(error).toBeInstanceOf(ApiError);
     expect(error).toMatchObject({ status: 422, detail: { message: expect.stringContaining("absolute") } });
+    expect((error as ApiError).message).toContain("absolute");
+  });
+
+  it("uses FastAPI's string detail as the error message", async () => {
+    mockFetch(404, { detail: "run not found" });
+    await expect(api.getRun("missing")).rejects.toThrow("run not found");
+  });
+
+  it("joins request-validation messages into the error message", async () => {
+    mockFetch(422, { detail: [{ loc: ["body", "datasets"], msg: "Field required" }] });
+    await expect(api.createRun({ datasets: [], metrics: [] })).rejects.toThrow("Field required");
+  });
+
+  it("falls back to the status code when the detail is unreadable", async () => {
+    mockFetch(500, null);
+    await expect(api.listMetrics()).rejects.toThrow("status 500");
   });
 
   it("fails loudly when the response shape drifts from the schema", async () => {

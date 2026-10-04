@@ -24,6 +24,7 @@ cp .env.example .env.local   # optional, defaults to http://localhost:8000
 | Env var | Default | Meaning |
 |---|---|---|
 | `TAXONOMY_API_URL` | `http://localhost:8000` | Where `taxonomy-pipeline serve` is running |
+| `PIPELINE_ALLOW_RUN_CREATION` | `false` | Allow the dashboard to start runs (`POST /runs`). Enable only in a trusted local environment (see [Security](#security)) |
 
 ## Run it
 
@@ -37,9 +38,22 @@ cd backend/taxonomy_pipeline && taxonomy-pipeline serve --reload
 cd frontend && bun dev        # http://localhost:3000
 ```
 
-The browser calls `/api/pipeline/*`, and `next.config.ts` rewrites that to
-`TAXONOMY_API_URL`. Requests stay same-origin, so the FastAPI app needs no CORS
-config.
+The browser calls `/api/pipeline/*`. A route handler
+(`src/app/api/pipeline/[...path]/route.ts`) forwards only the endpoints the
+dashboard uses to `TAXONOMY_API_URL`. Requests stay same-origin, so the FastAPI
+app needs no CORS config.
+
+## Security
+
+The pipeline API has **no authentication**, and `POST /runs` makes the server
+read whatever absolute dataset paths the request names. Until the API has auth:
+
+- Run the dashboard and the pipeline API only on localhost or a trusted network.
+  Don't deploy either one publicly.
+- The proxy forwards only `GET /metrics`, `GET /runs`, `GET /runs/{id}` and,
+  when `PIPELINE_ALLOW_RUN_CREATION=true`, `POST /runs`. The allowlist lives in
+  `src/lib/api/proxy.ts`. Add a route there, with a test, when the dashboard
+  starts using a new endpoint.
 
 ## Project structure
 
@@ -47,11 +61,12 @@ config.
 frontend/
 ├── src/
 │   ├── app/                          # App Router routes
-│   │   ├── layout.tsx                #   shell: sidebar nav + Providers
+│   │   ├── api/pipeline/[...path]/   #   allowlisted proxy to the pipeline API
+│   │   ├── layout.tsx                #   shell: sidebar nav (top bar on mobile) + Providers
 │   │   ├── providers.tsx             #   QueryClientProvider (+ devtools)
 │   │   ├── page.tsx                  #   overview: live metric catalogue
 │   │   ├── taxonomy/                 #   taxonomy tree view (placeholder, see Known gaps)
-│   │   ├── runs/                     #   run history table
+│   │   ├── runs/                     #   run history (polls while runs are active, "load older")
 │   │   │   └── [runId]/              #   one run's report; polls until done/failed
 │   │   └── sources/new/              #   new data-source integration (placeholder)
 │   ├── components/
@@ -61,6 +76,7 @@ frontend/
 │   │   ├── api/
 │   │   │   ├── schemas.ts            #   zod mirrors of models.py / config.py
 │   │   │   ├── client.ts             #   fetch wrapper; parses every response with zod
+│   │   │   ├── proxy.ts              #   which pipeline endpoints the proxy forwards
 │   │   │   └── queries.ts            #   TanStack Query hooks + query keys
 │   │   └── utils.ts                  #   `cn` class-name helper (shadcn)
 │   └── stores/
@@ -68,7 +84,7 @@ frontend/
 ├── tests/                            # Vitest, one <module>.test.ts per source module
 │   └── fixtures/                     #   API-shaped payloads
 ├── components.json                   # shadcn config
-└── next.config.ts                    # /api/pipeline proxy rewrite
+└── next.config.ts
 ```
 
 ## Conventions

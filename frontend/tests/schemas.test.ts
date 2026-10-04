@@ -31,6 +31,16 @@ describe("pipelineConfigSchema", () => {
     expect(result.success).toBe(false);
   });
 
+  it("requires exactly one workbook path for SSIC and SSOC references", () => {
+    const withPaths = (type: string, paths: string[]) =>
+      pipelineConfigSchema.safeParse({ datasets: [{ name: type, type, paths }], metrics: [{ id: "breadth" }] });
+
+    expect(withPaths("ssic", ["/data/ssic.xlsx"]).success).toBe(true);
+    expect(withPaths("ssoc", ["/data/a.xlsx", "/data/b.xlsx"]).success).toBe(false);
+    // SQL dumps legitimately span several files.
+    expect(withPaths("sql_dump", ["/data/a.sql", "/data/b.sql"]).success).toBe(true);
+  });
+
   it("requires at least one dataset and one metric", () => {
     expect(pipelineConfigSchema.safeParse({ datasets: [], metrics: [] }).success).toBe(false);
   });

@@ -57,15 +57,23 @@ export type MetricCatalogue = z.infer<typeof metricCatalogueSchema>;
 export const datasetTypeSchema = z.enum(["sql_dump", "ssic", "ssoc"]);
 export type DatasetType = z.infer<typeof datasetTypeSchema>;
 
-export const datasetConfigSchema = z.object({
-  name: z.string().min(1, "Dataset name is required"),
-  type: datasetTypeSchema,
-  // The API rejects relative paths - they must exist on the server.
-  paths: z
-    .array(z.string().startsWith("/", "Paths must be absolute server-side paths"))
-    .min(1, "At least one path is required"),
-  table_map: z.record(z.string(), z.string()).default({}),
-});
+/** Reference classifications load from a single workbook (`datasets/__init__.py`). */
+const SINGLE_PATH_TYPES: ReadonlySet<DatasetType> = new Set(["ssic", "ssoc"]);
+
+export const datasetConfigSchema = z
+  .object({
+    name: z.string().min(1, "Dataset name is required"),
+    type: datasetTypeSchema,
+    // The API rejects relative paths - they must exist on the server.
+    paths: z
+      .array(z.string().startsWith("/", "Paths must be absolute server-side paths"))
+      .min(1, "At least one path is required"),
+    table_map: z.record(z.string(), z.string()).default({}),
+  })
+  .refine((dataset) => !SINGLE_PATH_TYPES.has(dataset.type) || dataset.paths.length === 1, {
+    message: "SSIC and SSOC datasets take exactly one workbook path",
+    path: ["paths"],
+  });
 export type DatasetConfig = z.infer<typeof datasetConfigSchema>;
 
 export const metricConfigSchema = z.object({

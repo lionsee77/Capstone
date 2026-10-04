@@ -15,7 +15,7 @@ const NAV_ITEMS = [
 export function AppNav() {
   const pathname = usePathname();
   return (
-    <nav className="flex flex-col gap-1">
+    <nav className="flex gap-1 overflow-x-auto md:flex-col md:overflow-visible">
       {NAV_ITEMS.map(({ href, label }) => {
         const active = href === "/" ? pathname === "/" : pathname.startsWith(href);
         return (
@@ -23,7 +23,7 @@ export function AppNav() {
             key={href}
             href={href}
             className={cn(
-              "rounded-md px-3 py-2 text-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground",
+              "shrink-0 rounded-md px-3 py-2 text-sm whitespace-nowrap text-muted-foreground transition-colors hover:bg-muted hover:text-foreground",
               active && "bg-muted font-medium text-foreground",
             )}
           >
