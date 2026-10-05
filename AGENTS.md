@@ -21,6 +21,14 @@ new work should follow the same shape unless there's a good reason not to.
   over HTTP) live in one `models.py` using Pydantic - one shape everywhere,
   not a CLI-specific and an API-specific version.
 
+## Frontend
+
+- `frontend/` is the Next.js dashboard over the pipeline API; see
+  `frontend/README.md` for its stack and conventions. Use `bun` for package
+  management (commit `bun.lock`, not `package-lock.json`).
+- Its zod schemas in `src/lib/api/schemas.ts` mirror the Pydantic models -
+  a change to `models.py`/`config.py` updates them in the same PR.
+
 ## Python style
 
 - Target Python 3.11+, `from __future__ import annotations` at the top of
