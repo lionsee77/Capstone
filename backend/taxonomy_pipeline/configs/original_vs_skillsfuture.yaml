@@ -66,8 +66,28 @@ metrics:
 
   - id: saturation
     params:
-      dataset: original
-      # No real gig/showcase text yet - set this once it exists (see the
-      # senseigigs-open-blockers project memory); until then this metric
-      # reports itself as "skipped".
-      corpus_path: null
+      baseline: original
+      # Incoming sources are compared in order: each one against the baseline
+      # plus every earlier source, giving one point on the new-items curve.
+      # Declare another dataset above and append it, e.g. [skillsfuture, onet].
+      incoming: [skillsfuture]
+      # Exact matches (after folding case, '&'/'and' and plurals) are skipped.
+      # A close spelling (RapidFuzz >= threshold) is only skipped when the
+      # optional sentence model agrees (>= semantic_threshold); otherwise it
+      # is REVIEW_AMBIGUOUS, so "evaluation" is never dropped as "valuation".
+      threshold: 90
+      semantic_model: all-MiniLM-L6-v2
+      semantic_threshold: 0.70
+      # SkillsFuture job roles are titles ("Risk Manager") while original
+      # specialities are skills ("Risk Management"); low meaning scores between
+      # them are mostly loose associations, so job roles need a stronger match.
+      semantic_threshold_by_level:
+        specialities: 0.80
+      # ADD_CANDIDATE needs a low lexical score and, when the model is
+      # installed, a low semantic score. Other non-matches are REVIEW_AMBIGUOUS.
+      add_candidate_lexical_threshold: 60
+      add_candidate_semantic_threshold: 0.50
+      # Also look for a similar concept at the other levels (e.g. SkillsFuture
+      # skills vs original specialities); the parent check still applies.
+      # false = strict level-by-level comparison.
+      cross_level: true

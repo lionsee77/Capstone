@@ -10,6 +10,7 @@ from __future__ import annotations
 from typing import Protocol
 
 from pydantic import BaseModel, Field
+
 from .ssic import SsicReference
 from .ssoc import SsocReference
 
@@ -34,6 +35,15 @@ class TaxonomyDataset(BaseModel):
 
     def counts(self) -> dict[str, int]:
         return {concept: len(getattr(self, concept)) for concept in CONCEPTS}
+
+    def has_table(self, concept: str) -> bool:
+        """Whether the source actually provided `concept`, as opposed to it
+        defaulting to an empty list. `services=[]` passed explicitly means
+        "table present, zero rows" and is still checkable; leaving `services`
+        out means the source has no such table. Sources must therefore only
+        pass the concepts they really found (see `SqlDumpSource.load`).
+        """
+        return concept in self.model_fields_set
 
 
 LoadedDataset = TaxonomyDataset | SsicReference | SsocReference

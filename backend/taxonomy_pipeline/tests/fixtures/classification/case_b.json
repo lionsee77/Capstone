@@ -1,0 +1,46 @@
+[
+  {
+    "source_dataset": "plain-skills",
+    "tag_id": "42",
+    "tag": "Data visualization",
+    "original_classification": "unclassified",
+    "service": "Subject",
+    "category": "Data analytics",
+    "speciality": "Business communication",
+    "confidence": 0.88,
+    "reason": "Visualizing data helps communicate findings."
+  },
+  {
+    "source_dataset": "plain-skills",
+    "tag_id": "45",
+    "tag": "Visualizing data",
+    "original_classification": "unclassified",
+    "service": "Subject",
+    "category": "Data analytics",
+    "speciality": "Data presentation",
+    "confidence": 0.9,
+    "reason": "The tag describes displaying data visually."
+  },
+  {
+    "source_dataset": "plain-skills",
+    "tag_id": "46",
+    "tag": "Python",
+    "original_classification": "unclassified",
+    "service": "Subject",
+    "category": "Data analytics",
+    "speciality": "Programming",
+    "confidence": 0.9,
+    "reason": "The source text concerns the Python programming language."
+  },
+  {
+    "source_dataset": "plain-skills",
+    "tag_id": "47",
+    "tag": "Python",
+    "original_classification": "unclassified",
+    "service": "Subject",
+    "category": "Biology",
+    "speciality": "Zoology",
+    "confidence": 0.9,
+    "reason": "The source text concerns the snake, not the programming language."
+  }
+]

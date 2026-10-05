@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from taxonomy_pipeline.datasets.sql_dump import SqlDumpSource, iter_insert_statements
+from taxonomy_pipeline.datasets.sql_dump import SqlDumpSource, iter_created_tables, iter_insert_statements
 from tests.conftest import FIXTURES
 
 
@@ -47,6 +47,22 @@ def test_sql_dump_source_loads_all_tables_from_one_file():
     }
 
 
+def test_escaped_backslash_followed_by_literal_n_is_not_corrupted_into_a_newline():
+    # Raw dump bytes: \\n -- an escaped backslash (\\) immediately followed
+    # by a literal 'n', which must decode to the two literal characters
+    # '\' + 'n', not a real newline (regression for the old sequential
+    # .replace() decoding, which mangled this case).
+    sql = r"INSERT INTO `tags` (`id`, `name`) VALUES (1, 'C:\\new');"
+    [(_, rows)] = list(iter_insert_statements(sql))
+    assert rows[0]["name"] == "C:\\new"
+
+
+def test_real_escaped_newline_still_decodes_to_a_newline_character():
+    sql = r"INSERT INTO `tags` (`id`, `name`) VALUES (1, 'line one\nline two');"
+    [(_, rows)] = list(iter_insert_statements(sql))
+    assert rows[0]["name"] == "line one\nline two"
+
+
 def test_sql_dump_source_merges_tables_split_across_files():
     # sql-files-nus keeps one table per file; loading them all should merge
     # into a single dataset, as if it were one dump.
@@ -60,3 +76,74 @@ def test_sql_dump_source_merges_tables_split_across_files():
     # table_map doesn't point "categories" at, so they're simply not pulled
     # in - merging only combines rows for tables actually mapped.
     assert dataset.counts()["categories"] == 3
+
+
+def test_ignores_insert_like_text_inside_a_quoted_field():
+    sql = """
+    INSERT INTO `tags` (`id`, `name`) VALUES
+    (1, 'Example SQL: ; INSERT INTO fake_table (id, name) VALUES (99, ''not a row'')'),
+    (2, 'Real tag');
+    """
+
+    statements = list(iter_insert_statements(sql))
+
+    assert statements == [
+        (
+            "tags",
+            [
+                {"id": 1, "name": "Example SQL: ; INSERT INTO fake_table (id, name) VALUES (99, 'not a row')"},
+                {"id": 2, "name": "Real tag"},
+            ],
+        )
+    ]
+
+
+def test_ignores_insert_like_text_inside_sql_comments():
+    sql = """
+    -- INSERT INTO fake_table (id, name) VALUES (1, 'not a row');
+    /* INSERT INTO another_fake_table (id, name) VALUES (2, 'not a row'); */
+    # INSERT INTO third_fake_table (id, name) VALUES (3, 'not a row');
+    INSERT INTO `tags` (`id`, `name`) VALUES (1, 'Real tag');
+    """
+
+    statements = list(iter_insert_statements(sql))
+
+    assert statements == [("tags", [{"id": 1, "name": "Real tag"}])]
+
+
+def test_created_table_without_inserts_counts_as_present_but_empty(tmp_path):
+    dump = tmp_path / "dump.sql"
+    dump.write_text(
+        "CREATE TABLE `services` (`id` int, `name` varchar(255));\n"
+        "INSERT INTO `categories` (`id`, `name`, `service_id`) VALUES (1, 'Accounting', 999);\n"
+    )
+    dataset = SqlDumpSource(name="original", paths=[dump]).load()
+    assert dataset.has_table("services") is True
+    assert dataset.services == []
+    assert dataset.has_table("categories") is True
+
+
+def test_table_missing_from_the_dump_is_not_present(tmp_path):
+    dump = tmp_path / "dump.sql"
+    dump.write_text("INSERT INTO `categories` (`id`, `name`) VALUES (1, 'Accounting');\n")
+    dataset = SqlDumpSource(name="original", paths=[dump]).load()
+    assert dataset.has_table("services") is False
+    assert dataset.services == []
+
+
+def test_create_table_if_not_exists_like_counts_as_present_via_table_map(tmp_path):
+    # The skillsfuture generator's style: sf_* tables cloned from the originals.
+    dump = tmp_path / "dump.sql"
+    dump.write_text("CREATE TABLE IF NOT EXISTS sf_categories LIKE categories;\n")
+    dataset = SqlDumpSource(name="sf", paths=[dump], table_map={"categories": "sf_categories"}).load()
+    assert dataset.has_table("categories") is True
+    assert dataset.has_table("services") is False
+
+
+def test_ignores_create_table_text_inside_quoted_fields_and_comments():
+    sql = """
+    -- CREATE TABLE services (id int);
+    /* CREATE TABLE tags (id int); */
+    INSERT INTO `categories` (`id`, `name`) VALUES (1, 'CREATE TABLE specialities (id int)');
+    """
+    assert list(iter_created_tables(sql)) == []

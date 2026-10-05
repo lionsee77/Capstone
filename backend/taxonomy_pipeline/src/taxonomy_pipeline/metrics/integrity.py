@@ -7,6 +7,7 @@ dead-end categories, etc.) so results are comparable to that baseline.
 from __future__ import annotations
 
 import re
+import unicodedata
 from collections import defaultdict
 from typing import Any
 
@@ -16,9 +17,21 @@ from ..datasets.base import LoadedDataset
 from ..models import MetricResult
 from .base import Metric
 
+_DASH_VARIANTS = re.compile(r"[‐‑‒–—―]")
 
+
+# Normalize names consistently even when trailing punctuation is separated by whitespace.
 def normalize(name: str | None) -> str:
-    return re.sub(r"\s+", " ", (name or "").strip().lower())
+    """Duplicated from (not imported from) `backend/audit/taxonomy_audit.py`'s
+    `normalized()`, step for step - that module pulls in `mysql.connector` as
+    a live-DB dependency this pipeline deliberately doesn't take on, but the
+    steps must still match exactly or duplicate counts stop being comparable
+    to that baseline, which is this module's whole point.
+    """
+    value = unicodedata.normalize("NFKC", name or "").strip().casefold()
+    value = _DASH_VARIANTS.sub("-", value)
+    value = re.sub(r"\s+", " ", value)
+    return value.rstrip(" .,;:!?")
 
 
 def _exact_duplicate_clusters(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -94,9 +107,16 @@ class IntegrityMetric(Metric):
                 dangling_links.append(link)
 
         orphan_specialities = [r for r in ds.specialities if r.get("category_id") not in category_ids]
-        orphan_categories = (
-            [r for r in ds.categories if r.get("service_id") not in service_ids] if ds.services else []
-        )
+        # A dataset with no services table can't be checked for category ->
+        # service orphans at all - report that as skipped (None), not as an
+        # empty "all clean" list. A services table that exists but is empty
+        # is still checked: every category pointing at a service is an orphan.
+        skipped_checks: dict[str, str] = {}
+        orphan_categories: list[dict[str, Any]] | None = None
+        if ds.has_table("services"):
+            orphan_categories = [r for r in ds.categories if r.get("service_id") not in service_ids]
+        else:
+            skipped_checks["categories_without_service"] = "no services table loaded for this dataset"
         orphan_tags = [r for r in ds.tags if r.get("id") not in referenced_tag_ids]
 
         dead_end_categories = [
@@ -120,7 +140,9 @@ class IntegrityMetric(Metric):
                 "tags": _fuzzy_duplicate_pairs(ds.tags, threshold),
             },
             "orphans": {
-                "categories_without_service": [r.get("id") for r in orphan_categories],
+                "categories_without_service": (
+                    [r.get("id") for r in orphan_categories] if orphan_categories is not None else None
+                ),
                 "specialities_without_category": [r.get("id") for r in orphan_specialities],
                 "tags_unused_by_any_speciality": [r.get("id") for r in orphan_tags],
                 "dangling_speciality_tag_links": len(dangling_links),
@@ -135,6 +157,7 @@ class IntegrityMetric(Metric):
                     len(dead_end_specialities) / len(ds.specialities) if ds.specialities else None
                 ),
             },
+            "skipped_checks": skipped_checks,
         }
 
         exact_dup_rows = sum(len(c["ids"]) for tier in exact.values() for c in tier)
@@ -144,4 +167,6 @@ class IntegrityMetric(Metric):
             f"{len(dead_end_categories)} dead-end categories, "
             f"{len(dead_end_specialities)} dead-end specialities."
         )
+        if skipped_checks:
+            summary += f" Skipped: {', '.join(skipped_checks)}."
         return MetricResult(metric_id=self.id, status="ok", summary=summary, details=details)

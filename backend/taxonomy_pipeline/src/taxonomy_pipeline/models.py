@@ -3,7 +3,7 @@ persisted to SQLite, and what the FastAPI API returns - one shape everywhere.
 """
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any, Literal
 from uuid import uuid4
 
@@ -11,7 +11,7 @@ from pydantic import BaseModel, Field
 
 
 def utcnow() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 class MetricResult(BaseModel):

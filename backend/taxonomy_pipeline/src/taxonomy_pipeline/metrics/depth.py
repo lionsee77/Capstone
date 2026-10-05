@@ -41,10 +41,14 @@ class DepthMetric(Metric):
         category_counts = [specialities_per_category.get(row.get("id"), 0) for row in ds.categories]
 
         speciality_ids = {row.get("id") for row in ds.specialities}
+        tag_ids = {row.get("id") for row in ds.tags}
         tags_per_speciality = Counter(
             link.get("speciality_id")
             for link in ds.speciality_tags
-            if link.get("speciality_id") in speciality_ids
+            # Both ends must resolve, matching integrity.py's dangling-link
+            # check - otherwise a link to a nonexistent tag still counts as
+            # a real tag here, inflating the branching-factor baseline.
+            if link.get("speciality_id") in speciality_ids and link.get("tag_id") in tag_ids
         )
         speciality_counts = [tags_per_speciality.get(row.get("id"), 0) for row in ds.specialities]
 

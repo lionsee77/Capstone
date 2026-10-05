@@ -1,0 +1,20 @@
+{
+  "name": "classification-baseline-v1",
+  "services": [
+    {"id": 1, "name": "Subject"},
+    {"id": 2, "name": "Industry"},
+    {"id": 3, "name": "Function"}
+  ],
+  "categories": [
+    {"id": 10, "name": "Data analytics", "service_id": 1},
+    {"id": 20, "name": "Biology", "service_id": 1}
+  ],
+  "specialities": [
+    {"id": 120, "name": "Data presentation", "category_id": 10},
+    {"id": 121, "name": "Business communication", "category_id": 10},
+    {"id": 122, "name": "Programming", "category_id": 10},
+    {"id": 220, "name": "Zoology", "category_id": 20}
+  ],
+  "tags": [{"id": 200, "name": "SQL"}],
+  "speciality_tags": [{"id": 1, "speciality_id": 122, "tag_id": 200}]
+}
