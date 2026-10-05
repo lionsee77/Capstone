@@ -39,3 +39,27 @@ def isolated_db(tmp_path, monkeypatch):
     db_path = tmp_path / "test-runs.sqlite3"
     monkeypatch.setattr(db, "DEFAULT_DB_PATH", db_path)
     return db_path
+
+
+@pytest.fixture
+def saturation_report(tmp_path):
+    """Write a minimal `taxonomy-pipeline run` report holding one saturation step.
+
+    Call it with the incoming tag concepts (`recommended_action`,
+    `parent_status`, `incoming_ids`); returns the report path.
+    """
+    import json
+
+    def write(concepts, *, incoming="skillsfuture", run_id="run-1", name="report.json"):
+        step = {"source": incoming, "by_concept_level": {"tags": {"ambiguous_concepts": concepts}}}
+        report = {"run_id": run_id, "results": [
+            {"metric_id": "integrity", "status": "ok", "summary": "", "details": {}},
+            {"metric_id": "saturation", "status": "ok", "summary": "", "details": {
+                "incoming": [incoming], "by_concept_level": step["by_concept_level"], "steps": [step],
+            }},
+        ]}
+        path = tmp_path / name
+        path.write_text(json.dumps(report), encoding="utf-8")
+        return path
+
+    return write
