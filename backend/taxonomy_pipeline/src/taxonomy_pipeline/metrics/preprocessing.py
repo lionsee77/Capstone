@@ -5,14 +5,16 @@ import re
 import unicodedata
 from collections.abc import Callable
 
-from .integrity import normalize as legacy_normalize
-
-
 _TYPOGRAPHY = str.maketrans({
     **{char: "'" for char in "‘’‚‛"},
     **{char: '"' for char in "“”„‟"},
     **{chr(code): "-" for code in range(0x2010, 0x2016)},
 })
+
+
+def legacy_normalize(name: str | None) -> str:
+    """Preserve original breadth normalization independently of other metrics."""
+    return re.sub(r"\s+", " ", (name or "").strip().lower())
 
 
 def typography_v1(name: str | None) -> str:

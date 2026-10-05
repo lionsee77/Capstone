@@ -50,6 +50,6 @@ def encode_labels(texts: list[str]) -> dict[str, np.ndarray]:
         if np.any(norms == 0):
             raise ValueError("model returned a zero embedding")
         vectors = vectors / norms
-        return dict(zip(unique, vectors))
+        return dict(zip(unique, vectors, strict=True))
     except Exception as exc:
         raise RuntimeError(f"Semantic embedding failed: {type(exc).__name__}: {exc}") from exc

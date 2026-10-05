@@ -35,6 +35,18 @@ def test_legacy_preserves_existing_normalization():
     assert get_normalizer("legacy")("  Ships’  / Deck‑Crew ") == "ships’ / deck‑crew"
 
 
+@pytest.mark.parametrize("source, expected", [
+    ("Post\u2011Market", "post\u2011market"),
+    ("  Ｔｅｌｅｃｏｍ  ", "ｔｅｌｅｃｏｍ"),
+    ("Services.,;:!? ", "services.,;:!?"),
+    ("Straße", "straße"),
+    ("  Mixed\t\u00a0Whitespace\n", "mixed whitespace"),
+    (None, ""),
+])
+def test_legacy_retains_original_text_rules(source, expected):
+    assert get_normalizer("legacy")(source) == expected
+
+
 @pytest.mark.parametrize("profile", [None, "unknown", 1, [], {}])
 def test_invalid_profile(profile):
     with pytest.raises(ValueError, match="preprocessing"):

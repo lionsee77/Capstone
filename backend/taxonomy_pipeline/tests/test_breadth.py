@@ -30,7 +30,12 @@ def datasets():
 
 
 def run(data=None, **params):
-    return BreadthMetric().run(datasets() if data is None else data, {"target": "original", "matching_method": "lexical", **params})
+    return BreadthMetric().run(
+        datasets() if data is None else data,
+        {"target": "original",
+         "matching_method": "lexical",
+         **params}
+    )
 
 
 def test_both_dimensions_and_industry_filter():

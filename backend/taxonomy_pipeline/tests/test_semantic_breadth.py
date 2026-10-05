@@ -127,7 +127,9 @@ def test_invalid_options_fail_before_encoding(params, encoder):
     encoder.encode.assert_not_called()
 
 
-@pytest.mark.parametrize("error", [ImportError("dependency missing"), OSError("download failed"), RuntimeError("inference failed")])
+@pytest.mark.parametrize("error", [ImportError("dependency missing"),
+                                   OSError("download failed"),
+                                   RuntimeError("inference failed")])
 def test_model_failures_are_metric_errors(monkeypatch, error):
     def fail():
         raise error
