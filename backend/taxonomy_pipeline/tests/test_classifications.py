@@ -16,7 +16,7 @@ def config_payload(classification_paths):
             *[{"name": kind, "type": kind, "paths": [str(path)]}
               for kind, path in classification_paths.items()],
         ],
-        "metrics": [{"id": "breadth", "params": {"target": "original"}}],
+        "metrics": [{"id": "breadth", "params": {"target": "original", "matching_method": "lexical"}}],
     }
 
 
@@ -41,9 +41,12 @@ def test_requires_exactly_one_path(kind, paths):
         load_dataset(DatasetConfig(name=kind, type=kind, paths=paths))
 
 
-def test_api_persists_both_dimensions(classification_paths, isolated_db):
+@pytest.mark.parametrize("profile", ["typography_v1", "legacy"])
+def test_api_persists_both_dimensions(classification_paths, isolated_db, profile):
     client = TestClient(app)
-    created = client.post("/runs", json=config_payload(classification_paths))
+    payload = config_payload(classification_paths)
+    payload["metrics"][0]["params"]["preprocessing"] = profile
+    created = client.post("/runs", json=payload)
     assert created.status_code == 202
     report = client.get(f"/runs/{created.json()['run_id']}").json()
     assert report["status"] == "done"
@@ -53,3 +56,8 @@ def test_api_persists_both_dimensions(classification_paths, isolated_db):
     assert result["details"]["occupational"]["system"] == "SSOC"
     defaults = client.get("/metrics").json()["breadth"]["default_params"]
     assert defaults["industry_level"] == "division"
+
+    assert defaults["preprocessing"] == "typography_v1"
+    assert result["details"]["preprocessing"] == profile
+    match = result["details"]["industry"]["matched"][0]
+    assert match["normalized_reference"] == match["normalized_target"] == "accounting"
