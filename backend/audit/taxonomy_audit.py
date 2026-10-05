@@ -123,11 +123,12 @@ def load_database(connection: Any) -> tuple[dict[str, list[dict[str, Any]]], dic
     return ({table: fetch_all(connection, table) for table in TABLES}, inspect_schema(connection))
 
 
+# Normalize names consistently even when trailing punctuation is separated by whitespace.
 def normalized(value: Any) -> str:
     value = unicodedata.normalize("NFKC", str(value or "")).strip().casefold()
     value = re.sub(r"[‐‑‒–—―]", "-", value)
     value = re.sub(r"\s+", " ", value)
-    return re.sub(r"[.,;:!?]+$", "", value)
+    return value.rstrip(" .,;:!?")
 
 
 def finding(

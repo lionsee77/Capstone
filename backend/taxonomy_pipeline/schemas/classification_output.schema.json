@@ -1,8 +1,7 @@
 {
   "$defs": {
     "ClassificationOutput": {
-      "additionalProperties": false,
-      "description": "One proposed placement; unresolved records keep all four placement values null.\n\nSee ../../../CLASSIFICATION_OUTPUT_CONTRACT.md - the nine-field revision\n(`tag` replacing `original_tag`, plus the explicit `service` tier).",
+      "description": "One proposed placement; unresolved records keep the path and confidence null.",
       "oneOf": [
         {
           "properties": {
@@ -64,7 +63,12 @@
         "service": {
           "anyOf": [
             {
-              "pattern": "\\S",
+              "enum": [
+                "Industry",
+                "Function",
+                "Subject",
+                "Others"
+              ],
               "type": "string"
             },
             {

@@ -20,5 +20,16 @@
     "speciality": "Zoology",
     "confidence": 0.6,
     "reason": "Both names exist but the speciality belongs to a different category."
+  },
+  {
+    "source_dataset": "plain-skills",
+    "tag_id": "51",
+    "tag": "Reporting",
+    "original_classification": "unclassified",
+    "service": "Function",
+    "category": "Data analytics",
+    "speciality": "Data presentation",
+    "confidence": 0.8,
+    "reason": "The category and speciality exist but belong to Subject, not Function."
   }
 ]
