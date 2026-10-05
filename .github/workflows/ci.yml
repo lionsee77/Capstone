@@ -75,8 +75,9 @@ jobs:
         run: echo "TODO - configure and run the project linter"
 
       # TEMPORARY PLACEHOLDER: replace this step with pytest or unittest after a
-      # test suite is added for audit/ and skillsfuture/. Keep it in this job so
-      # the required check name stays stable. (backend/taxonomy_pipeline/ already
+      # test suite is added for audit/ and the skillsfuture/ data-prep scripts.
+      # Keep it in this job so the required check name stays stable.
+      # (backend/taxonomy_pipeline/, including the Case A/B classifiers, already
       # has a real test suite - see the "Taxonomy pipeline" job below.)
       - name: Unit-test placeholder
         run: echo "TODO - add and run automated unit tests"
