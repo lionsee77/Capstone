@@ -59,12 +59,13 @@ tests/fixtures/classification/                 # sample outputs and taxonomy sna
 tests/test_classification_models.py            # contract validation tests
 ```
 
-Both branches supply exactly eight fields: `source_dataset`, `tag_id`,
-`original_tag`, `original_classification`, `category`, `speciality`, `confidence`,
+Both branches supply exactly nine fields: `source_dataset`, `tag_id`, `tag`,
+`original_classification`, `service`, `category`, `speciality`, `confidence`,
 and `reason`. Parse an array with `CLASSIFICATION_OUTPUTS.validate_json(payload)`
 from `taxonomy_pipeline.classification.models`. Unresolved placements use explicit
-`null` values for category, speciality, and confidence. The model checks types and
-complete placements; checking names against the taxonomy is not yet implemented.
+`null` values for service, category, speciality, and confidence. The model checks
+types and complete placements; checking names against the taxonomy is not yet
+implemented.
 
 See the [classification output contract](CLASSIFICATION_OUTPUT_CONTRACT.md) for fields,
 examples and handoff rules.
