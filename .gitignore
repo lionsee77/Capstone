@@ -89,8 +89,9 @@ docker-compose.override.yml
 
 # Generated taxonomy pipeline output
 backend/taxonomy_pipeline/report.json
-backend/taxonomy_pipeline/case_a_output.json
-backend/taxonomy_pipeline/case_b_output.json
-backend/taxonomy_pipeline/case_b_output.csv
-backend/taxonomy_pipeline/.case_b_output.checkpoint.json
-backend/taxonomy_pipeline/merge_runs/
+# Classification stage outputs land in whichever folder the command runs from
+case_a_output.json
+case_b_output.json
+case_b_output.csv
+.case_b_output.checkpoint.json
+merge_runs/
