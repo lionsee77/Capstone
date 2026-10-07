@@ -30,7 +30,12 @@ def datasets():
 
 
 def run(data=None, **params):
-    return BreadthMetric().run(datasets() if data is None else data, {"target": "original", **params})
+    return BreadthMetric().run(
+        datasets() if data is None else data,
+        {"target": "original",
+         "matching_method": "lexical",
+         **params}
+    )
 
 
 def test_both_dimensions_and_industry_filter():
@@ -99,3 +104,45 @@ def test_missing_and_wrong_dataset_types():
     assert run(ssoc_reference="original").status == "error"
     assert BreadthMetric().run(datasets(), {"target": "ssic"}).status == "error"
     assert DepthMetric().run(datasets(), {"dataset": "ssic"}).status == "error"
+
+
+@pytest.mark.parametrize("profile", ["typography_v1", "legacy"])
+def test_profiles_keep_counts_ties_and_threshold_boundaries(profile):
+    data = datasets()
+    data["original"].categories.append({"id": 3, "name": "ACCOUNTING", "service_id": 1})
+    result = run(data, threshold=100, preprocessing=profile)
+    detail = result.details["industry"]
+    assert detail["target_node_count"] == 2
+    assert detail["matched_count"] == 1
+    assert detail["matched"][0]["target_id"] == 1
+    assert run(data, threshold=0, preprocessing=profile).details["industry"]["coverage"] == 1
+    data["original"] = TaxonomyDataset(name="original")
+    assert run(data, threshold=0, preprocessing=profile).details["industry"]["coverage"] == 0
+
+
+def test_typography_matches_both_sides_without_mutation():
+    data = datasets()
+    data["ssic"].records[0].title = "POST-MARKET / SERVICES"
+    data["original"].categories[0]["name"] = "Post‑Market/Services"
+    data["original"].categories.append({"id": 3, "name": "POST-MARKET / SERVICES", "service_id": 1})
+    before = {name: ds.model_dump() for name, ds in data.items()}
+    result = run(data, threshold=100)
+    detail = result.details["industry"]
+    match = detail["matched"][0]
+    assert result.details["preprocessing"] == "typography_v1"
+    assert detail["target_node_count"] == 2
+    assert match["target_id"] == 1
+    assert match["score"] == 100
+    assert match["title"] == "POST-MARKET / SERVICES"
+    assert match["matched_to"] == "Post‑Market/Services"
+    assert match["normalized_reference"] == match["normalized_target"] == "post-market/services"
+    assert {name: ds.model_dump() for name, ds in data.items()} == before
+    legacy = run(data, threshold=100, preprocessing="legacy")
+    assert legacy.details["industry"]["matched"][0]["target_id"] == 3
+
+
+@pytest.mark.parametrize("profile", [None, "unknown", 1, [], {}])
+def test_invalid_preprocessing_is_metric_error(profile):
+    result = run(preprocessing=profile)
+    assert result.status == "error"
+    assert "preprocessing" in result.summary

@@ -439,12 +439,51 @@ taxonomy-pipeline case-a --report report.json --output case_a_output.json
 
 ## Industry and occupational breadth
 
-The `breadth` metric returns separate estimated lexical coverage scores:
-SSIC division titles against industry category names (`service_id=1`), and
-SSOC minor-group titles against all named specialities. It retains the
-existing normalisation and RapidFuzz best-name matching. These are estimates,
-not verified semantic coverage: original specialities describe capabilities,
-whereas SkillsFuture specialities typically describe occupations.
+The `breadth` metric defaults to **semantic matching** and returns separate
+estimated industry and occupational coverage. It compares SSIC division titles
+against industry category names (`service_id=1`), and SSOC minor-group titles
+against all named specialities. Reference levels and target selection are the
+same in lexical and semantic modes; no hierarchy roll-up is performed.
+
+Semantic matching uses local `sentence-transformers/all-MiniLM-L6-v2`, pinned to
+revision `1110a243fdf4706b3f48f1d95db1a4f5529b4d41`. Install updated dependencies
+with `python -m pip install -e ".[dev]"` in this project directory. The first
+semantic run downloads model files to the standard Hugging Face cache and needs
+network access; subsequent runs reuse cached files. Text is embedded locally on
+CPU in batches of 32, with one lazily loaded model per process. Lexical runs do
+not load the model. Model/dependency failures produce metric errors, not fallback
+lexical scores.
+
+Only labels are embedded. The `semantic_labels_v1` text profile applies Unicode
+NFKC and collapses whitespace while preserving case and punctuation; it does not
+use parent context, aliases, descriptions, or tags. Unit-normalized vectors are
+compared with cosine similarity. Each reference is matched to its highest-scoring
+target if the **unrounded score** meets `semantic_threshold` (default `0.60`).
+This cutoff is **provisional and uncalibrated**, not a probability or a conversion
+of fuzzy threshold 75. The top `top_k` candidates (default 5) are retained even
+for unmatched references, allowing review and later calibration.
+
+To use the previous matcher, set `matching_method: lexical`. Its `threshold`
+defaults to 75 on a 0–100 RapidFuzz scale, with `preprocessing: typography_v1`.
+For exact reproduction of the original baseline, also set `preprocessing: legacy`.
+Lexical mode ignores `semantic_threshold` and `top_k`; semantic mode ignores
+`threshold` and the lexical `preprocessing` parameter.
+
+The lexical `typography_v1` profile applies Unicode NFKC and case folding,
+converts curly quotes to straight quotes and Unicode hyphens/dashes
+(U+2010–U+2015) to `-`, and collapses whitespace. It removes spaces around `/`,
+`-`, and `&`, and just inside parentheses and square brackets. Commas, colons,
+and semicolons have no preceding space and one following space, except before a
+closing bracket or the end of the label. Other punctuation, words, qualifiers,
+and symbols such as `C++`, `C#`, and `M&A` are retained. `legacy` only lowercases,
+trims, and collapses whitespace. Integrity and saturation retain their existing
+normalization and lexical matching.
+
+All breadth scores are estimates, not verified semantic coverage. Original
+specialities describe capabilities, whereas SkillsFuture specialities typically
+describe occupations. Related labels need not demonstrate occupational coverage;
+review candidate pairs and calibrate the cutoff before interpreting scores as
+validated coverage. Existing saved reports are not rewritten.
 
 Declare references as datasets (paths here are relative to `configs/`):
 
@@ -466,22 +505,35 @@ metrics:
       industry_level: division
       occupational_level: minor_group
       industry_service_id: 1
-      threshold: 75
+      matching_method: semantic
+      semantic_threshold: 0.60  # uncalibrated cosine cutoff
+      top_k: 5
 ```
 
 Each reference requires exactly one workbook path. The old `reference`
 parameter is no longer accepted; replace it with `ssic_reference` and
 `ssoc_reference`. Other metrics continue accepting taxonomy datasets only.
 
-Results contain `details.target`, `details.industry_service_id`, and separate
-`details.industry` / `details.occupational` objects. Each dimension reports
-reference name, system/version, level, threshold, target-node count,
-matched/total counts, coverage, matched code/title and target ID/name/score,
-and unmatched code/title records. There is no combined score. Each reference
-code counts once; several reference codes may match the same target node.
-Empty target selections score zero; empty reference levels return null coverage.
-Existing CLI, API, and SQLite report interfaces are unchanged; old saved reports
-remain readable.
+Results contain `details.target`, `details.industry_service_id`, the effective
+`details.matching_method` and `details.preprocessing`, plus separate `industry`
+and `occupational` objects. Each dimension reports the reference/version/level,
+effective threshold, target count, matched/total counts, coverage, and matched
+and unmatched records. `score_type` is `cosine_similarity` (−1 to 1) for semantic
+matching and `fuzz_ratio` (0 to 100) for lexical matching.
+
+Semantic reports include the model ID/revision, `threshold_calibrated: false`,
+and `top_k`. Both accepted and rejected references contain `candidates` and
+`normalized_reference` (the exact embedding text). Candidate records retain the
+target ID/name, `normalized_target` embedding text, and score rounded to four
+decimal places. Accepted records also retain the existing best-match fields.
+Lexical matches retain their original fields and normalized matching inputs.
+Original source labels are never modified.
+
+There is no combined score. Each reference code counts once; several reference
+codes may match the same target node. Duplicate target names retain distinct
+rows, and ties use source row order. Empty targets score zero; empty reference
+levels return null coverage. Reports remain compatible with CLI, API and SQLite
+storage without a database migration.
 
 ## Run it as a service
 
@@ -639,6 +691,7 @@ Ruff linting and the test suite run in CI (see the root
 - **`breadth`** and the fuzzy layer of **`integrity`** use lexical
   (RapidFuzz) matching only. Saturation additionally supports an optional
   `sentence-transformers` embedding model for semantic candidates.
+
 - No live-database source yet - sources are `sql_dump`, `ssic`, and `ssoc`. `backend/audit/` already
   has a working live-DB connection (env vars `MYSQL_HOST` etc.) worth
   reusing when that source gets built, rather than reinventing it.
