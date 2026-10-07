@@ -1,7 +1,8 @@
 """Turn category_adaptation's internal placements into the classification
 output contract (../../../CLASSIFICATION_OUTPUT_CONTRACT.md) - the only thing
 that should leave Case A for Bryan's side. Internal fields (match_type, raw
-scores, needs_review, ...) never appear here; only the nine contract fields.
+scores, ...) never appear here; only the nine contract fields, plus the optional
+`needs_review` on review candidates.
 """
 from __future__ import annotations
 
@@ -14,6 +15,7 @@ from ..metrics.category_adaptation import (
     NEW_SPECIALITY,
     NO_SOURCE_CATEGORY,
     RESOLVED_CATEGORY_ACTIONS,
+    REVIEW_CANDIDATE_BASIS,
 )
 from .models import ClassificationOutput
 
@@ -142,6 +144,36 @@ def _content_output(placement: dict[str, Any], source_dataset: str) -> Classific
     )
 
 
+def _review_candidate_output(placement: dict[str, Any], source_dataset: str) -> ClassificationOutput:
+    """One of the closest categories offered for a source category that only partly matched.
+
+    Flagged `needs_review`, so merge-preview holds the tag until a reviewer approves
+    one candidate path. Confidence is the candidate's own similarity, capped at the
+    floor, so it never ranks above a placement that was accepted automatically.
+    """
+    score = placement["candidate_score"]
+    similarity = score / 100 if placement["candidate_score_type"] == "lexical" else max(score, 0.0)
+    category, speciality = placement["candidate_category_name"], placement["target_speciality_name"]
+    return ClassificationOutput(
+        source_dataset=source_dataset,
+        tag_id=str(placement["tag_id"]),
+        tag=placement["tag_name"],
+        original_classification="classified",
+        service=placement["candidate_service_name"],
+        category=category,
+        speciality=speciality,
+        confidence=round(min(similarity, _NEW_PROPOSAL_FLOOR), 4),
+        reason=(
+            _category_reason(placement)
+            + f" Review candidate {placement['candidate_rank']} of {placement['candidate_count']}: proposing "
+            f"'{speciality}' as a new speciality under '{category}' "
+            f"({placement['candidate_score_type']} {score}). Approve one candidate path, or exclude/defer the tag."
+            + _evidence_reason(placement)
+        ),
+        needs_review=True,
+    )
+
+
 def build_classification_outputs(placements: list[dict[str, Any]], source_dataset: str) -> list[ClassificationOutput]:
     """The Case A producer side of the contract: one ClassificationOutput per
     placement `category_adaptation.py` produced.
@@ -150,6 +182,9 @@ def build_classification_outputs(placements: list[dict[str, Any]], source_datase
     for placement in placements:
         if placement.get("placement_basis") == CONTENT_BASIS:
             records.append(_content_output(placement, source_dataset))
+            continue
+        if placement.get("placement_basis") == REVIEW_CANDIDATE_BASIS:
+            records.append(_review_candidate_output(placement, source_dataset))
             continue
         action = placement["action"]
         reason = _category_reason(placement)

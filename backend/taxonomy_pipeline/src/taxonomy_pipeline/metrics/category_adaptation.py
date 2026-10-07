@@ -18,6 +18,11 @@ never uses source specialities as placement targets. It asks what the tag
    matches, as a proposed new speciality named after the tag itself - one row
    per distinct source category. The source specialities linking the tag to
    that category (job roles) are kept as evidence only.
+3. **Review candidates**: when the source category only partly matches (any
+   REVIEW_* outcome), nothing is decided automatically. The tag is proposed
+   under each of the closest few baseline categories instead, every row
+   flagged `needs_review`, so merge-preview holds it until a reviewer approves
+   one path - rather than emitting an empty record nobody can act on.
 
 A resolved placement always carries both a category and a speciality, as the
 classification output contract (CLASSIFICATION_OUTPUT_CONTRACT.md) requires.
@@ -27,10 +32,22 @@ from __future__ import annotations
 from collections import Counter
 from typing import Any
 
+import numpy as np
+from rapidfuzz import fuzz, process
+
 from ..datasets.base import LoadedDataset, TaxonomyDataset
 from ..models import MetricResult
 from .base import Metric
-from .saturation import SemanticMatcher, _compare_level, _KnownPool, _Parents, _validated_float
+from .integrity import normalize
+from .saturation import (
+    SemanticMatcher,
+    _compare_level,
+    _is_valid_name,
+    _KnownPool,
+    _Parents,
+    _validated_float,
+    match_key,
+)
 
 NEW_CATEGORY = "NEW_CATEGORY"
 NEW_SPECIALITY = "NEW_SPECIALITY"
@@ -38,11 +55,15 @@ NO_SOURCE_CATEGORY = "NO_SOURCE_CATEGORY"
 INVALID_CATEGORY_NAME = "INVALID_CATEGORY_NAME"
 MATCHED_ACTIONS = {"SKIP_DUPLICATE", "SKIP_SEMANTIC_DUPLICATE"}
 RESOLVED_CATEGORY_ACTIONS = MATCHED_ACTIONS | {NEW_CATEGORY}
+REVIEW_CATEGORY_ACTIONS = {"REVIEW_AMBIGUOUS", "REVIEW_NEW_PLACEMENT", "REVIEW_OTHER_LEVEL"}
 # How a placement was reached - see the module docstring.
 CONTENT_BASIS = "content"
 SOURCE_CATEGORY_BASIS = "source_category"
+REVIEW_CANDIDATE_BASIS = "review_candidate"
 # Source specialities named on a fallback placement, as evidence for a reviewer.
 EVIDENCE_SAMPLE = 3
+# Closest baseline categories offered when a source category only partly matches.
+REVIEW_CANDIDATES = 3
 
 
 def _tag_source_categories(dataset: TaxonomyDataset, tag_ids: set[Any]) -> dict[Any, list[dict[str, Any]]]:
@@ -161,6 +182,24 @@ def _outcomes_by_incoming_id(comparison: dict[str, Any], new_action: str) -> dic
         for incoming_id in ambiguous["incoming_ids"]:
             outcomes[incoming_id] = outcome
     return outcomes
+
+
+def _closest_categories(
+    name: Any, categories: list[dict[str, Any]], semantic_matcher: SemanticMatcher | None,
+) -> list[tuple[dict[str, Any], float, str]]:
+    """The REVIEW_CANDIDATES baseline categories closest to a source category name, as
+    (row, score, score_type): by meaning when a model is loaded, else by spelling."""
+    named = [row for row in categories if _is_valid_name(row.get("name"))]
+    if not named or not _is_valid_name(name):
+        return []
+    if semantic_matcher:
+        scores = semantic_matcher.similarity([normalize(str(name))], [normalize(str(row["name"])) for row in named])[0]
+        best = np.argsort(-np.asarray(scores), kind="stable")[:REVIEW_CANDIDATES]
+        return [(named[index], round(float(scores[index]), 4), "semantic") for index in best]
+    best = process.extract(
+        match_key(name), [match_key(row["name"]) for row in named], scorer=fuzz.ratio, limit=REVIEW_CANDIDATES,
+    )
+    return [(named[index], round(float(score), 1), "lexical") for _, score, index in best]
 
 
 def _near_miss(outcome: dict[str, Any] | None) -> dict[str, Any]:
@@ -291,6 +330,16 @@ class CategoryAdaptationMetric(Metric):
                 "action": INVALID_CATEGORY_NAME, "target_id": None, "target_name": None,
                 "match_type": None, "score": None, "semantic_score": None,
             }
+        # Only categories whose service the baseline knows can be proposed: the
+        # contract needs all of service, category and speciality together.
+        reviewable_categories = [
+            row for row in baseline.categories if baseline_services_by_id.get(row.get("service_id")) is not None
+        ]
+        review_candidates = {
+            category_id: _closest_categories(row.get("name"), reviewable_categories, semantic_matcher)
+            for category_id, row in referenced_categories.items()
+            if category_outcomes[category_id]["action"] in REVIEW_CATEGORY_ACTIONS
+        }
         matched_baseline_rows = [
             baseline_categories_by_id[outcome["target_id"]]
             for outcome in category_outcomes.values()
@@ -361,7 +410,26 @@ class CategoryAdaptationMetric(Metric):
                     placement["speciality_action"] = NEW_SPECIALITY
                     placement["target_speciality_id"] = f"{incoming.name}:tag:{tag_id}"
                     placement["target_speciality_name"] = tag_name
-                placements.append(placement)
+                candidates = review_candidates.get(category.get("id")) or []
+                if not candidates:
+                    placements.append(placement)
+                    continue
+                for rank, (candidate, score, score_type) in enumerate(candidates, start=1):
+                    placements.append({
+                        **placement,
+                        "placement_basis": REVIEW_CANDIDATE_BASIS,
+                        "candidate_rank": rank,
+                        "candidate_count": len(candidates),
+                        "candidate_score": score,
+                        "candidate_score_type": score_type,
+                        "candidate_category_id": candidate.get("id"),
+                        "candidate_category_name": candidate.get("name"),
+                        "candidate_service_id": candidate.get("service_id"),
+                        "candidate_service_name": baseline_services_by_id[candidate.get("service_id")],
+                        "speciality_action": NEW_SPECIALITY,
+                        "target_speciality_id": f"{incoming.name}:tag:{tag_id}",
+                        "target_speciality_name": tag_name,
+                    })
 
         basis_counts = Counter(placement.get("placement_basis", NO_SOURCE_CATEGORY) for placement in placements)
         action_counts = Counter(placement["action"] for placement in placements)

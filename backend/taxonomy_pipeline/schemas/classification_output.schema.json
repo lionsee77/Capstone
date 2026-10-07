@@ -118,6 +118,12 @@
           "pattern": "\\S",
           "title": "Reason",
           "type": "string"
+        },
+        "needs_review": {
+          "default": false,
+          "description": "Optional. True when the producer could only propose this placement as a candidate; the tag stays pending until a reviewer approves one of its placements. Omitted when false.",
+          "title": "Needs Review",
+          "type": "boolean"
         }
       },
       "required": [

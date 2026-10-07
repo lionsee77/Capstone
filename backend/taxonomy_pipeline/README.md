@@ -113,11 +113,14 @@ since they go stale whenever the data, thresholds or code change.
 
 ### Producer contract
 
-Case A and Case B both write a JSON array in the shared contract: exactly nine
+Case A and Case B both write a JSON array in the shared contract: nine
 fields - `source_dataset`, `tag_id`, `tag`, `original_classification`,
 `service`, `category`, `speciality`, `confidence` and `reason`. Unresolved
 placements use explicit `null` for service, category, speciality and
-confidence. Extra fields (Case B's `action`, the `saturation_run_id` stamp) are
+confidence. One optional field, `needs_review: true`, marks a placement the
+producer can only offer as a candidate (Case A's review candidates); it is
+omitted when false, and resolution keeps such a tag pending until a reviewer
+decides. Extra fields (Case B's `action`, the `saturation_run_id` stamp) are
 allowed and ignored by the merge stages. Parse an array with
 `CLASSIFICATION_OUTPUTS.validate_json(payload)` from
 `taxonomy_pipeline.classification.models`; the published schema is
@@ -163,8 +166,11 @@ saturation run ID, inputs and review state, which `integrate` records as the
 snapshot's provenance).
 
 - Tags with no duplicate candidates are accepted with their proposed
-  placements; tags named in a candidate pair stay `pending` until a decision
-  covers them (see [Resolve reviewed tags and links](CLASSIFICATION_OUTPUT_CONTRACT.md#resolve-reviewed-tags-and-links)
+  placements; tags named in a candidate pair, and tags with a `needs_review`
+  placement (Case A's review candidates, shown in the `needs_review` column of
+  `preview.csv`), stay `pending` until a decision covers them. For a review
+  candidate, approve the one path to keep with `create` and `approved_paths`
+  (see [Resolve reviewed tags and links](CLASSIFICATION_OUTPUT_CONTRACT.md#resolve-reviewed-tags-and-links)
   for the `ReviewDecision` format, and
   `tests/fixtures/classification/review_decisions.json` for an example).
 - `--semantic-model all-MiniLM-L6-v2` adds meaning-based duplicate candidates
@@ -443,15 +449,31 @@ saturation's exact/lexical/semantic matcher rather than reimplementing it:
    `source_speciality_count` and `source_speciality_sample` on the placement,
    and named in the record's `reason`.
 
-A category match that needs review (`REVIEW_AMBIGUOUS`, `REVIEW_NEW_PLACEMENT`,
-`REVIEW_OTHER_LEVEL`, or an invalid name) is never auto-resolved and no
-speciality is proposed under it - that would look like a confident placement
-when the foundation under it isn't confirmed.
+3. **Review candidates** (`placement_basis: review_candidate`): a source
+   category that only partly matches (`REVIEW_AMBIGUOUS`,
+   `REVIEW_NEW_PLACEMENT`, `REVIEW_OTHER_LEVEL`) is never auto-resolved - that
+   would look like a confident placement when the foundation under it isn't
+   confirmed. Instead the tag is proposed under each of the **3 closest
+   baseline categories** (by meaning with a semantic model, else by
+   spelling), as a new speciality named after itself, every record flagged
+   `needs_review: true` with confidence capped at 0.3. Resolution never
+   accepts a flagged tag by default, so it shows as `pending` in
+   `merge-preview` until a reviewer approves one candidate path with a
+   `create` decision, or excludes/defers the tag; `integrate` refuses while
+   any are pending. A tag placed via one source category and offered for
+   review via another is held as a whole, so its decision approves every
+   path it should keep.
 
-On the SkillsFuture run (221 tags) this gives 242 records instead of 1,768, at
-most 4 per tag instead of 98, and no job titles proposed as specialities. Every
-one of those tags takes the fallback: being `ADD_CANDIDATE`, none is close to
-an existing speciality by name.
+Only an invalid source category name, a tag with no source category, or a
+new category with no service to vote leaves a record unresolved (all four
+placement fields null, with a reason).
+
+On the SkillsFuture run (221 tags) this gives 400 records instead of 1,768, no
+job titles proposed as specialities, and every tag accounted for: 147 placed
+automatically, 64 offered only as review candidates (previously emitted empty
+and dropped by `merge-preview`), and 10 placed via one sector with candidates
+from another. None matches an existing speciality by name: being
+`ADD_CANDIDATE`, none is close to one.
 
 ### Params
 
@@ -480,9 +502,9 @@ placement also has a `speciality_action`:
 | `SKIP_DUPLICATE` / `SKIP_SEMANTIC_DUPLICATE` | category, speciality | Matched an existing baseline node; reuse its real ID |
 | `NEW_CATEGORY` | category | No existing category matches the source category; propose it as a new one |
 | `NEW_SPECIALITY` | speciality | The tag matches no existing speciality; propose the tag itself as one, under the resolved category |
-| `REVIEW_AMBIGUOUS` | category | Partial similarity at best; both the closest lexical and closest semantic baseline names are surfaced for review |
-| `REVIEW_NEW_PLACEMENT` | category | Matches a known category, but under a different parent than the source gives it (`unmatched_incoming_parents` vs `existing_parents`) |
-| `REVIEW_OTHER_LEVEL` | category | Matches a known concept at a different taxonomy level |
+| `REVIEW_AMBIGUOUS` | category | Partial similarity at best; both the closest lexical and closest semantic baseline names are surfaced, and the tag is offered under the closest categories for review |
+| `REVIEW_NEW_PLACEMENT` | category | Matches a known category, but under a different parent than the source gives it (`unmatched_incoming_parents` vs `existing_parents`); offered for review as above |
+| `REVIEW_OTHER_LEVEL` | category | Matches a known concept at a different taxonomy level; offered for review as above |
 | `INVALID_CATEGORY_NAME` | category | Source category name is blank or a placeholder |
 | `NO_SOURCE_CATEGORY` | tag | The tag matches no speciality and has no source category in this dataset - Case A has nothing to place it against; route to Case B |
 
@@ -497,7 +519,10 @@ categories matched in the same run for a brand new one (`None` if nothing
 else in the run matched anything to vote from - the placement then stays
 fully unresolved, since the classification contract requires service,
 category, speciality and confidence to be all-present or all-null together).
-A content placement takes its service from the matched speciality's category.
+A content placement takes its service from the matched speciality's category,
+and a review candidate from its candidate category (`candidate_category_*`,
+`candidate_service_*`, ranked by `candidate_rank` with `candidate_score` /
+`candidate_score_type`).
 
 ### Running it end to end
 

@@ -227,14 +227,53 @@ def test_no_source_category_is_unresolved_and_correctly_unclassified():
     assert "Case B" in record.reason
 
 
+def _candidate(**overrides):
+    placement = {
+        "tag_id": 9006, "tag_name": "Fire Prevention", "placement_basis": "review_candidate",
+        "source_category_id": 505, "source_category_name": "Air Transport", "action": "REVIEW_AMBIGUOUS",
+        "closest_semantic_baseline_name": "Logistics, Shipping & Aviation", "closest_semantic_score": 0.52,
+        "target_category_id": None, "target_category_name": None, "needs_review": True,
+        "candidate_rank": 2, "candidate_count": 3, "candidate_score": 0.52, "candidate_score_type": "semantic",
+        "candidate_category_id": 3, "candidate_category_name": "Logistics, Shipping & Aviation",
+        "candidate_service_id": 1, "candidate_service_name": "Industry",
+        "speciality_action": "NEW_SPECIALITY", "target_speciality_id": "skillsfuture:tag:9006",
+        "target_speciality_name": "Fire Prevention",
+    }
+    placement.update(overrides)
+    return placement
+
+
+def test_review_candidate_is_a_full_placement_flagged_for_review():
+    record = build_classification_outputs([_candidate()], "skillsfuture")[0]
+
+    assert record.needs_review is True
+    assert (record.service, record.category, record.speciality) == (
+        "Industry", "Logistics, Shipping & Aviation", "Fire Prevention",
+    )
+    assert record.confidence == 0.3  # 0.52 similarity, capped at the new-proposal floor
+    assert "Review candidate 2 of 3" in record.reason
+    assert "Air Transport" in record.reason
+
+
+def test_review_candidate_confidence_uses_its_own_score_below_the_floor():
+    semantic = build_classification_outputs([_candidate(candidate_score=0.18)], "skillsfuture")[0]
+    lexical = build_classification_outputs(
+        [_candidate(candidate_score=25.0, candidate_score_type="lexical")], "skillsfuture",
+    )[0]
+
+    assert semantic.confidence == 0.18
+    assert lexical.confidence == 0.25
+
+
 def test_output_validates_against_the_shared_contract():
     unresolved = {
         "tag_id": 9002, "tag_name": "rocket fuel", "action": "REVIEW_AMBIGUOUS",
         "closest_baseline_name": None, "closest_baseline_score": None,
         "target_category_id": None, "target_category_name": None, "needs_review": True,
     }
-    records = build_classification_outputs([_content(), unresolved], "skillsfuture")
+    records = build_classification_outputs([_content(), unresolved, _candidate()], "skillsfuture")
 
     # Round-trips through the exact validator Bryan's side uses.
     validated = CLASSIFICATION_OUTPUTS.validate_json(CLASSIFICATION_OUTPUTS.dump_json(records))
-    assert len(validated) == 2
+    assert len(validated) == 3
+    assert [record.needs_review for record in validated] == [False, False, True]

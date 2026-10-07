@@ -236,6 +236,22 @@ def test_supporting_records_round_trip_as_a_preview() -> None:
     assert preview.partial
 
 
+# The optional review flag is written only when set, so ordinary records keep exactly the nine fields.
+def test_needs_review_is_optional_and_serialized_only_when_true(placement: dict[str, object]) -> None:
+    plain = ClassificationOutput.model_validate(placement)
+    assert plain.needs_review is False
+    assert "needs_review" not in plain.model_dump()
+    flagged = ClassificationOutput.model_validate({**placement, "needs_review": True})
+    assert json.loads(flagged.model_dump_json()) == {**placement, "needs_review": True}
+
+
+# A review flag on an empty record would give a reviewer nothing to approve.
+def test_needs_review_requires_a_proposed_placement(placement: dict[str, object]) -> None:
+    unresolved = {**placement, "service": None, "category": None, "speciality": None, "confidence": None}
+    with pytest.raises(ValidationError, match="needs_review requires a proposed placement"):
+        ClassificationOutput.model_validate({**unresolved, "needs_review": True})
+
+
 # Keep the published producer schema synchronized with the runtime Pydantic contract.
 def test_published_json_schema_matches_the_model() -> None:
     path = Path(__file__).parents[1] / "schemas" / "classification_output.schema.json"

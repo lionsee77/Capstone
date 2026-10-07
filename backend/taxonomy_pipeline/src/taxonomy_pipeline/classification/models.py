@@ -7,7 +7,16 @@ from __future__ import annotations
 
 from typing import Annotated, Any, Literal, Self
 
-from pydantic import BaseModel, ConfigDict, Field, StringConstraints, TypeAdapter, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    SerializerFunctionWrapHandler,
+    StringConstraints,
+    TypeAdapter,
+    model_serializer,
+    model_validator,
+)
 
 from ..datasets.base import TaxonomyDataset
 from ..models import MetricResult
@@ -45,6 +54,13 @@ class ClassificationOutput(BaseModel):
     speciality: NonBlankText | None
     confidence: Confidence | None
     reason: NonBlankText
+    # The one optional field. A producer sets it on a placement it can only offer as a
+    # candidate (e.g. one of several possible categories), so resolution holds the tag
+    # for a human decision instead of accepting it by default.
+    needs_review: bool = Field(default=False, description=(
+        "Optional. True when the producer could only propose this placement as a candidate; the tag stays "
+        "pending until a reviewer approves one of its placements. Omitted when false."
+    ))
 
     @model_validator(mode="after")
     # Require either a complete placement or an explicitly unresolved record.
@@ -52,7 +68,17 @@ class ClassificationOutput(BaseModel):
         values = (self.service, self.category, self.speciality, self.confidence)
         if any(value is None for value in values) and not all(value is None for value in values):
             raise ValueError("service, category, speciality, and confidence must be all present or all null")
+        if self.needs_review and self.category is None:
+            raise ValueError("needs_review requires a proposed placement for a reviewer to approve")
         return self
+
+    @model_serializer(mode="wrap")
+    # Keep ordinary records byte-identical to the nine-field contract.
+    def omit_default_review_flag(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
+        data = handler(self)
+        if not self.needs_review:
+            data.pop("needs_review", None)
+        return data
 
 
 CLASSIFICATION_OUTPUTS = TypeAdapter(list[ClassificationOutput])
@@ -347,6 +373,7 @@ class PreviewRow(BaseModel):
     tag_change: str = ""
     link_change: str = ""
     review_reason: str = ""
+    needs_review: bool = False
     note: str = ""
     count: int | None = None
 

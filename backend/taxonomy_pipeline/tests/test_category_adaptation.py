@@ -1,3 +1,5 @@
+import numpy as np
+
 from taxonomy_pipeline.datasets.base import TaxonomyDataset
 from taxonomy_pipeline.metrics import category_adaptation
 from taxonomy_pipeline.metrics.category_adaptation import CategoryAdaptationMetric
@@ -120,9 +122,10 @@ def test_new_category_cascades_to_new_speciality(monkeypatch):
     assert placement["target_speciality_id"] == "skillsfuture:tag:9002"
     assert placement["target_speciality_name"] == "rocket fuel"
 
-def test_review_ambiguous_category_skips_speciality_resolution(monkeypatch):
-    # No point proposing a speciality under a category that isn't itself
-    # placed anywhere yet; the content near-miss is still kept for a reviewer.
+def test_review_ambiguous_category_offers_the_closest_categories_as_review_candidates(monkeypatch):
+    # The category isn't confirmed, so nothing is decided automatically - but
+    # the tag isn't dropped either: it is proposed under the closest baseline
+    # categories, every row flagged for a reviewer to pick from.
     class DisagreeingSemanticMatcher:
         def __init__(self, model_name):
             assert model_name == "test-model"
@@ -130,13 +133,83 @@ def test_review_ambiguous_category_skips_speciality_resolution(monkeypatch):
         def best_matches(self, queries, choices):
             return [(choices[0] if choices else None, 0.1) for _ in queries]
 
+        def similarity(self, queries, choices):
+            return np.full((len(queries), len(choices)), 0.1)
+
     monkeypatch.setattr(category_adaptation, "SemanticMatcher", DisagreeingSemanticMatcher)
     result = _run([9002], semantic_model="test-model", threshold=1)  # low threshold -> close_spelling tier reachable
 
+    placements = result.details["placements"]
+    assert len(placements) == 1  # the baseline has a single category to offer
+    placement = placements[0]
+    assert placement["action"] == "REVIEW_AMBIGUOUS"
+    assert placement["placement_basis"] == "review_candidate"
+    assert placement["needs_review"] is True
+    assert (placement["candidate_category_name"], placement["candidate_service_name"]) == ("Banking", "Industry")
+    assert (placement["candidate_rank"], placement["candidate_count"]) == (1, 1)
+    assert placement["target_speciality_name"] == "rocket fuel"
+    assert placement["closest_speciality_name"] == "Retail Banking"
+
+
+def test_review_candidates_are_the_three_closest_categories_with_a_known_service(monkeypatch):
+    scores = {"aviation": 0.55, "logistics, shipping & aviation": 0.52, "travel": 0.41, "banking": 0.05,
+              "orphan aviation": 0.99}
+
+    class RankingSemanticMatcher:
+        def __init__(self, model_name):
+            assert model_name == "test-model"
+
+        def best_matches(self, queries, choices):
+            return [(choices[0] if choices else None, 0.55) for _ in queries]  # partial: REVIEW_AMBIGUOUS
+
+        def similarity(self, queries, choices):
+            return np.array([[scores.get(choice, 0.0) for choice in choices] for _ in queries])
+
+    datasets = _datasets()
+    datasets["original"].categories += [
+        {"id": 2, "name": "Travel", "service_id": 1},
+        {"id": 3, "name": "Logistics, Shipping & Aviation", "service_id": 1},
+        {"id": 4, "name": "Aviation", "service_id": 1},
+        {"id": 5, "name": "Orphan Aviation", "service_id": 99},  # no such service: can't be proposed
+    ]
+    monkeypatch.setattr(category_adaptation, "SemanticMatcher", RankingSemanticMatcher)
+    result = CategoryAdaptationMetric().run(datasets, {
+        "baseline": "original", "incoming": "skillsfuture", "new_tag_ids": [9002], "semantic_model": "test-model",
+    })
+
+    placements = result.details["placements"]
+    assert [p["candidate_category_name"] for p in placements] == [
+        "Aviation", "Logistics, Shipping & Aviation", "Travel",
+    ]
+    assert [p["candidate_score"] for p in placements] == [0.55, 0.52, 0.41]
+    assert {p["candidate_score_type"] for p in placements} == {"semantic"}
+    assert all(p["needs_review"] and p["target_speciality_name"] == "rocket fuel" for p in placements)
+
+
+def test_review_category_with_nothing_to_offer_stays_unresolved(monkeypatch):
+    class DisagreeingSemanticMatcher:
+        def __init__(self, model_name):
+            assert model_name == "test-model"
+
+        def best_matches(self, queries, choices):
+            return [(choices[0] if choices else None, 0.1) for _ in queries]
+
+        def similarity(self, queries, choices):
+            return np.full((len(queries), len(choices)), 0.1)
+
+    datasets = _datasets()
+    datasets["original"].services = []  # no category has a service the contract could carry
+    monkeypatch.setattr(category_adaptation, "SemanticMatcher", DisagreeingSemanticMatcher)
+    result = CategoryAdaptationMetric().run(datasets, {
+        "baseline": "original", "incoming": "skillsfuture", "new_tag_ids": [9002], "semantic_model": "test-model",
+        "threshold": 1,
+    })
+
     placement = result.details["placements"][0]
     assert placement["action"] == "REVIEW_AMBIGUOUS"
-    assert "speciality_action" not in placement
-    assert placement["closest_speciality_name"] == "Retail Banking"
+    assert placement["placement_basis"] == "source_category"
+    assert "candidate_category_name" not in placement
+
 
 def test_tag_linked_to_many_source_specialities_in_one_category_yields_one_placement():
     # SkillsFuture links one skill to up to ~100 job roles in a sector; they are
@@ -298,4 +371,7 @@ def test_category_with_a_mismatched_service_is_flagged_for_review_not_crashed():
     assert placement["needs_review"] is True
     assert placement["unmatched_incoming_parents"] == ["Totally Different Service"]
     assert placement["existing_parents"] == ["Industry"]
-    assert "speciality_action" not in placement  # category unresolved -> speciality never checked
+    # Not confirmed, so only offered for review - never placed automatically.
+    assert placement["placement_basis"] == "review_candidate"
+    assert placement["candidate_category_name"] == "Banking"
+    assert placement["candidate_score_type"] == "lexical"

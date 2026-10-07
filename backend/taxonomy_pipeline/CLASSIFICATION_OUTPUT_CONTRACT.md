@@ -3,7 +3,7 @@
 **Producers:** Yi Jie (Case A), Zay Nin (Case B). **Consumer:** Bryan.
 
 Return a JSON array with one object per proposed placement. Both cases require
-the same nine fields; additional fields are accepted and ignored. Producers only need to generate JSON; Pydantic is used by
+the same nine fields, plus one optional review flag; additional fields are accepted and ignored. Producers only need to generate JSON; Pydantic is used by
 the consumer to validate it.
 
 ## Ankit's four taxonomy tiers
@@ -36,7 +36,7 @@ The payload's `tag_id` is the source dataset's ID, not Ankit's `tags.id`.
 
 ## Fields
 
-All nine fields are required. Extra fields do not cause validation failure, but are
+All nine fields are required; `needs_review` is the one optional field. Extra fields do not cause validation failure, but are
 excluded from `ClassificationOutput` and its serialized output. Batch intake retains
 the original input, including extras, in each record's `raw` evidence. Required fields
 still undergo strict validation; extras cannot replace missing required fields.
@@ -52,6 +52,14 @@ still undergo strict validation; extras cannot replace missing required fields.
 | `speciality`              | string or null | Proposed Ankit speciality name within that category                                     |
 | `confidence`              | number or null | Confidence in this placement, from `0` to `1` inclusive                                 |
 | `reason`                  | string         | Short placement explanation, or why no placement was found                              |
+| `needs_review` (optional) | boolean        | `true` when the producer can only offer this placement as a candidate; omitted when false |
+
+`needs_review: true` requires a full placement (a reviewer needs a path to approve).
+A producer that cannot decide between several placements emits one record per
+candidate, each flagged. Resolution never accepts a tag with a flagged placement by
+default: it stays `pending` until a decision approves the path to keep, or excludes
+or defers the tag. Case A uses this when a source category only partly matches a
+baseline category; Case B never sets it.
 
 `original_classification` describes the tag **in its source dataset**, before Case
 A/B processing. `tag` preserves the source text and supplies the database tag name.
@@ -119,7 +127,7 @@ validation and the published schema accept additional fields while retaining onl
 nine contract fields. Batch
 validation checks taxonomy paths and supports explicit temporary adapters for older
 exports. Deduplication groups hierarchy paths and suggests overlapping tag pairs.
-Resolution accepts unflagged classifications and applies explicit duplicate decisions. Preview construction validates
+Resolution accepts unflagged classifications and applies explicit review decisions. Preview construction validates
 the combined snapshot and exports a CSV for review.
 
 - [JSON Schema](schemas/classification_output.schema.json)
@@ -250,7 +258,8 @@ The nine-field producer contract is unchanged.
 
 Valid source tags with no duplicate candidates are accepted automatically, keeping
 all supplied placements and creating any required category/speciality nodes under
-their supplied parents. Tags named in duplicate candidate pairs remain pending until
+their supplied parents. Tags named in duplicate candidate pairs, tags whose name
+matches a baseline tag, and tags with a `needs_review` placement remain pending until
 reviewed. Skipped semantic checks remain visible and make the report partial; they
 do not hold every otherwise eligible tag. Invalid/unresolved/skipped intake rows stay omitted.
 
@@ -339,7 +348,7 @@ export_preview_csv(preview, "preview.csv")
 Placement statuses are `proposed` (ready for addition in the preview), `reused`, `pending`, `deferred`, `excluded`,
 `unapproved`, or `blocked`. Change columns mark approved nodes/links as `new` or
 `existing`. Unflagged valid tags become `proposed` automatically; pending tags need
-duplicate review. Explicit canonical mappings do not approve every source placement: an unapproved
+duplicate review or, when the `needs_review` column is true, a choice between the producer's candidate paths. Explicit canonical mappings do not approve every source placement: an unapproved
 placement remains unapproved even when another member links the same canonical tag there.
 
 The CSV retains distinct confidence/reason variants for a source placement. It does
