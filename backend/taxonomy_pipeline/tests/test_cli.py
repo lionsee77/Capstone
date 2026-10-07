@@ -164,3 +164,58 @@ def test_merge_preview_requires_an_input(tmp_path, capsys):
 
     assert code == 1
     assert "at least one --input" in capsys.readouterr().err
+
+
+def _ambiguous_merge_run(tmp_path, saturation_report, run_id="run-1"):
+    config_path = _write_stage_config(tmp_path)
+    report = saturation_report([{
+        "recommended_action": "REVIEW_AMBIGUOUS", "parent_status": "HAS_PARENT", "incoming_ids": [9001],
+        "reason": "partial_similarity", "closest_baseline_name": "branding", "closest_baseline_score": 40.0,
+        "closest_baseline_level": "tags",
+    }], run_id=run_id)
+    case_a_output = tmp_path / "case_a_output.json"
+    main(["case-a", "--config", str(config_path), "--report", str(report), "--semantic-model", "",
+          "--output", str(case_a_output)])
+    main(["merge-preview", "--config", str(config_path), "--input", str(case_a_output),
+          "--out-dir", str(tmp_path / "merge")])
+    return config_path, report, case_a_output
+
+
+def test_bulk_decide_settles_ambiguous_tags_so_integrate_can_run(tmp_path, saturation_report, capsys):
+    config_path, report, case_a_output = _ambiguous_merge_run(tmp_path, saturation_report)
+    assert "1 sources pending review" in capsys.readouterr().err
+
+    decisions = tmp_path / "decisions.json"
+    assert main(["bulk-decide", "--config", str(config_path), "--merge-run", str(tmp_path / "merge"),
+                 "--report", str(report), "--create-below", "0.5", "--output", str(decisions)]) == 0
+    assert "drafted 1 create and 0 reuse" in capsys.readouterr().err
+    assert [decision["action"] for decision in json.loads(decisions.read_text())] == ["create"]
+
+    main(["merge-preview", "--config", str(config_path), "--input", str(case_a_output),
+          "--decisions", str(decisions), "--out-dir", str(tmp_path / "reviewed")])
+    assert "0 sources pending review" in capsys.readouterr().err
+    assert main(["integrate", "--config", str(config_path), "--merge-run", str(tmp_path / "reviewed"),
+                 "--out-dir", str(tmp_path / "enriched")]) == 0
+
+
+def test_bulk_decide_refuses_a_report_from_another_saturation_run(tmp_path, saturation_report, capsys):
+    config_path, _, _ = _ambiguous_merge_run(tmp_path, saturation_report, run_id="run-1")
+    other = saturation_report([{"recommended_action": "ADD_CANDIDATE", "parent_status": "NO_PARENT",
+                                "incoming_ids": [9002]}], run_id="run-2", name="other.json")
+    capsys.readouterr()
+
+    assert main(["bulk-decide", "--config", str(config_path), "--merge-run", str(tmp_path / "merge"),
+                 "--report", str(other), "--create-below", "0.5", "--output", str(tmp_path / "d.json")]) == 1
+    assert "use the report the producers read" in capsys.readouterr().err
+    assert not (tmp_path / "d.json").exists()
+
+
+def test_bulk_decide_will_not_overwrite_a_decisions_file_it_was_not_given(tmp_path, saturation_report, capsys):
+    config_path, report, _ = _ambiguous_merge_run(tmp_path, saturation_report)
+    decisions = tmp_path / "decisions.json"
+    decisions.write_text("[]")
+
+    assert main(["bulk-decide", "--config", str(config_path), "--merge-run", str(tmp_path / "merge"),
+                 "--report", str(report), "--create-below", "0.5", "--output", str(decisions)]) == 1
+    assert "pass it as --decisions" in capsys.readouterr().err
+    assert decisions.read_text() == "[]"

@@ -63,7 +63,7 @@ The generated SQL is the incoming SkillsFuture dataset for
 Case A (tags with their own SkillsFuture category), Case B (LLM placement for
 the rest), the merge preview that combines them, and the integrate step that
 turns the reviewed result into an enriched taxonomy snapshot - runs from there
-as `taxonomy-pipeline case-a | case-b | merge-preview | integrate`; see
+as `taxonomy-pipeline case-a | case-b | merge-preview | bulk-decide | integrate`; see
 [Classification workflow](taxonomy_pipeline/README.md#classification-workflow).
 Case B's OpenAI settings still go in `backend/.env` (copy `.env.example`).
 
