@@ -34,7 +34,7 @@ def test_writes_every_stage_report_and_leaves_duplicate_candidates_pending(tmp_p
     run = run_merge_preview(PRODUCER_FILES, baseline, out_dir=tmp_path / "run")
 
     assert sorted(path.name for path in (tmp_path / "run").iterdir()) == [
-        "deduplication.json", "preview.csv", "resolution.json", "validation.json",
+        "deduplication.json", "preview.csv", "resolution.json", "run.json", "validation.json",
     ]
     assert run.ok and run.preview.partial
     assert run.preview.counts.pending_sources > 0
@@ -58,6 +58,16 @@ def test_refuses_outputs_from_different_saturation_runs(tmp_path, baseline):
     with pytest.raises(MixedSaturationRunsError, match="run-1: case_a.json; run-2: case_b.json"):
         run_merge_preview(inputs, baseline, out_dir=tmp_path / "run")
     assert not (tmp_path / "run").exists()
+
+
+def test_records_the_saturation_run_and_review_state_for_integrate(tmp_path, baseline):
+    inputs = [_stamped(tmp_path, path, "run-1") for path in PRODUCER_FILES]
+    run = run_merge_preview(inputs, baseline, out_dir=tmp_path / "run")
+
+    info = json.loads((tmp_path / "run" / "run.json").read_text(encoding="utf-8"))
+    assert info["saturation_run_ids"] == ["run-1"]
+    assert info["pending_sources"] == run.preview.counts.pending_sources > 0
+    assert info["baseline_snapshot_id"] == run.preview.baseline_snapshot_id
 
 
 def test_accepts_outputs_from_one_saturation_run_without_warnings(tmp_path, baseline):

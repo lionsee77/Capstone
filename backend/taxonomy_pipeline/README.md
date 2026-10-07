@@ -49,13 +49,14 @@ taxonomy_pipeline/
 │   │   ├── resolution.py             #   merge 3: apply review decisions, assign temporary IDs
 │   │   ├── preview.py                #   merge 4: assemble and structurally check the combined taxonomy
 │   │   ├── export.py                 #   merge 5: preview -> CSV
-│   │   └── runner.py                 #   chains merge 1-5 for `merge-preview`
+│   │   ├── runner.py                 #   chains merge 1-5 for `merge-preview`
+│   │   └── integrate.py              #   reviewed merge run -> enriched snapshot (real IDs, additions.sql)
 │   ├── config.py                     # YAML/JSON pipeline config (datasets + metrics)
 │   ├── models.py                     # MetricResult / RunReport - one report shape everywhere
 │   ├── pipeline.py                   # run_pipeline(config) -> RunReport
 │   ├── db.py                         # SQLite run history
 │   ├── api/app.py                    # FastAPI: /metrics, /runs
-│   └── cli.py                        # `taxonomy-pipeline run|serve|case-a|case-b|merge-preview`
+│   └── cli.py                        # `taxonomy-pipeline run|serve|case-a|case-b|merge-preview|integrate`
 ├── schemas/
 │   └── classification_output.schema.json # JSON Schema for the producer contract
 └── tests/
@@ -65,8 +66,9 @@ taxonomy_pipeline/
 
 ## Classification workflow
 
-Places the new tags saturation finds into the baseline taxonomy and builds one
-reviewable merge preview. Nothing here writes to a database.
+Places the new tags saturation finds into the baseline taxonomy, builds one
+reviewable merge preview, and turns the reviewed result into an enriched
+taxonomy snapshot. Nothing here writes to a database.
 
 ```text
 taxonomy-pipeline run --output report.json     # saturation, ONCE per round
@@ -78,6 +80,9 @@ taxonomy-pipeline run --output report.json     # saturation, ONCE per round
                  validate → deduplicate → resolve → preview → preview.csv
                                       │
                  reviewer writes decisions.json, reruns merge-preview --decisions
+                                      │  nothing left pending
+                 taxonomy-pipeline integrate ─► integrations/<timestamp>/
+                 real IDs → additions.sql + baseline copies → enriched.yaml
 ```
 
 Run from `backend/taxonomy_pipeline/` (the commands default to
@@ -91,7 +96,9 @@ taxonomy-pipeline case-b --report report.json        # needs .[llm] and OPENAI_A
 taxonomy-pipeline merge-preview --input case_a_output.json --input case_b_output.json
 # review, then:
 taxonomy-pipeline merge-preview --input case_a_output.json --input case_b_output.json \
-    --decisions decisions.json
+    --decisions decisions.json --out-dir merge_runs/reviewed
+taxonomy-pipeline integrate --merge-run merge_runs/reviewed
+taxonomy-pipeline run --config integrations/<timestamp>/enriched.yaml   # score the enriched taxonomy
 ```
 
 **Run saturation once per round and give both producers the same
@@ -151,7 +158,9 @@ old proposals, so delete the checkpoint if you mean to start over. Each record a
 
 `merge-preview` chains the five merge stages and writes each one's report to
 `--out-dir` (default `merge_runs/<timestamp>/`): `validation.json`,
-`deduplication.json`, `resolution.json` and `preview.csv`.
+`deduplication.json`, `resolution.json`, `preview.csv` and `run.json` (the
+saturation run ID, inputs and review state, which `integrate` records as the
+snapshot's provenance).
 
 - Tags with no duplicate candidates are accepted with their proposed
   placements; tags named in a candidate pair stay `pending` until a decision
@@ -165,6 +174,50 @@ old proposals, so delete the checkpoint if you mean to start over. Each record a
   `--legacy-case-b FILE=SOURCE_DATASET`, and `--skip-case-a-handoffs`.
 - Exit code is non-zero if an input file is unreadable or the preview is
   blocked because the merge would introduce structural errors.
+
+### Integrate
+
+`integrate --merge-run DIR` turns a fully reviewed merge run into an enriched
+taxonomy snapshot (`--out-dir`, default `integrations/<timestamp>/`; it never
+overwrites an existing folder):
+
+```text
+integrations/<timestamp>/
+├── baseline/*.sql   byte-for-byte copies of the baseline dumps
+├── additions.sql    INSERT-only new categories, specialities, tags and links
+├── enriched.yaml    config loading baseline + additions as dataset `enriched`
+└── manifest.json    provenance, counts, ID ranges, duplicate counts, temporary -> real IDs
+```
+
+- It reruns the preview's checks against the current baseline first, and
+  refuses if the baseline changed since the merge run, an input was unreadable,
+  the batch is blocked, **any source is still pending review**, or there is
+  nothing to add.
+- It also refuses additions the client schema's unique keys would reject:
+  `tags.name` is unique (case- and accent-insensitive, `utf8mb4_general_ci`),
+  and so is each `speciality_tags` pair. In particular, two sources reviewed as
+  separate new tags with the same name (say "Python" the language and "Python"
+  the animal) can't both exist. A tag is one shared keyword, so put them in one
+  `create` decision approving both paths, `reuse` an existing tag, or exclude
+  one.
+- New rows get integer IDs after each table's baseline maximum, ordered by
+  parent and name, so rerunning on the same merge run gives identical IDs. New
+  categories and specialities are written active (`status='1'`), like the
+  baseline. Other client columns are left to their database defaults.
+- Baseline rows are only copied, never rewritten. `additions.sql` is what would
+  be applied to a database matching the baseline snapshot (the snapshot ID is in
+  its header); IDs are relative to that snapshot, so don't apply it to a
+  database that has changed since. Like the client's phpMyAdmin dumps, it starts
+  with `SET SQL_MODE = "NO_AUTO_VALUE_ON_ZERO"`, which its backslash escaping
+  relies on.
+- Before anything is written, the snapshot is reloaded through `sql_dump`. Every
+  row must round-trip exactly, and integrity must show no new orphans or dead
+  ends. New exact-duplicate names don't block (the baseline already reuses
+  speciality names across categories), but the before/after counts are in the
+  manifest and printed as a warning.
+- Records validation set aside before review (invalid, unresolved, flagged)
+  are not in the snapshot; their counts are in the manifest and printed as a
+  warning.
 
 ## Setup
 
@@ -675,9 +728,10 @@ Ruff linting and the test suite run in CI (see the root
   Subject or Others. A correct pick such as "Data analytics" (under Subject)
   therefore reaches the merge preview as a proposed *new* category under
   Industry. Tracked in #52; treat Case B rows in `preview.csv` accordingly.
-- **No promotion step:** `merge-preview` stops at a reviewable CSV. Writing the
-  merged taxonomy out, scoring it against the baseline and promoting it to the
-  next baseline is the incremental flow in #49.
+- **No promotion step:** `integrate` writes and checks an enriched snapshot,
+  and `enriched.yaml` scores it, but comparing it against the baseline and
+  promoting it to the next baseline is still the incremental flow in #49 (and
+  the PB11 evaluation, #29).
 
 - **`saturation`** recommendations are review aids, not database
   operations. Its thresholds are not yet calibrated against a hand-labelled
