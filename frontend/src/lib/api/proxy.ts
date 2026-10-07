@@ -6,6 +6,10 @@
  * only the endpoints the dashboard actually uses, and run creation is off
  * unless `PIPELINE_ALLOW_RUN_CREATION=true` is set for a trusted environment.
  * Add a route here (with a test) when the dashboard starts using a new one.
+ *
+ * Writes must also be same-origin JSON (`checkWriteRequest`): a `text/plain`
+ * or form POST from another site needs no CORS preflight, so without this a
+ * malicious page could make a visitor's browser start runs through the proxy.
  */
 
 export type ProxyEnv = {
@@ -13,7 +17,11 @@ export type ProxyEnv = {
   PIPELINE_ALLOW_RUN_CREATION?: string;
 };
 
-export type ProxyDecision = { ok: true; url: string } | { ok: false; status: 403 | 404; reason: string };
+export type ProxyRejection = { ok: false; status: 403 | 404 | 415; reason: string };
+export type ProxyDecision = { ok: true; url: string } | ProxyRejection;
+
+/** The request headers `checkWriteRequest` looks at; `Headers.get` semantics (null when absent). */
+export type WriteRequestHeaders = Pick<Headers, "get">;
 
 const DEFAULT_API_URL = "http://localhost:8000";
 const RUN_ID = /^[A-Za-z0-9_-]{1,64}$/;
@@ -47,4 +55,41 @@ export function resolveUpstream(
     return { ok: true, url: `${base}/runs` };
   }
   return notFound;
+}
+
+/**
+ * Guard for requests with a body (POST). Returns a rejection, or null when the
+ * request is a same-origin JSON request.
+ *
+ * - `Content-Type` must be `application/json`. Cross-site pages can only send
+ *   `text/plain`, form or multipart bodies without a preflight.
+ * - `Sec-Fetch-Site`, which every current browser sends, must be `same-origin`.
+ *   Non-browser clients such as curl send none and are allowed.
+ * - `Origin`, when present, must match `Host`, for browsers without
+ *   `Sec-Fetch-Site`.
+ */
+export function checkWriteRequest(headers: WriteRequestHeaders): ProxyRejection | null {
+  const mediaType = (headers.get("content-type") ?? "").split(";", 1)[0].trim().toLowerCase();
+  if (mediaType !== "application/json") {
+    return { ok: false, status: 415, reason: "Request body must be application/json" };
+  }
+
+  const fetchSite = headers.get("sec-fetch-site");
+  if (fetchSite !== null && fetchSite !== "same-origin") {
+    return { ok: false, status: 403, reason: "Cross-site requests are not allowed" };
+  }
+
+  const origin = headers.get("origin");
+  if (origin !== null) {
+    let originHost: string | null = null;
+    try {
+      originHost = new URL(origin).host;
+    } catch {
+      // `Origin: null` (sandboxed frames, file://) and junk values are treated as cross-site.
+    }
+    if (originHost === null || originHost !== headers.get("host")) {
+      return { ok: false, status: 403, reason: "Cross-site requests are not allowed" };
+    }
+  }
+  return null;
 }

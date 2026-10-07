@@ -7,19 +7,27 @@ import { RunStatusBadge } from "@/components/run-status-badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { RUNS_PAGE_SIZE, useRuns } from "@/lib/api/queries";
+import { hasOlderRuns, RUNS_PAGE_SIZE, useRuns } from "@/lib/api/queries";
 
 export function RunsTable() {
   const [limit, setLimit] = useState(RUNS_PAGE_SIZE);
   // isPlaceholderData: still showing the previous page while a larger one loads (not background polls).
-  const { data, isPending, isPlaceholderData, error } = useRuns(limit);
+  const { data, isPending, isPlaceholderData, error, refetch } = useRuns(limit);
 
   if (isPending) return <Skeleton className="h-40 w-full" />;
-  if (error) return <p className="text-sm text-destructive">Could not load runs: {error.message}</p>;
+  if (error) {
+    return (
+      <div className="flex flex-col items-start gap-2">
+        <p className="text-sm text-destructive">Could not load runs: {error.message}</p>
+        <Button variant="outline" onClick={() => refetch()}>
+          Try again
+        </Button>
+      </div>
+    );
+  }
   if (data.length === 0) return <p className="text-sm text-muted-foreground">No runs yet.</p>;
 
-  // A full page means there may be older runs; the API returns fewer once history runs out.
-  const mayHaveMore = data.length >= limit;
+  const mayHaveMore = hasOlderRuns(data.length, limit, isPlaceholderData);
 
   return (
     <div className="flex flex-col gap-4">

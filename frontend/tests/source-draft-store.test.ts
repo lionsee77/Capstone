@@ -17,18 +17,37 @@ describe("source draft store", () => {
     expect(useSourceDraftStore.getState().datasets).toEqual([{ ...dataset, paths: ["/data/sf-v2.sql"] }]);
   });
 
-  it("toggles a metric on with its default params and off again", () => {
-    const { toggleMetric } = useSourceDraftStore.getState();
-    toggleMetric("saturation", { threshold: 90 });
-    expect(useSourceDraftStore.getState().metrics).toEqual([{ id: "saturation", params: { threshold: 90 } }]);
-    toggleMetric("saturation");
+  it("adds a metric with a copy of its default params and removes it by key", () => {
+    const defaults = { threshold: 90 };
+    const key = useSourceDraftStore.getState().addMetric("saturation", defaults);
+    defaults.threshold = 10;
+    expect(useSourceDraftStore.getState().metrics).toEqual([{ key, id: "saturation", params: { threshold: 90 } }]);
+    useSourceDraftStore.getState().removeMetric(key);
     expect(useSourceDraftStore.getState().metrics).toEqual([]);
   });
 
+  it("keeps the same metric twice with different params, as the backend allows", () => {
+    const { addMetric, setMetricParams, removeMetric } = useSourceDraftStore.getState();
+    const first = addMetric("integrity", { dataset: "original" });
+    const second = addMetric("integrity", { dataset: "skillsfuture" });
+
+    setMetricParams(second, { dataset: "skillsfuture", fuzzy_threshold: 90 });
+    expect(useSourceDraftStore.getState().toPipelineConfig().metrics).toEqual([
+      { id: "integrity", params: { dataset: "original" } },
+      { id: "integrity", params: { dataset: "skillsfuture", fuzzy_threshold: 90 } },
+    ]);
+
+    removeMetric(first);
+    expect(useSourceDraftStore.getState().metrics.map((m) => m.key)).toEqual([second]);
+  });
+
   it("produces a config the API schema accepts", () => {
-    const { upsertDataset, toggleMetric } = useSourceDraftStore.getState();
+    const { upsertDataset, addMetric } = useSourceDraftStore.getState();
     upsertDataset(dataset);
-    toggleMetric("integrity");
-    expect(pipelineConfigSchema.safeParse(useSourceDraftStore.getState().toPipelineConfig()).success).toBe(true);
+    addMetric("integrity");
+    const config = useSourceDraftStore.getState().toPipelineConfig();
+    expect(pipelineConfigSchema.safeParse(config).success).toBe(true);
+    // Draft-only keys never reach the API.
+    expect(config.metrics[0]).not.toHaveProperty("key");
   });
 });

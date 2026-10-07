@@ -21,6 +21,17 @@ export function pollWhileActive(runs: { status: RunStatus }[] | undefined): numb
 
 export const RUNS_PAGE_SIZE = 50;
 
+/**
+ * Whether older runs may exist beyond the rows shown. A full page means there
+ * may be more; the API returns fewer once history runs out. While a larger
+ * page loads, the rows shown are the previous page's (`showingPreviousPage`),
+ * so compare against the limit they were fetched with, not the one requested.
+ */
+export function hasOlderRuns(rowCount: number, requestedLimit: number, showingPreviousPage: boolean): boolean {
+  const shownLimit = showingPreviousPage ? requestedLimit - RUNS_PAGE_SIZE : requestedLimit;
+  return rowCount >= shownLimit;
+}
+
 export const queryKeys = {
   metrics: ["metrics"] as const,
   runs: ["runs"] as const,
