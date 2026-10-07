@@ -8,7 +8,7 @@ import pytest
 
 from taxonomy_pipeline.classification import integrate as integrate_module
 from taxonomy_pipeline.classification.integrate import IntegrationError, _additions_sql, integrate
-from taxonomy_pipeline.classification.models import ResolutionReport, ReviewDecision
+from taxonomy_pipeline.classification.models import ResolutionReport, ReviewDecision, TaxonomyPath
 from taxonomy_pipeline.classification.runner import load_decisions, run_merge_preview
 from taxonomy_pipeline.config import DatasetConfig, load_config
 from taxonomy_pipeline.datasets.base import CONCEPTS, TaxonomyDataset
@@ -231,3 +231,31 @@ def test_refuses_flagged_review_candidates_until_a_reviewer_approves_one_path(tm
     assert [categories[row["category_id"]] for row in fire] == ["Data analytics"]  # the approved candidate only
     assert {row["name"] for row in enriched.tags[len(taxonomy.tags):]} == {"Fire Prevention", "Spreadsheet Modelling"}
     assert result.counts["tags"] == 2
+
+
+def test_a_reviewer_can_map_an_ambiguous_tag_onto_the_existing_tag_it_resembles(tmp_path, baseline):
+    # What Case A/B emit for a REVIEW_AMBIGUOUS tag: a placement, flagged, naming the close baseline tag.
+    path = tmp_path / "ambiguous.json"
+    path.write_text(json.dumps([{
+        "source_dataset": "skillsfuture", "tag_id": "77", "tag": "Structured Query Language",
+        "original_classification": "classified", "service": "Subject", "category": "Data analytics",
+        "speciality": "Data presentation", "confidence": 0.6, "needs_review": True,
+        "reason": "Proposed. Needs review: saturation could not confirm this tag is new. It is close to existing "
+                  "tag 'SQL' in meaning (0.68).",
+    }]), encoding="utf-8")
+    taxonomy = SqlDumpSource(baseline.name, baseline.paths).load()
+    reuse_sql = ReviewDecision(
+        members=[{"source_dataset": "skillsfuture", "tag_id": "77"}], action="reuse", existing_tag_id=200,
+        approved_paths=[TaxonomyPath(service="Subject", category="Data analytics", speciality="Data presentation")],
+        reason="Same skill as SQL.",
+    )
+
+    unreviewed = run_merge_preview([path], taxonomy, out_dir=tmp_path / "unreviewed")
+    assert unreviewed.preview.counts.pending_sources == 1
+    run = run_merge_preview([path], taxonomy, out_dir=tmp_path / "reviewed", decisions=[reuse_sql])
+    resolution = ResolutionReport.model_validate_json((run.out_dir / "resolution.json").read_text(encoding="utf-8"))
+    result = integrate(resolution, baseline, out_dir=tmp_path / "out")
+
+    assert result.counts["tags"] == 0  # no new tag: the skill is SQL
+    enriched = load_datasets(load_config(tmp_path / "out" / "enriched.yaml"))["enriched"]
+    assert {(link["speciality_id"], link["tag_id"]) for link in enriched.speciality_tags} == {(122, 200), (120, 200)}

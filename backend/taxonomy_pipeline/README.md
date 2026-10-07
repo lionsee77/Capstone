@@ -50,6 +50,7 @@ taxonomy_pipeline/
 │   │   ├── preview.py                #   merge 4: assemble and structurally check the combined taxonomy
 │   │   ├── export.py                 #   merge 5: preview -> CSV
 │   │   ├── runner.py                 #   chains merge 1-5 for `merge-preview`
+│   │   ├── bulk_decisions.py         #   `bulk-decide`: draft decisions for ambiguous tags by similarity
 │   │   └── integrate.py              #   reviewed merge run -> enriched snapshot (real IDs, additions.sql)
 │   ├── config.py                     # YAML/JSON pipeline config (datasets + metrics)
 │   ├── models.py                     # MetricResult / RunReport - one report shape everywhere
@@ -72,14 +73,15 @@ taxonomy snapshot. Nothing here writes to a database.
 
 ```text
 taxonomy-pipeline run --output report.json     # saturation, ONCE per round
-        │  ADD_CANDIDATE tags, split by parent_status (classification/routing.py)
+        │  ADD_CANDIDATE + REVIEW_AMBIGUOUS tags, split by parent_status (classification/routing.py)
         ├── HAS_PARENT ─► taxonomy-pipeline case-a ─► case_a_output.json
         └── NO_PARENT ──► taxonomy-pipeline case-b ─► case_b_output.json
                                       │
                  taxonomy-pipeline merge-preview ─► merge_runs/<timestamp>/
                  validate → deduplicate → resolve → preview → preview.csv
                                       │
-                 reviewer writes decisions.json, reruns merge-preview --decisions
+                 taxonomy-pipeline bulk-decide ─► decisions.json (clear-cut ambiguous tags)
+                 reviewer edits decisions.json, reruns merge-preview --decisions
                                       │  nothing left pending
                  taxonomy-pipeline integrate ─► integrations/<timestamp>/
                  real IDs → additions.sql + baseline copies → enriched.yaml
@@ -94,7 +96,9 @@ taxonomy-pipeline run --config configs/original_vs_skillsfuture.yaml --output re
 taxonomy-pipeline case-a --report report.json
 taxonomy-pipeline case-b --report report.json        # needs .[llm] and OPENAI_API_KEY
 taxonomy-pipeline merge-preview --input case_a_output.json --input case_b_output.json
-# review, then:
+# optionally draft decisions for the clear-cut ambiguous tags, then review the rest:
+taxonomy-pipeline bulk-decide --merge-run merge_runs/<timestamp> --report report.json \
+    --create-below 0.6 --reuse-above 0.9 --output decisions.json
 taxonomy-pipeline merge-preview --input case_a_output.json --input case_b_output.json \
     --decisions decisions.json --out-dir merge_runs/reviewed
 taxonomy-pipeline integrate --merge-run merge_runs/reviewed
@@ -102,9 +106,16 @@ taxonomy-pipeline run --config integrations/<timestamp>/enriched.yaml   # score 
 ```
 
 **Run saturation once per round and give both producers the same
-`report.json`.** Case A takes the report's `ADD_CANDIDATE` + `HAS_PARENT` tags,
-Case B its `ADD_CANDIDATE` + `NO_PARENT` tags, so together they cover every new
-tag exactly once. Both fail if the report is missing or has no saturation
+`report.json`.** Case A takes the report's `HAS_PARENT` tags and Case B its
+`NO_PARENT` tags, each from both `ADD_CANDIDATE` (nothing in the baseline is
+close) and `REVIEW_AMBIGUOUS` (something is moderately close, so saturation
+can't confirm the tag is new). Together they cover every new or possibly new
+tag exactly once; duplicates (`SKIP_*`), `REVIEW_NEW_PLACEMENT` and
+`REVIEW_OTHER_LEVEL` tags are not routed. Ambiguous tags are placed like the
+others, but every placement is flagged `needs_review` and its `reason` names
+the baseline concept saturation found close (`routing.mark_ambiguous`), so
+`merge-preview` holds them for a reviewer. On the SkillsFuture run that adds
+1,225 `HAS_PARENT` and 185 `NO_PARENT` tags (about 37 more Case B batches of 5). Both fail if the report is missing or has no saturation
 result for `--incoming`. Each record they write carries the report's `run_id`
 as `saturation_run_id`, and `merge-preview` refuses to combine files from
 different runs (unstamped files only produce a warning). `report.json` and the
@@ -118,7 +129,8 @@ fields - `source_dataset`, `tag_id`, `tag`, `original_classification`,
 `service`, `category`, `speciality`, `confidence` and `reason`. Unresolved
 placements use explicit `null` for service, category, speciality and
 confidence. One optional field, `needs_review: true`, marks a placement the
-producer can only offer as a candidate (Case A's review candidates); it is
+producer can only offer as a candidate (Case A's review candidates), or the
+placement of a tag saturation couldn't confirm as new (both producers); it is
 omitted when false, and resolution keeps such a tag pending until a reviewer
 decides. Extra fields (Case B's `action`, the `saturation_run_id` stamp) are
 allowed and ignored by the merge stages. Parse an array with
@@ -167,9 +179,13 @@ snapshot's provenance).
 
 - Tags with no duplicate candidates are accepted with their proposed
   placements; tags named in a candidate pair, and tags with a `needs_review`
-  placement (Case A's review candidates, shown in the `needs_review` column of
-  `preview.csv`), stay `pending` until a decision covers them. For a review
-  candidate, approve the one path to keep with `create` and `approved_paths`
+  placement (Case A's review candidates and every ambiguous tag, shown in the
+  `needs_review` column of `preview.csv`), stay `pending` until a decision
+  covers them. For an ambiguous tag the placement's `reason` names what it
+  resembles: decide `create` (it is new), `reuse` with `existing_tag_id` (it is
+  that existing tag; `approved_paths` still says where to link it), or
+  `exclude`/`defer`. For a review candidate, approve the one path to keep with
+  `create` and `approved_paths`
   (see [Resolve reviewed tags and links](CLASSIFICATION_OUTPUT_CONTRACT.md#resolve-reviewed-tags-and-links)
   for the `ReviewDecision` format, and
   `tests/fixtures/classification/review_decisions.json` for an example).
@@ -180,6 +196,42 @@ snapshot's provenance).
   `--legacy-case-b FILE=SOURCE_DATASET`, and `--skip-case-a-handoffs`.
 - Exit code is non-zero if an input file is unreadable or the preview is
   blocked because the merge would introduce structural errors.
+
+### Bulk decisions for ambiguous tags
+
+Every ambiguous tag waits for a decision, which on SkillsFuture is over a
+thousand tags. `bulk-decide` drafts decisions for the clear-cut ones from
+saturation's closest-match similarity (meaning when the report has it, else
+spelling rescaled to 0-1) and leaves the middle band for a person:
+
+```bash
+taxonomy-pipeline bulk-decide --merge-run merge_runs/<timestamp> --report report.json \
+    --create-below 0.6 --reuse-above 0.9 [--decisions decisions.json] --output decisions.json
+```
+
+| Option | Drafts |
+|---|---|
+| `--create-below X` | `create` for an ambiguous tag whose closest matches by meaning *and* spelling all score below `X`, at its single highest-confidence placement |
+| `--reuse-above Y` | `reuse` when the closest match (by meaning when the report has it, since a close spelling alone is unconfirmed; else by spelling) is one baseline *tag* scoring at least `Y`, linked at that same placement |
+
+- It only touches pending tags that saturation marked `REVIEW_AMBIGUOUS` and
+  that are held for nothing else. Tags in a duplicate candidate pair, tags
+  matching a baseline tag by name, Case A's review candidates for new tags, and
+  tags already in `--decisions` are left as they are.
+- The output is a draft: every decision carries a `Bulk: ...` reason with the
+  score and threshold, and goes through `merge-preview --decisions` like a
+  hand-written one, so it appears in `preview.csv` and can be edited or removed.
+- `--report` must be the report the producers read: it refuses a merge run
+  whose `run.json` records a different saturation run, or none (unstamped
+  inputs). It also refuses a baseline that changed since the merge run, and
+  thresholds outside 0-1. `--output` is never overwritten unless it is also the
+  `--decisions` file being extended.
+- On a lexical-only SkillsFuture run (every ambiguous score is 0.60 or more
+  there, since lower spellings are `ADD_CANDIDATE`), `--create-below 0.7`
+  drafts 737 creates and leaves 625 ambiguous tags for review; pending sources
+  drop from 1,749 to 1,012. No ambiguous tag scored 0.9 against a baseline tag,
+  so no reuses. Thresholds are uncalibrated (#47): spot-check a sample of the
+  drafted creates before applying them.
 
 ### Integrate
 
@@ -421,7 +473,7 @@ export other groups.
 ## Category adaptation (Case A)
 
 `category_adaptation` is the next step after saturation for tags a saturation
-run already flagged as new (`ADD_CANDIDATE`) **and** that have a parent in
+run flagged as new or possibly new (`ADD_CANDIDATE` or `REVIEW_AMBIGUOUS`) **and** that have a parent in
 their own source (saturation's `parent_status == HAS_PARENT` on that tag -
 tags with `NO_PARENT` have nothing of their own to place and are Case B's job
 instead, not this metric's).
@@ -485,7 +537,7 @@ Defaults come from `CategoryAdaptationMetric.default_params`
 |---|---|---|
 | `baseline` | - | Existing taxonomy dataset name |
 | `incoming` | - | The one source dataset name being adapted |
-| `new_tag_ids` | - | Required; the confirmed-new tag IDs to place (from saturation's `ADD_CANDIDATE` + `HAS_PARENT` tags) |
+| `new_tag_ids` | - | Required; the tag IDs to place (saturation's `ADD_CANDIDATE` and `REVIEW_AMBIGUOUS` + `HAS_PARENT` tags) |
 | `threshold` | 90 | RapidFuzz score (0-100) for a "close spelling"; never enough on its own |
 | `semantic_model` | none | Optional sentence-transformers model; without it only exact/spelling evidence is used |
 | `semantic_threshold` | 0.6 | Cosine similarity for a meaning match, used for both categories and specialities. Lower than saturation's tag default (0.70): categories are broader, less precisely-worded concepts, and real runs show correct matches scoring as low as 0.63-0.69 |
@@ -528,7 +580,7 @@ and a review candidate from its candidate category (`candidate_category_*`,
 ### Running it end to end
 
 `taxonomy-pipeline case-a` reads the tag IDs from a saved saturation report
-(`ADD_CANDIDATE` + `HAS_PARENT`, see [Classification workflow](#classification-workflow)),
+(`ADD_CANDIDATE` or `REVIEW_AMBIGUOUS`, + `HAS_PARENT`; see [Classification workflow](#classification-workflow)),
 runs `category_adaptation` on them, serializes the placements via
 `classification.from_category_adaptation.build_classification_outputs`, and
 validates the result against the contract before writing it out
@@ -769,6 +821,20 @@ Ruff linting and the test suite run in CI (see the root
 
 ## Known gaps
 
+- **Ambiguous tags make a large review queue:** routing every
+  `REVIEW_AMBIGUOUS` tag holds each one for a decision. A lexical-only
+  SkillsFuture run gives 1,749 pending sources and 5,769 flagged Case A
+  records (up to 48 for one tag: 16 partly matched sectors x 3 candidates).
+  `bulk-decide` settles the clear-cut ones (1,749 -> 1,012 pending at
+  `--create-below 0.7`), but its thresholds are uncalibrated; calibrating
+  saturation's thresholds (#47) so clearly new tags become `ADD_CANDIDATE` is
+  what shrinks the queue properly.
+- **Every created ambiguous tag becomes its own speciality:** Case A proposes a
+  skill with no matching speciality as a new speciality named after itself, so
+  the 737 bulk creates above add about as many specialities, many close to an
+  existing one (e.g. created at 0.69 spelling similarity to 'Performance
+  Management'). Whether a loosely similar skill should instead be linked under
+  the speciality it resembles is a team decision.
 - **Case A matches tags by name only:** the content step compares the tag
   name with baseline speciality names, so a skill whose name shares nothing
   with its natural home (e.g. a functional skill used in one sector) falls

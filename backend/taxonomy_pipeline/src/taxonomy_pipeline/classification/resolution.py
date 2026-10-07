@@ -163,7 +163,7 @@ def _baseline_match_reasons(tags: dict[SourceKey, TagProposal], taxonomy: Taxono
     return reasons
 
 
-# Hold tags whose producer could only offer candidate placements, naming how many a reviewer chooses from.
+# Hold tags whose producer flagged a placement (a candidate, or a tag saturation couldn't confirm as new).
 def _producer_review_reasons(tags: dict[SourceKey, TagProposal]) -> dict[SourceKey, str]:
     reasons = {}
     for key, tag in tags.items():
@@ -171,8 +171,9 @@ def _producer_review_reasons(tags: dict[SourceKey, TagProposal]) -> dict[SourceK
                    for row in tag.placements if row.needs_review}
         if flagged:
             reasons[key] = (
-                f"Producer requested review: {len(flagged)} candidate placement(s). Approve the right path with a "
-                "create decision, or exclude/defer the tag."
+                f"Producer requested review: {len(flagged)} candidate placement(s); each placement's reason says "
+                "why. Approve the right path with a create decision, map it to an existing tag with reuse, or "
+                "exclude/defer the tag."
             )
     return reasons
 

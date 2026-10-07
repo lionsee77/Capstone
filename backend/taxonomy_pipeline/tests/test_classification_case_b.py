@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import csv
 import json
 from types import SimpleNamespace
 
@@ -243,3 +244,25 @@ def test_missing_llm_dependencies_explain_the_extra(monkeypatch):
     monkeypatch.setattr(builtins, "__import__", without_openai)
     with pytest.raises(CaseBError, match=r"\.\[llm\]"):
         case_b._openai_client(debug=False)
+
+
+def test_flags_ambiguous_tags_for_review_in_the_json_and_csv(tmp_path, workbook, saturation_report):
+    concepts = [
+        {"recommended_action": "ADD_CANDIDATE", "parent_status": "NO_PARENT", "incoming_ids": [3001]},
+        {"recommended_action": "REVIEW_AMBIGUOUS", "parent_status": "NO_PARENT", "incoming_ids": [3002],
+         "reason": "partial_similarity", "closest_semantic_baseline_name": "Lighting Design",
+         "closest_semantic_score": 0.61, "closest_semantic_baseline_level": "tags"},
+    ]
+    client = StubClient(_response(PROPOSAL, {**PROPOSAL, "tag_id": "3002", "category": "Arts", "speciality": "Stage"}))
+    output = tmp_path / "case_b_output.json"
+
+    records = asyncio.run(run_case_b(
+        _datasets(), saturation_report(concepts), baseline="original", incoming="skillsfuture",
+        unique_skills=workbook, output=output, client=client,
+    ))
+
+    assert "needs_review" not in records[0]
+    assert records[1]["needs_review"] is True
+    assert "tag 'Lighting Design' in meaning (0.61)" in records[1]["reason"]
+    with output.with_suffix(".csv").open(encoding="utf-8") as stream:
+        assert [row["needs_review"] for row in csv.DictReader(stream)] == ["", "True"]

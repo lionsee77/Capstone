@@ -1,7 +1,8 @@
 """Case A: place new tags that bring their own source category and speciality.
 
-Which tags are new comes from a saved saturation report (see `routing.py`), the
-same file Case B reads, so both producers split one result. Placement itself is
+Which tags are new, or possibly new, comes from a saved saturation report (see
+`routing.py`), the same file Case B reads, so both producers split one result.
+Possibly new (`REVIEW_AMBIGUOUS`) tags are placed the same way and flagged for review. Placement itself is
 `category_adaptation`; this module only routes tags into it and serializes the
 placements into the shared classification contract.
 """
@@ -14,7 +15,7 @@ from ..datasets.base import LoadedDataset
 from ..metrics.category_adaptation import CategoryAdaptationMetric
 from .from_category_adaptation import build_classification_outputs
 from .models import CLASSIFICATION_OUTPUTS
-from .routing import RUN_ID_FIELD, case_a_tag_ids, load_saturation
+from .routing import RUN_ID_FIELD, case_a_tag_ids, load_saturation, mark_ambiguous
 
 
 class CaseAError(RuntimeError):
@@ -41,6 +42,6 @@ def run_case_a(
         raise CaseAError(f"category_adaptation failed: {result.summary}")
 
     outputs = build_classification_outputs(result.details["placements"], source_dataset=incoming)
-    records = CLASSIFICATION_OUTPUTS.dump_python(outputs, mode="json")
+    records = mark_ambiguous(CLASSIFICATION_OUTPUTS.dump_python(outputs, mode="json"), saturation)
     CLASSIFICATION_OUTPUTS.validate_python(records)  # round-trip check before anything is written
     return [{**record, RUN_ID_FIELD: saturation.run_id} for record in records]

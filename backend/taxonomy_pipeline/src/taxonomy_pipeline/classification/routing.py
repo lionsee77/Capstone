@@ -2,9 +2,17 @@
 
 Saturation runs once per classification round (`taxonomy-pipeline run
 --output report.json`) and both producers read that same file, so they always
-divide the same set of new tags: `ADD_CANDIDATE` tags with a parent in their own
-source go to Case A, tags without one go to Case B. Keeping the rule here, in one
-place, means the two halves cannot overlap or leave a gap.
+divide the same set of tags: tags with a parent in their own source go to Case A,
+tags without one go to Case B. Keeping the rule here, in one place, means the two
+halves cannot overlap or leave a gap.
+
+Both `ADD_CANDIDATE` tags (nothing in the baseline is close) and `REVIEW_AMBIGUOUS`
+tags (something is moderately close, so saturation could not confirm the tag is
+new) are routed. The producers place ambiguous tags like any other, but flag every
+placement `needs_review` and name the close baseline concept in its `reason`
+(`mark_ambiguous`), so merge-preview holds them until a reviewer decides whether
+each one is new (`create`), an existing tag (`reuse`), or neither (`exclude`/`defer`).
+Duplicates (`SKIP_*`) and other review outcomes are not routed.
 
 Each producer stamps the report's `run_id` into its records as
 `saturation_run_id`; the merge-preview runner refuses to combine outputs from
@@ -17,7 +25,10 @@ from pathlib import Path
 from typing import Any
 
 ADD_CANDIDATE = "ADD_CANDIDATE"
+REVIEW_AMBIGUOUS = "REVIEW_AMBIGUOUS"
+ROUTED_ACTIONS = {ADD_CANDIDATE, REVIEW_AMBIGUOUS}
 RUN_ID_FIELD = "saturation_run_id"
+_LEVEL_NOUNS = {"services": "service", "categories": "category", "specialities": "speciality", "tags": "tag"}
 
 
 class SaturationReport:
@@ -43,6 +54,15 @@ class SaturationReport:
             for tag_id in concept.get("incoming_ids", [])
         ]
         return list(dict.fromkeys(tag_ids))
+
+    def ambiguous_matches(self) -> dict[str, dict[str, Any]]:
+        """Each `REVIEW_AMBIGUOUS` tag's saturation entry, keyed by tag ID as a string."""
+        return {
+            str(tag_id): concept
+            for concept in self.step["by_concept_level"]["tags"]["ambiguous_concepts"]
+            if concept.get("recommended_action") == REVIEW_AMBIGUOUS
+            for tag_id in concept.get("incoming_ids", [])
+        }
 
 
 def load_saturation(path: str | Path, incoming: str) -> SaturationReport:
@@ -81,16 +101,51 @@ def _require(tag_ids: list[Any], report: SaturationReport, parent_status: str, c
     if not tag_ids:
         raise ValueError(
             f"No {case} tags in the saturation report for {report.incoming!r}; expected "
-            f"recommended_action={ADD_CANDIDATE} and parent_status={parent_status}."
+            f"recommended_action in {sorted(ROUTED_ACTIONS)} and parent_status={parent_status}."
         )
     return tag_ids
 
 
 def case_a_tag_ids(report: SaturationReport) -> list[Any]:
-    """New tags that have a category of their own in the incoming source."""
-    return _require(report.tag_ids({ADD_CANDIDATE}, "HAS_PARENT"), report, "HAS_PARENT", "Case A")
+    """New or possibly new tags that have a category of their own in the incoming source."""
+    return _require(report.tag_ids(ROUTED_ACTIONS, "HAS_PARENT"), report, "HAS_PARENT", "Case A")
 
 
 def case_b_tag_ids(report: SaturationReport) -> list[Any]:
-    """New tags with nothing of their own to place against; Case B classifies them with an LLM."""
-    return _require(report.tag_ids({ADD_CANDIDATE}, "NO_PARENT"), report, "NO_PARENT", "Case B")
+    """New or possibly new tags with nothing of their own to place against; Case B classifies them with an LLM."""
+    return _require(report.tag_ids(ROUTED_ACTIONS, "NO_PARENT"), report, "NO_PARENT", "Case B")
+
+
+def _similarity_note(concept: dict[str, Any]) -> str:
+    """What saturation found close to an ambiguous tag, for the reviewer."""
+    hints = []
+    semantic, lexical = concept.get("closest_semantic_baseline_name"), concept.get("closest_baseline_name")
+    if semantic:
+        level = _LEVEL_NOUNS.get(concept.get("closest_semantic_baseline_level"), "concept")
+        hints.append(f"{level} '{semantic}' in meaning ({concept.get('closest_semantic_score')})")
+    if lexical and lexical != semantic:
+        level = _LEVEL_NOUNS.get(concept.get("closest_baseline_level"), "concept")
+        hints.append(f"{level} '{lexical}' in spelling ({concept.get('closest_baseline_score')})")
+    similar = f" It is close to existing {' and '.join(hints)}." if hints else ""
+    return (
+        f" Needs review: saturation could not confirm this tag is new ({concept.get('reason')}).{similar} "
+        "Decide whether it is new (create, approving the right path), an existing tag (reuse), or neither "
+        "(exclude/defer)."
+    )
+
+
+def mark_ambiguous(records: list[dict[str, Any]], report: SaturationReport) -> list[dict[str, Any]]:
+    """Flag every placed record of a `REVIEW_AMBIGUOUS` tag `needs_review`, with saturation's evidence.
+
+    Both producers call this on their contract records, so an ambiguous tag is held
+    for review whichever case placed it. Unresolved records (no placement) are left
+    as they are: the contract only allows the flag on a placement a reviewer can approve.
+    """
+    ambiguous = report.ambiguous_matches()
+    marked = []
+    for record in records:
+        concept = ambiguous.get(str(record["tag_id"]))
+        if concept is not None and record.get("category") is not None:
+            record = {**record, "needs_review": True, "reason": record["reason"] + _similarity_note(concept)}
+        marked.append(record)
+    return marked

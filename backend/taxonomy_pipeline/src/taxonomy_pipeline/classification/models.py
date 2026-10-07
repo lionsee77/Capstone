@@ -55,11 +55,13 @@ class ClassificationOutput(BaseModel):
     confidence: Confidence | None
     reason: NonBlankText
     # The one optional field. A producer sets it on a placement it can only offer as a
-    # candidate (e.g. one of several possible categories), so resolution holds the tag
-    # for a human decision instead of accepting it by default.
+    # candidate (e.g. one of several possible categories), or on any placement of a tag
+    # saturation couldn't confirm as new, so resolution holds the tag for a human
+    # decision instead of accepting it by default.
     needs_review: bool = Field(default=False, description=(
-        "Optional. True when the producer could only propose this placement as a candidate; the tag stays "
-        "pending until a reviewer approves one of its placements. Omitted when false."
+        "Optional. True when this placement needs a human decision: a candidate the producer could only "
+        "propose, or a tag saturation could not confirm as new. The tag stays pending until a reviewer "
+        "decides. Omitted when false."
     ))
 
     @model_validator(mode="after")

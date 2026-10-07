@@ -1,11 +1,12 @@
-"""`taxonomy-pipeline run|serve|case-a|case-b|merge-preview|integrate`
+"""`taxonomy-pipeline run|serve|case-a|case-b|merge-preview|bulk-decide|integrate`
 
 Every command is a thin wrapper around one library function, so the CLI never
 holds logic of its own: `run` calls `pipeline.run_pipeline` - the exact same
 function the FastAPI `/runs` route calls - plus optional SQLite persistence and
 a JSON report on stdout or a file. The classification commands call
 `classification.case_a.run_case_a`, `classification.case_b.run_case_b`,
-`classification.runner.run_merge_preview` and `classification.integrate.integrate`.
+`classification.runner.run_merge_preview`, `classification.bulk_decisions.draft_decisions`
+and `classification.integrate.integrate`.
 """
 from __future__ import annotations
 
@@ -148,6 +149,49 @@ def _cmd_merge_preview(args: argparse.Namespace) -> int:
     return 0 if run.ok else 1
 
 
+def _cmd_bulk_decide(args: argparse.Namespace) -> int:
+    from .classification.bulk_decisions import draft_decisions
+    from .classification.models import ResolutionReport
+    from .classification.routing import load_saturation
+    from .classification.runner import REVIEW_DECISIONS, load_decisions
+
+    merge_run, output = Path(args.merge_run), Path(args.output)
+    try:
+        if output.exists() and (not args.decisions or output.resolve() != Path(args.decisions).resolve()):
+            raise ValueError(f"{output} already exists; pass it as --decisions to extend it, or pick another --output")
+        resolution = ResolutionReport.model_validate_json((merge_run / "resolution.json").read_text(encoding="utf-8"))
+        saturation = load_saturation(args.report, args.incoming)
+        run_info = merge_run / "run.json"
+        run_ids = (json.loads(run_info.read_text(encoding="utf-8")).get("saturation_run_ids", [])
+                   if run_info.exists() else [])
+        if not run_ids:
+            raise ValueError(f"{merge_run} records no saturation run (unstamped inputs, or written before run.json "
+                             "had one), so its tags can't be tied to a report; rerun the producers and merge-preview")
+        if run_ids != [saturation.run_id]:
+            raise ValueError(f"{merge_run} came from saturation run(s) {run_ids}, but {args.report} is "
+                             f"{saturation.run_id!r}; use the report the producers read")
+        baseline = _datasets(args, args.baseline)[args.baseline]
+        draft = draft_decisions(
+            resolution, saturation, baseline, create_below=args.create_below, reuse_at_or_above=args.reuse_above,
+            existing=load_decisions(args.decisions) if args.decisions else [],
+        )
+    except (OSError, ValueError) as exc:
+        print(f"[FAILED] bulk-decide: {exc}", file=sys.stderr)
+        return 1
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_bytes(REVIEW_DECISIONS.dump_json(draft.decisions, indent=2, exclude_defaults=True) + b"\n")
+    counts = draft.counts
+    print(
+        f"[OK] drafted {counts['create']} create and {counts['reuse']} reuse decision(s); "
+        f"{counts['left_for_review']} ambiguous tag(s) left for review, "
+        f"{counts['held_for_another_reason']} held for another reason, {counts['not_ambiguous']} other pending, "
+        f"{counts['already_decided']} already decided",
+        file=sys.stderr,
+    )
+    print(f"wrote {output} ({len(draft.decisions)} decisions); apply it with merge-preview --decisions {output}")
+    return 0
+
+
 def _cmd_integrate(args: argparse.Namespace) -> int:
     from .classification.integrate import IntegrationError, integrate
     from .classification.models import ResolutionReport
@@ -239,6 +283,18 @@ def build_parser() -> argparse.ArgumentParser:
     merge.add_argument("--semantic-model", help="sentence model for semantic duplicate candidates")
     merge.add_argument("--out-dir", help="where to write the reports (default: merge_runs/<timestamp>)")
     merge.set_defaults(func=_cmd_merge_preview)
+
+    bulk = subparsers.add_parser("bulk-decide", help="draft decisions for ambiguous tags by saturation similarity")
+    _add_dataset_args(bulk)
+    bulk.add_argument("--merge-run", required=True, help="merge-preview output folder (merge_runs/<timestamp>)")
+    bulk.add_argument("--report", default="report.json", help="the saturation report Case A and Case B read")
+    bulk.add_argument("--create-below", type=float,
+                      help="create tags whose closest-match similarity (0-1) is below this")
+    bulk.add_argument("--reuse-above", type=float,
+                      help="reuse the closest baseline tag when similarity (0-1) is at or above this")
+    bulk.add_argument("--decisions", help="existing decisions to keep and extend")
+    bulk.add_argument("--output", default="decisions.json", help="where to write all decisions")
+    bulk.set_defaults(func=_cmd_bulk_decide)
 
     integrate = subparsers.add_parser("integrate", help="turn a fully reviewed merge run into an enriched taxonomy")
     _add_dataset_args(integrate, incoming=False)
