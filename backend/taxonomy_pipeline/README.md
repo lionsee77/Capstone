@@ -193,6 +193,13 @@ integrations/<timestamp>/
   refuses if the baseline changed since the merge run, an input was unreadable,
   the batch is blocked, **any source is still pending review**, or there is
   nothing to add.
+- It also refuses additions the client schema's unique keys would reject:
+  `tags.name` is unique (case- and accent-insensitive, `utf8mb4_general_ci`),
+  and so is each `speciality_tags` pair. In particular, two sources reviewed as
+  separate new tags with the same name (say "Python" the language and "Python"
+  the animal) can't both exist. A tag is one shared keyword, so put them in one
+  `create` decision approving both paths, `reuse` an existing tag, or exclude
+  one.
 - New rows get integer IDs after each table's baseline maximum, ordered by
   parent and name, so rerunning on the same merge run gives identical IDs. New
   categories and specialities are written active (`status='1'`), like the
@@ -200,7 +207,9 @@ integrations/<timestamp>/
 - Baseline rows are only copied, never rewritten. `additions.sql` is what would
   be applied to a database matching the baseline snapshot (the snapshot ID is in
   its header); IDs are relative to that snapshot, so don't apply it to a
-  database that has changed since.
+  database that has changed since. Like the client's phpMyAdmin dumps, it starts
+  with `SET SQL_MODE = "NO_AUTO_VALUE_ON_ZERO"`, which its backslash escaping
+  relies on.
 - Before anything is written, the snapshot is reloaded through `sql_dump`. Every
   row must round-trip exactly, and integrity must show no new orphans or dead
   ends. New exact-duplicate names don't block (the baseline already reuses

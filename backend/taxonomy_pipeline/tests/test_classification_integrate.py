@@ -8,10 +8,10 @@ import pytest
 
 from taxonomy_pipeline.classification import integrate as integrate_module
 from taxonomy_pipeline.classification.integrate import IntegrationError, _additions_sql, integrate
-from taxonomy_pipeline.classification.models import ResolutionReport
+from taxonomy_pipeline.classification.models import ResolutionReport, ReviewDecision
 from taxonomy_pipeline.classification.runner import load_decisions, run_merge_preview
 from taxonomy_pipeline.config import DatasetConfig, load_config
-from taxonomy_pipeline.datasets.base import CONCEPTS
+from taxonomy_pipeline.datasets.base import CONCEPTS, TaxonomyDataset
 from taxonomy_pipeline.datasets.sql_dump import SqlDumpSource, iter_insert_statements
 from taxonomy_pipeline.pipeline import load_datasets
 
@@ -19,14 +19,14 @@ FIXTURES = Path(__file__).parent / "fixtures" / "classification"
 PRODUCER_FILES = [FIXTURES / "case_a.json", FIXTURES / "case_b.json"]
 
 
-def _literal(value):
+def _literal(value: object) -> str:
     if isinstance(value, int):
         return str(value)
     return "'" + str(value).replace("\\", "\\\\").replace("'", "\\'") + "'"
 
 
 @pytest.fixture
-def baseline(tmp_path) -> DatasetConfig:
+def baseline(tmp_path: Path) -> DatasetConfig:
     """The classification fixture taxonomy, written as a SQL dump like the client's."""
     taxonomy = json.loads((FIXTURES / "taxonomy.json").read_text(encoding="utf-8"))
     statements = []
@@ -40,11 +40,32 @@ def baseline(tmp_path) -> DatasetConfig:
     return DatasetConfig(name=taxonomy["name"], paths=[str(path)])
 
 
-def _resolution(tmp_path: Path, baseline: DatasetConfig, *, decisions: bool = True) -> ResolutionReport:
+def _decisions(*, merge_homonyms: bool = True) -> list[ReviewDecision]:
+    """The fixture's review decisions. They keep the programming language and the animal as two new
+    tags both named "Python", which the client's UNIQUE `tags.name` can't hold. By default the two are
+    combined into one `create` decision, as a reviewer would have to: one "Python" tag linked under
+    both specialities."""
+    decisions = load_decisions(FIXTURES / "review_decisions.json")
+    if not merge_homonyms:
+        return decisions
+    homonym_sources = {("plain-skills", "46"), ("plain-skills", "47")}  # both labelled "Python"
+    pythons = [d for d in decisions if {(m.source_dataset, m.tag_id) for m in d.members} <= homonym_sources]
+    assert len(pythons) == 2
+    combined = ReviewDecision(
+        members=[m for d in pythons for m in d.members], action="create",
+        approved_paths=[path for d in pythons for path in d.approved_paths],
+        reason="One shared keyword, linked under both specialities.",
+    )
+    return [d for d in decisions if d not in pythons] + [combined]
+
+
+def _resolution(
+    tmp_path: Path, baseline: DatasetConfig, *, decisions: list[ReviewDecision] | None = None,
+) -> ResolutionReport:
     taxonomy = SqlDumpSource(baseline.name, baseline.paths).load()
     run = run_merge_preview(
         PRODUCER_FILES, taxonomy, out_dir=tmp_path / "merge",
-        decisions=load_decisions(FIXTURES / "review_decisions.json") if decisions else [],
+        decisions=_decisions() if decisions is None else decisions,
     )
     return ResolutionReport.model_validate_json((run.out_dir / "resolution.json").read_text(encoding="utf-8"))
 
@@ -55,9 +76,9 @@ def test_writes_a_snapshot_of_baseline_plus_reviewed_additions(tmp_path, baselin
     out = tmp_path / "out"
     assert sorted(p.name for p in out.iterdir()) == ["additions.sql", "baseline", "enriched.yaml", "manifest.json"]
     assert (out / "baseline" / "baseline.sql").read_bytes() == Path(baseline.paths[0]).read_bytes()
-    # Same additions the reviewed preview reported: 3 new tags, each linked.
-    assert result.counts["tags"] == 3
-    assert result.counts["speciality_tags"] >= 3
+    # "Data visualization" and one shared "Python", each linked.
+    assert result.counts["tags"] == 2
+    assert result.counts["speciality_tags"] >= 2
 
     enriched = load_datasets(load_config(out / "enriched.yaml"))["enriched"]
     original = SqlDumpSource(baseline.name, baseline.paths).load()
@@ -65,8 +86,11 @@ def test_writes_a_snapshot_of_baseline_plus_reviewed_additions(tmp_path, baselin
         rows = getattr(enriched, concept)
         assert rows[: len(getattr(original, concept))] == getattr(original, concept)  # baseline rows untouched
     new_tags = enriched.tags[len(original.tags):]
-    assert [tag["id"] for tag in new_tags] == [201, 202, 203]  # continue after the baseline's max tag ID
-    assert {tag["name"] for tag in new_tags} >= {"Data visualization"}
+    assert [tag["id"] for tag in new_tags] == [201, 202]  # continue after the baseline's max tag ID
+    assert {tag["name"] for tag in new_tags} == {"Data visualization", "Python"}
+    python = next(tag["id"] for tag in new_tags if tag["name"] == "Python")
+    linked = {link["speciality_id"] for link in enriched.speciality_tags if link["tag_id"] == python}
+    assert linked == {122, 220}  # Programming and Zoology share the one keyword
     new_specialities = enriched.specialities[len(original.specialities):]
     assert all(row["status"] == "1" and row["id"] > 220 for row in new_specialities)
 
@@ -102,14 +126,14 @@ def test_manifest_records_where_the_snapshot_came_from(tmp_path, baseline):
     assert manifest["merge_run"] == {"saturation_run_ids": ["run-1"]}
     assert manifest["decisions"]["count"] == len(resolution.decisions)
     assert manifest["inputs"] == ["case_a.json", "case_b.json"]
-    assert manifest["id_ranges"]["tags"] == [201, 203]
+    assert manifest["id_ranges"]["tags"] == [201, 202]
     assert manifest["omitted_records"] == resolution.evidence.omitted_counts
     assert set(manifest["exact_duplicate_rows"]) == {"categories", "specialities", "tags"}
     assert all(set(rows) == {"baseline", "enriched"} for rows in manifest["exact_duplicate_rows"].values())
 
 
 def test_refuses_while_sources_are_pending_review(tmp_path, baseline):
-    resolution = _resolution(tmp_path, baseline, decisions=False)
+    resolution = _resolution(tmp_path, baseline, decisions=[])
 
     with pytest.raises(IntegrationError, match=r"still pending review .*rerun merge-preview with --decisions"):
         integrate(resolution, baseline, out_dir=tmp_path / "out")
@@ -134,7 +158,7 @@ def test_refuses_to_overwrite_an_existing_snapshot(tmp_path, baseline):
 def test_writes_nothing_if_the_result_would_add_integrity_problems(tmp_path, baseline, monkeypatch):
     real_assign = integrate_module._assign_ids
 
-    def drop_links(combined, original):
+    def drop_links(combined: TaxonomyDataset, original: TaxonomyDataset) -> tuple[dict, dict]:
         additions, id_map = real_assign(combined, original)
         return {**additions, "speciality_tags": []}, id_map  # new tags and specialities left unlinked
 
@@ -143,6 +167,35 @@ def test_writes_nothing_if_the_result_would_add_integrity_problems(tmp_path, bas
         integrate(_resolution(tmp_path, baseline), baseline, out_dir=tmp_path / "out")
     assert not (tmp_path / "out").exists()
     assert not any(p.name.startswith(".out.") for p in tmp_path.iterdir())  # staging folder cleaned up
+
+
+def test_refuses_a_new_tag_the_unique_name_key_would_reject(tmp_path, baseline, monkeypatch):
+    real_assign = integrate_module._assign_ids
+
+    def rename_to_existing(combined: TaxonomyDataset, original: TaxonomyDataset) -> tuple[dict, dict]:
+        additions, id_map = real_assign(combined, original)
+        additions["tags"][0]["name"] = "sql"  # baseline has "SQL"; utf8mb4_general_ci ignores case
+        return additions, id_map
+
+    monkeypatch.setattr(integrate_module, "_assign_ids", rename_to_existing)
+    with pytest.raises(IntegrationError, match=r"new tag 'sql' .*collides with existing tag 'SQL'.*reuse"):
+        integrate(_resolution(tmp_path, baseline), baseline, out_dir=tmp_path / "out")
+    assert not (tmp_path / "out").exists()
+
+
+def test_refuses_two_new_tags_with_the_same_name(tmp_path, baseline):
+    resolution = _resolution(tmp_path, baseline, decisions=_decisions(merge_homonyms=False))
+
+    shared_name = r"new tags 'Python' .* and 'Python' .* share a name.*one `create` decision"
+    with pytest.raises(IntegrationError, match=shared_name):
+        integrate(resolution, baseline, out_dir=tmp_path / "out")
+    assert not (tmp_path / "out").exists()
+
+
+def test_additions_sql_sets_the_mode_its_escaping_needs(tmp_path, baseline):
+    integrate(_resolution(tmp_path, baseline), baseline, out_dir=tmp_path / "out")
+    sql = (tmp_path / "out" / "additions.sql").read_text(encoding="utf-8")
+    assert sql.index('SET SQL_MODE = "NO_AUTO_VALUE_ON_ZERO";') < sql.index("INSERT INTO")
 
 
 def test_additions_round_trip_awkward_names_through_the_sql_parser():

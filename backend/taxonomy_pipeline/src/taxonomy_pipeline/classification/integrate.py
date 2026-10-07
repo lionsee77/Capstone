@@ -27,6 +27,7 @@ import json
 import os
 import shutil
 import tempfile
+import unicodedata
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -116,6 +117,7 @@ def integrate(
             f"Nothing to integrate: the reviewed merge run adds no rows ({omitted} input record(s) were omitted "
             "upstream; see the merge run's validation.json)."
         )
+    _check_unique_keys(additions, taxonomy)
     table_names = {concept: source.table_map[concept] for concept in COLUMNS}
 
     staging = Path(tempfile.mkdtemp(prefix=f".{out_dir.name}.", dir=_ensure_parent(out_dir)))
@@ -214,6 +216,47 @@ def _assign_ids(
     return additions, id_map
 
 
+def _collation_key(name: Any) -> str:
+    """Approximate MySQL's utf8mb4_general_ci comparison: case- and accent-insensitive, trailing spaces ignored."""
+    decomposed = unicodedata.normalize("NFKD", str(name))
+    return "".join(char for char in decomposed if not unicodedata.combining(char)).casefold().rstrip(" ")
+
+
+def _check_unique_keys(additions: dict[str, list[dict[str, Any]]], baseline: TaxonomyDataset) -> None:
+    """Refuse additions that the client schema's unique keys would reject.
+
+    `tags.name` is UNIQUE under utf8mb4_general_ci, so "Python" and "python"
+    collide; `speciality_tags` is UNIQUE on (speciality_id, tag_id). The dump
+    parser doesn't enforce either, so check here rather than at apply time.
+    """
+    problems = []
+    existing = {_collation_key(row.get("name")): row.get("name") for row in baseline.tags}
+    added: dict[str, dict[str, Any]] = {}
+    for row in additions["tags"]:
+        key = _collation_key(row["name"])
+        if key in existing:
+            problems.append(f"new tag {row['name']!r} (ID {row['id']}) collides with existing tag {existing[key]!r}")
+        elif key in added:
+            other = added[key]
+            problems.append(
+                f"new tags {other['name']!r} (ID {other['id']}) and {row['name']!r} (ID {row['id']}) share a name"
+            )
+        added.setdefault(key, row)
+    pairs = {(row.get("speciality_id"), row.get("tag_id")) for row in baseline.speciality_tags}
+    for row in additions["speciality_tags"]:
+        pair = (row["speciality_id"], row["tag_id"])
+        if pair in pairs:
+            problems.append(f"link speciality {pair[0]} -> tag {pair[1]} already exists")
+        pairs.add(pair)
+    if problems:
+        raise IntegrationError(
+            "The additions would violate the client schema's unique keys: " + "; ".join(problems[:SAMPLE])
+            + ". The database holds one tag per name, shared by every speciality it is linked to: `reuse` the "
+            "existing tag, put same-named sources in one `create` decision (approving each of their paths), or "
+            "`exclude` one, then rerun merge-preview."
+        )
+
+
 def _is_temporary(value: Any) -> bool:
     return isinstance(value, str) and value.startswith("new:")
 
@@ -227,13 +270,18 @@ def _max_id(taxonomy: TaxonomyDataset, table: str) -> int:
 
 
 def _sql_literal(value: Any) -> str:
-    """A MySQL literal that `sql_dump` decodes back to the same value."""
+    """A MySQL literal that `sql_dump` decodes back to the same value.
+
+    Quotes are doubled (valid in every SQL mode). Backslash escapes for
+    backslash and control characters rely on the default mode, which
+    `additions.sql` sets in its header like the client's own dumps do.
+    """
     if value is None:
         return "NULL"
     if type(value) is int:
         return str(value)
     escaped = (
-        str(value).replace("\\", "\\\\").replace("'", "\\'").replace("\0", "\\0")
+        str(value).replace("\\", "\\\\").replace("'", "''").replace("\0", "\\0")
         .replace("\n", "\\n").replace("\r", "\\r").replace("\x1a", "\\Z")
     )
     return f"'{escaped}'"
@@ -246,6 +294,10 @@ def _additions_sql(additions: dict[str, list[dict[str, Any]]], table_names: dict
         "-- INSERT-only: no baseline row is updated or deleted. IDs continue from the baseline",
         "-- snapshot's maximum, so apply this only to a database matching that snapshot.",
         "",
+        "-- Same session settings as the client's phpMyAdmin dumps: clears NO_BACKSLASH_ESCAPES,",
+        "-- which the string escaping below relies on.",
+        'SET SQL_MODE = "NO_AUTO_VALUE_ON_ZERO";',
+        "SET NAMES utf8mb4;",
         "START TRANSACTION;",
     ]
     for concept in INSERT_ORDER:
