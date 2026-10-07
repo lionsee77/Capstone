@@ -21,7 +21,7 @@ def _config(classification_paths) -> PipelineConfig:
             MetricConfig(id="integrity", params={"dataset": "original"}),
             MetricConfig(id="depth", params={"dataset": "original"}),
             MetricConfig(
-                id="breadth", params={"target": "original", "threshold": 50}
+                id="breadth", params={"target": "original", "matching_method": "lexical", "threshold": 50}
             ),
             MetricConfig(id="saturation", params={"baseline": "original", "incoming": "skillsfuture"}),
         ],

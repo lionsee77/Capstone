@@ -53,14 +53,16 @@ metrics:
       target: original
       ssic_reference: ssic
       ssoc_reference: ssoc
-      threshold: 75
+      matching_method: semantic
+      semantic_threshold: 0.60  # provisional, uncalibrated cosine cutoff
 
   - id: breadth
     params:
       target: skillsfuture
       ssic_reference: ssic
       ssoc_reference: ssoc
-      threshold: 75
+      matching_method: semantic
+      semantic_threshold: 0.60  # provisional, uncalibrated cosine cutoff
 
   - id: saturation
     params:
