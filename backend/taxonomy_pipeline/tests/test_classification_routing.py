@@ -69,3 +69,14 @@ def test_empty_selection_is_an_error_for_either_case(saturation_report):
         case_a_tag_ids(report)
     with pytest.raises(ValueError, match="No Case B tags"):
         case_b_tag_ids(report)
+
+
+def test_reads_a_report_written_before_per_source_steps_existed(tmp_path):
+    path = tmp_path / "legacy.json"
+    path.write_text(json.dumps({"run_id": "old", "results": [{"metric_id": "saturation", "details": {
+        "incoming": "skillsfuture", "by_concept_level": {"tags": {"ambiguous_concepts": CONCEPTS}},
+    }}]}), encoding="utf-8")
+
+    report = load_saturation(path, "skillsfuture")
+
+    assert case_b_tag_ids(report) == [100]

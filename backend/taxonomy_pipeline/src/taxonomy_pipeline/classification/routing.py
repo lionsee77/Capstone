@@ -63,8 +63,11 @@ def load_saturation(path: str | Path, incoming: str) -> SaturationReport:
         if saturation.get("status", "ok") != "ok":
             raise ValueError(f"saturation did not run successfully: {saturation.get('summary')}")
         details = saturation["details"]
-        # Older reports have no per-source `steps`; their top level describes the single incoming source.
-        steps = details.get("steps") or [{"source": (details.get("incoming") or [None])[-1], **details}]
+        # Older reports have no per-source `steps`; their top level describes the single incoming
+        # source, and `incoming` was a plain name rather than a list.
+        sources = details.get("incoming") or [None]
+        sources = [sources] if isinstance(sources, str) else sources
+        steps = details.get("steps") or [{**details, "source": sources[-1]}]
         step = next((step for step in steps if step.get("source") == incoming), None)
     except (json.JSONDecodeError, KeyError, StopIteration, TypeError, AttributeError) as exc:
         raise ValueError(f"Invalid saturation report: {path} ({type(exc).__name__}: {exc})") from exc
