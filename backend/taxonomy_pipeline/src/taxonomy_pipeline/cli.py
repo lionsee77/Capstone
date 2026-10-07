@@ -164,7 +164,10 @@ def _cmd_bulk_decide(args: argparse.Namespace) -> int:
         run_info = merge_run / "run.json"
         run_ids = (json.loads(run_info.read_text(encoding="utf-8")).get("saturation_run_ids", [])
                    if run_info.exists() else [])
-        if run_ids and run_ids != [saturation.run_id]:
+        if not run_ids:
+            raise ValueError(f"{merge_run} records no saturation run (unstamped inputs, or written before run.json "
+                             "had one), so its tags can't be tied to a report; rerun the producers and merge-preview")
+        if run_ids != [saturation.run_id]:
             raise ValueError(f"{merge_run} came from saturation run(s) {run_ids}, but {args.report} is "
                              f"{saturation.run_id!r}; use the report the producers read")
         baseline = _datasets(args, args.baseline)[args.baseline]

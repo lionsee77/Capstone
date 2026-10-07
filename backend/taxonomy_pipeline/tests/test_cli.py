@@ -219,3 +219,17 @@ def test_bulk_decide_will_not_overwrite_a_decisions_file_it_was_not_given(tmp_pa
                  "--report", str(report), "--create-below", "0.5", "--output", str(decisions)]) == 1
     assert "pass it as --decisions" in capsys.readouterr().err
     assert decisions.read_text() == "[]"
+
+
+def test_bulk_decide_refuses_a_merge_run_with_no_saturation_run_recorded(tmp_path, saturation_report, capsys):
+    config_path, report, case_a_output = _ambiguous_merge_run(tmp_path, saturation_report)
+    unstamped = tmp_path / "unstamped.json"
+    unstamped.write_text(json.dumps([{key: value for key, value in record.items() if key != "saturation_run_id"}
+                                     for record in json.loads(case_a_output.read_text())]))
+    main(["merge-preview", "--config", str(config_path), "--input", str(unstamped),
+          "--out-dir", str(tmp_path / "unstamped-merge")])
+    capsys.readouterr()
+
+    assert main(["bulk-decide", "--config", str(config_path), "--merge-run", str(tmp_path / "unstamped-merge"),
+                 "--report", str(report), "--create-below", "0.5", "--output", str(tmp_path / "d.json")]) == 1
+    assert "records no saturation run" in capsys.readouterr().err

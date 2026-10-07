@@ -121,8 +121,39 @@ def test_leaves_tags_held_for_a_duplicate_pair_to_a_person(tmp_path, baseline, s
     assert draft.counts["held_for_another_reason"] == 2
 
 
-@pytest.mark.parametrize("kwargs", [{}, {"create_below": 0.9, "reuse_at_or_above": 0.5}])
-def test_rejects_missing_or_overlapping_thresholds(baseline, merge, kwargs):
+def test_a_strong_spelling_match_keeps_a_tag_for_review_despite_a_weak_meaning_match(
+    tmp_path, baseline, saturation_report,
+):
+    # Meaning only loosely matches a speciality, but the spelling is nearly the baseline tag "SQL".
+    concept = {**_concept(31, 0.2, "Zoology", "specialities"),
+               "closest_baseline_name": "SQL", "closest_baseline_score": 95.0, "closest_baseline_level": "tags"}
+    report = load_saturation(saturation_report([concept]), "skillsfuture")
+    path = tmp_path / "producer.json"
+    path.write_text(json.dumps(mark_ambiguous(
+        [_record("31", "SQL querying", "Data analytics", "Programming", 0.6)], report,
+    )), encoding="utf-8")
+    resolution = run_merge_preview([path], baseline, out_dir=tmp_path / "merge").preview.resolution
+
+    draft = draft_decisions(resolution, report, baseline, create_below=0.5, reuse_at_or_above=0.9)
+
+    assert draft.drafted == []  # neither created from the weak score nor reused on spelling alone
+    assert draft.counts["left_for_review"] == 1
+
+
+def test_refuses_a_baseline_that_changed_since_the_merge_run(baseline, merge):
+    report, run = merge
+    resolution = run().preview.resolution
+    baseline.tags.append({"id": 999, "name": "Added later"})
+
+    with pytest.raises(ValueError, match="baseline changed since this merge run"):
+        draft_decisions(resolution, report, baseline, create_below=0.5)
+
+
+@pytest.mark.parametrize("kwargs", [
+    {}, {"create_below": 0.9, "reuse_at_or_above": 0.5}, {"create_below": 2.0}, {"reuse_at_or_above": -0.1},
+    {"create_below": float("nan")},
+])
+def test_rejects_missing_out_of_range_or_overlapping_thresholds(baseline, merge, kwargs):
     report, run = merge
     with pytest.raises(ValueError):
         draft_decisions(run().preview.resolution, report, baseline, **kwargs)

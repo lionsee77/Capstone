@@ -211,8 +211,8 @@ taxonomy-pipeline bulk-decide --merge-run merge_runs/<timestamp> --report report
 
 | Option | Drafts |
 |---|---|
-| `--create-below X` | `create` for an ambiguous tag whose closest match scores below `X`, at its single highest-confidence placement |
-| `--reuse-above Y` | `reuse` when the closest match is one baseline *tag* scoring at least `Y`, linked at that same placement |
+| `--create-below X` | `create` for an ambiguous tag whose closest matches by meaning *and* spelling all score below `X`, at its single highest-confidence placement |
+| `--reuse-above Y` | `reuse` when the closest match (by meaning when the report has it, since a close spelling alone is unconfirmed; else by spelling) is one baseline *tag* scoring at least `Y`, linked at that same placement |
 
 - It only touches pending tags that saturation marked `REVIEW_AMBIGUOUS` and
   that are held for nothing else. Tags in a duplicate candidate pair, tags
@@ -221,9 +221,11 @@ taxonomy-pipeline bulk-decide --merge-run merge_runs/<timestamp> --report report
 - The output is a draft: every decision carries a `Bulk: ...` reason with the
   score and threshold, and goes through `merge-preview --decisions` like a
   hand-written one, so it appears in `preview.csv` and can be edited or removed.
-- `--report` must be the report the producers read (it checks the merge run's
-  `saturation_run_ids`), and `--output` is never overwritten unless it is also
-  the `--decisions` file being extended.
+- `--report` must be the report the producers read: it refuses a merge run
+  whose `run.json` records a different saturation run, or none (unstamped
+  inputs). It also refuses a baseline that changed since the merge run, and
+  thresholds outside 0-1. `--output` is never overwritten unless it is also the
+  `--decisions` file being extended.
 - On a lexical-only SkillsFuture run (every ambiguous score is 0.60 or more
   there, since lower spellings are `ADD_CANDIDATE`), `--create-below 0.7`
   drafts 737 creates and leaves 625 ambiguous tags for review; pending sources
