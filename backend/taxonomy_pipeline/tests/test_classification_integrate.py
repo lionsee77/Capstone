@@ -208,3 +208,26 @@ def test_additions_round_trip_awkward_names_through_the_sql_parser():
 
     [(table, rows)] = list(iter_insert_statements(sql))
     assert table == "tags" and rows == additions["tags"]
+
+
+def test_refuses_flagged_review_candidates_until_a_reviewer_approves_one_path(tmp_path, baseline):
+    from tests.test_classification_runner import approve_data_analytics, review_candidate_file
+
+    taxonomy = SqlDumpSource(baseline.name, baseline.paths).load()
+    inputs = [review_candidate_file(tmp_path)]
+
+    def merge(name: str, decisions: list[ReviewDecision]) -> ResolutionReport:
+        run = run_merge_preview(inputs, taxonomy, out_dir=tmp_path / name, decisions=decisions)
+        return ResolutionReport.model_validate_json((run.out_dir / "resolution.json").read_text(encoding="utf-8"))
+
+    with pytest.raises(IntegrationError, match=r"1 source tag\(s\) are still pending review \(case-a:9\)"):
+        integrate(merge("unreviewed", []), baseline, out_dir=tmp_path / "refused")
+    assert not (tmp_path / "refused").exists()
+
+    result = integrate(merge("reviewed", [approve_data_analytics()]), baseline, out_dir=tmp_path / "out")
+    enriched = load_datasets(load_config(tmp_path / "out" / "enriched.yaml"))["enriched"]
+    categories = {row["id"]: row["name"] for row in enriched.categories}
+    fire = [row for row in enriched.specialities if row["name"] == "Fire Prevention"]
+    assert [categories[row["category_id"]] for row in fire] == ["Data analytics"]  # the approved candidate only
+    assert {row["name"] for row in enriched.tags[len(taxonomy.tags):]} == {"Fire Prevention", "Spreadsheet Modelling"}
+    assert result.counts["tags"] == 2

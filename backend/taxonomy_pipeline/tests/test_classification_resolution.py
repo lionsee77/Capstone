@@ -408,6 +408,41 @@ def test_candidates_hold_only_their_members_while_other_sources_proceed(baseline
     assert result.partial and result.evidence.skipped_checks
 
 
+# A producer's review candidates are never accepted by default, even with no duplicate evidence at all.
+def test_producer_flagged_placement_stays_pending_without_a_decision(baseline: TaxonomyDataset) -> None:
+    report = dedup([
+        row("a", "Fire Prevention", service="Industry", category="Aviation", speciality="Fire Prevention",
+            confidence=0.3, needs_review=True),
+        row("a", "Fire Prevention", service="Industry", category="Travel", speciality="Fire Prevention",
+            confidence=0.2, needs_review=True),
+        row("c", "Payroll", service="Function", category="Finance"),
+    ], baseline)
+    result = resolve_outputs(report, baseline)
+    pending = [item for item in result.dispositions if item.status == "pending"]
+    assert [item.source.tag_id for item in pending] == ["a"]
+    assert "Producer requested review: 2 candidate placement(s)" in pending[0].reason
+    assert len(pending[0].unapproved_paths) == 2
+    assert [tag.name for tag in result.tags] == ["Payroll"]  # the unflagged tag still proceeds
+    assert result.partial
+
+
+# A reviewer resolves a flagged tag by approving one of the candidate paths; the rest stay unapproved.
+def test_reviewer_can_approve_one_of_several_candidate_paths(baseline: TaxonomyDataset) -> None:
+    report = dedup([
+        row(label="Fire Prevention", service="Industry", category="Aviation", speciality="Fire Prevention",
+            needs_review=True),
+        row(label="Fire Prevention", service="Industry", category="Travel", speciality="Fire Prevention",
+            needs_review=True),
+    ], baseline)
+    chosen = path(service="Industry", category="Aviation", speciality="Fire Prevention")
+    result = resolve_outputs(report, baseline, [decision(approved_paths=[chosen])])
+    disposition = result.dispositions[0]
+    assert disposition.status == "accepted"
+    assert [item.category for item in disposition.unapproved_paths] == ["Travel"]
+    assert [node.name for node in result.hierarchy] == ["Aviation", "Fire Prevention"]
+    assert len(result.links) == 1
+
+
 @pytest.mark.parametrize("action", ["exclude", "defer", "reuse", "create"])
 # Explicit decisions override automatic placement acceptance, including deliberate omission of links.
 def test_explicit_decisions_override_automatic_acceptance(baseline: TaxonomyDataset, action: str) -> None:

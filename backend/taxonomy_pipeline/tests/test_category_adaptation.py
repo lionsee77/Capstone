@@ -72,69 +72,121 @@ def test_matched_source_category_reuses_the_existing_baseline_id():
     assert placement["target_service_name"] == "Industry"
 
 
-def test_matched_category_and_matched_speciality_resolves_both():
-    # Baseline has "Retail Banking" (id 1) under the matched category, exactly
-    # matching the source speciality tag 9001 hangs off - both levels resolve.
+def test_unmatched_tag_becomes_a_new_speciality_named_after_itself_under_the_matched_category():
+    # "loan processing" matches no baseline speciality by content, so it falls
+    # back to its source category ("Banking" -> baseline 1) and the tag itself
+    # is the proposed speciality - never the source speciality it hangs off.
     result = _run([9001])
 
     placement = result.details["placements"][0]
-    assert placement["speciality_action"] == "SKIP_DUPLICATE"
-    assert placement["target_speciality_id"] == 1
-    assert placement["target_speciality_name"] == "Retail Banking"
+    assert placement["placement_basis"] == "source_category"
+    assert placement["speciality_action"] == "NEW_SPECIALITY"
+    assert placement["target_speciality_id"] == "skillsfuture:tag:9001"
+    assert placement["target_speciality_name"] == "loan processing"
 
-
-def test_matched_category_with_no_baseline_speciality_proposes_a_new_one():
-    # Category "Banking" matches, but nothing under it matches "Astronaut
-    # Training" - only the category matches this time (9002's own category
-    # "Space Exploration" is unmatched in other tests; here we point it at
-    # the matched "Banking" category instead to isolate the speciality check).
+def test_tag_matching_a_baseline_speciality_is_placed_there_regardless_of_source_category():
+    # "Supplier Sourcing" is a Function-side skill; its source only knows it
+    # through a sector. Content wins: it lands where the baseline already
+    # keeps that speciality, with that category's real service.
     datasets = _datasets()
-    datasets["skillsfuture"].specialities[1]["category_id"] = 501  # under "Banking", not "Space Exploration"
+    datasets["original"].services.append({"id": 2, "name": "Function"})
+    datasets["original"].categories.append({"id": 2, "name": "Procurement", "service_id": 2})
+    datasets["original"].specialities.append({"id": 2, "name": "Supplier Sourcing", "category_id": 2})
+    datasets["skillsfuture"].tags.append({"id": 9004, "name": "Supplier Sourcing"})
+    datasets["skillsfuture"].speciality_tags.append({"id": 704, "speciality_id": 601, "tag_id": 9004})
     result = CategoryAdaptationMetric().run(
-        datasets, {"baseline": "original", "incoming": "skillsfuture", "new_tag_ids": [9002]}
+        datasets, {"baseline": "original", "incoming": "skillsfuture", "new_tag_ids": [9004]}
     )
 
-    placement = result.details["placements"][0]
-    assert placement["action"] == "SKIP_DUPLICATE"  # category still matches
-    assert placement["speciality_action"] == "NEW_SPECIALITY"
-    assert placement["target_speciality_id"] == "skillsfuture:602"
-    assert placement["target_speciality_name"] == "Astronaut Training"
-
+    placements = result.details["placements"]
+    assert len(placements) == 1
+    placement = placements[0]
+    assert placement["placement_basis"] == "content"
+    assert placement["speciality_action"] == "SKIP_DUPLICATE"
+    assert placement["target_speciality_id"] == 2
+    assert placement["target_category_id"] == 2
+    assert placement["target_category_name"] == "Procurement"
+    assert placement["target_service_name"] == "Function"
+    assert placement["needs_review"] is False
+    assert "source_category_id" not in placement  # its sector was never needed
 
 def test_new_category_cascades_to_new_speciality(monkeypatch):
     # A brand new category has no baseline specialities to compare against at
-    # all, so its speciality is automatically proposed too, not left blank.
+    # all, so the tag is proposed as its speciality too, not left blank.
     monkeypatch.setattr(category_adaptation, "SemanticMatcher", _FakeSemanticMatcher)
     result = _run([9002], semantic_model="test-model", add_candidate_semantic_threshold=0.5)
 
     placement = result.details["placements"][0]
     assert placement["action"] == "NEW_CATEGORY"
     assert placement["speciality_action"] == "NEW_SPECIALITY"
-    assert placement["target_speciality_id"] == "skillsfuture:602"
+    assert placement["target_speciality_id"] == "skillsfuture:tag:9002"
+    assert placement["target_speciality_name"] == "rocket fuel"
 
-
-def test_review_ambiguous_category_skips_speciality_resolution(monkeypatch):
-    # No point proposing or matching a speciality under a category that
-    # isn't itself placed anywhere yet.
+def test_review_ambiguous_category_offers_the_closest_categories_as_review_candidates(monkeypatch):
+    # The category isn't confirmed, so nothing is decided automatically - but
+    # the tag isn't dropped either: it is proposed under the closest baseline
+    # categories, every row flagged for a reviewer to pick from.
     class DisagreeingSemanticMatcher:
         def __init__(self, model_name):
             assert model_name == "test-model"
 
         def best_matches(self, queries, choices):
             return [(choices[0] if choices else None, 0.1) for _ in queries]
+
+        def similarity(self, queries, choices):
+            return np.full((len(queries), len(choices)), 0.1)
 
     monkeypatch.setattr(category_adaptation, "SemanticMatcher", DisagreeingSemanticMatcher)
     result = _run([9002], semantic_model="test-model", threshold=1)  # low threshold -> close_spelling tier reachable
 
-    placement = result.details["placements"][0]
+    placements = result.details["placements"]
+    assert len(placements) == 1  # the baseline has a single category to offer
+    placement = placements[0]
     assert placement["action"] == "REVIEW_AMBIGUOUS"
-    assert "speciality_action" not in placement
+    assert placement["placement_basis"] == "review_candidate"
+    assert placement["needs_review"] is True
+    assert (placement["candidate_category_name"], placement["candidate_service_name"]) == ("Banking", "Industry")
+    assert (placement["candidate_rank"], placement["candidate_count"]) == (1, 1)
+    assert placement["target_speciality_name"] == "rocket fuel"
+    assert placement["closest_speciality_name"] == "Retail Banking"
 
 
-def test_multiple_specialities_under_one_unresolved_category_collapse_to_one_row(monkeypatch):
-    # Two specialities under the same still-unresolved category would
-    # otherwise produce two byte-identical rows (the speciality never gets
-    # looked at while the category itself is undecided) - collapse to one.
+def test_review_candidates_are_the_three_closest_categories_with_a_known_service(monkeypatch):
+    scores = {"aviation": 0.55, "logistics, shipping & aviation": 0.52, "travel": 0.41, "banking": 0.05,
+              "orphan aviation": 0.99}
+
+    class RankingSemanticMatcher:
+        def __init__(self, model_name):
+            assert model_name == "test-model"
+
+        def best_matches(self, queries, choices):
+            return [(choices[0] if choices else None, 0.55) for _ in queries]  # partial: REVIEW_AMBIGUOUS
+
+        def similarity(self, queries, choices):
+            return np.array([[scores.get(choice, 0.0) for choice in choices] for _ in queries])
+
+    datasets = _datasets()
+    datasets["original"].categories += [
+        {"id": 2, "name": "Travel", "service_id": 1},
+        {"id": 3, "name": "Logistics, Shipping & Aviation", "service_id": 1},
+        {"id": 4, "name": "Aviation", "service_id": 1},
+        {"id": 5, "name": "Orphan Aviation", "service_id": 99},  # no such service: can't be proposed
+    ]
+    monkeypatch.setattr(category_adaptation, "SemanticMatcher", RankingSemanticMatcher)
+    result = CategoryAdaptationMetric().run(datasets, {
+        "baseline": "original", "incoming": "skillsfuture", "new_tag_ids": [9002], "semantic_model": "test-model",
+    })
+
+    placements = result.details["placements"]
+    assert [p["candidate_category_name"] for p in placements] == [
+        "Aviation", "Logistics, Shipping & Aviation", "Travel",
+    ]
+    assert [p["candidate_score"] for p in placements] == [0.55, 0.52, 0.41]
+    assert {p["candidate_score_type"] for p in placements} == {"semantic"}
+    assert all(p["needs_review"] and p["target_speciality_name"] == "rocket fuel" for p in placements)
+
+
+def test_review_category_with_nothing_to_offer_stays_unresolved(monkeypatch):
     class DisagreeingSemanticMatcher:
         def __init__(self, model_name):
             assert model_name == "test-model"
@@ -142,23 +194,67 @@ def test_multiple_specialities_under_one_unresolved_category_collapse_to_one_row
         def best_matches(self, queries, choices):
             return [(choices[0] if choices else None, 0.1) for _ in queries]
 
+        def similarity(self, queries, choices):
+            return np.full((len(queries), len(choices)), 0.1)
+
     datasets = _datasets()
-    datasets["skillsfuture"].specialities.append({"id": 603, "name": "Zero Gravity Training", "category_id": 502})
-    datasets["skillsfuture"].speciality_tags.append({"id": 703, "speciality_id": 603, "tag_id": 9002})
+    datasets["original"].services = []  # no category has a service the contract could carry
     monkeypatch.setattr(category_adaptation, "SemanticMatcher", DisagreeingSemanticMatcher)
+    result = CategoryAdaptationMetric().run(datasets, {
+        "baseline": "original", "incoming": "skillsfuture", "new_tag_ids": [9002], "semantic_model": "test-model",
+        "threshold": 1,
+    })
+
+    placement = result.details["placements"][0]
+    assert placement["action"] == "REVIEW_AMBIGUOUS"
+    assert placement["placement_basis"] == "source_category"
+    assert "candidate_category_name" not in placement
+
+
+def test_content_match_without_a_known_service_falls_back_instead_of_aborting():
+    # A matched speciality whose category has no service in the baseline can't be
+    # written as a full contract record; it must not be taken as a content match.
+    datasets = _datasets()
+    datasets["original"].categories.append({"id": 2, "name": "Procurement", "service_id": 99})
+    datasets["original"].specialities.append({"id": 2, "name": "Supplier Sourcing", "category_id": 2})
+    datasets["skillsfuture"].tags.append({"id": 9004, "name": "Supplier Sourcing"})
+    datasets["skillsfuture"].speciality_tags.append({"id": 704, "speciality_id": 601, "tag_id": 9004})
     result = CategoryAdaptationMetric().run(
-        datasets,
-        {"baseline": "original", "incoming": "skillsfuture", "new_tag_ids": [9002],
-         "semantic_model": "test-model", "threshold": 1},
+        datasets, {"baseline": "original", "incoming": "skillsfuture", "new_tag_ids": [9004]}
+    )
+
+    [placement] = result.details["placements"]
+    assert placement["placement_basis"] == "source_category"
+    assert placement["target_category_name"] == "Banking"
+
+
+def test_tag_linked_to_many_source_specialities_in_one_category_yields_one_placement():
+    # SkillsFuture links one skill to up to ~100 job roles in a sector; they are
+    # evidence for the sector, not placements of their own.
+    datasets = _datasets()
+    for offset, name in enumerate(["Bank Teller", "Branch Manager", "Credit Analyst", "Loan Officer"], start=3):
+        datasets["skillsfuture"].specialities.append({"id": 600 + offset, "name": name, "category_id": 501})
+        datasets["skillsfuture"].speciality_tags.append({"id": 700 + offset, "speciality_id": 600 + offset,
+                                                         "tag_id": 9001})
+    result = CategoryAdaptationMetric().run(
+        datasets, {"baseline": "original", "incoming": "skillsfuture", "new_tag_ids": [9001]}
     )
 
     placements = result.details["placements"]
     assert len(placements) == 1
-    assert placements[0]["action"] == "REVIEW_AMBIGUOUS"
-    assert "source_speciality_id" not in placements[0]
+    assert placements[0]["source_speciality_count"] == 5
+    assert placements[0]["source_speciality_sample"] == ["Bank Teller", "Branch Manager", "Credit Analyst"]
 
 
-def test_tag_with_specialities_under_two_categories_produces_two_placements():
+def test_source_speciality_names_never_become_speciality_names(monkeypatch):
+    monkeypatch.setattr(category_adaptation, "SemanticMatcher", _FakeSemanticMatcher)
+    result = _run([9001, 9002], semantic_model="test-model", add_candidate_semantic_threshold=0.5)
+
+    proposed = {p.get("target_speciality_name") for p in result.details["placements"]}
+    assert proposed == {"loan processing", "rocket fuel"}
+    assert not proposed & {"Retail Banking", "Astronaut Training"}
+
+def test_tag_under_two_source_categories_falls_back_to_one_placement_per_category():
     datasets = _datasets()
     datasets["skillsfuture"].speciality_tags.append({"id": 703, "speciality_id": 602, "tag_id": 9001})
     result = CategoryAdaptationMetric().run(
@@ -167,8 +263,7 @@ def test_tag_with_specialities_under_two_categories_produces_two_placements():
 
     placements = result.details["placements"]
     assert len(placements) == 2
-    assert {p["source_speciality_id"] for p in placements} == {601, 602}
-
+    assert {p["source_category_id"] for p in placements} == {501, 502}
 
 def test_unmatched_source_category_becomes_new_category_even_without_semantic_model():
     # saturation.py's low_semantic check treats a missing semantic score (no
@@ -293,59 +388,7 @@ def test_category_with_a_mismatched_service_is_flagged_for_review_not_crashed():
     assert placement["needs_review"] is True
     assert placement["unmatched_incoming_parents"] == ["Totally Different Service"]
     assert placement["existing_parents"] == ["Industry"]
-    assert "speciality_action" not in placement  # category unresolved -> speciality never checked
-
-
-class _InconsistentSemanticMatcher:
-    """best_matches() (used to decide the category-level match) and
-    similarity() (used separately by _uncovered_parents to recheck parent
-    coverage) are two different calls on the real SemanticMatcher too -
-    nothing guarantees they agree on every pair. This fake keeps
-    best_matches confident so the category resolves, but similarity low, to
-    deterministically exercise "category matched, but this speciality's own
-    parent link looks uncovered" - a real embedding model can land here too.
-    """
-
-    def __init__(self, model_name):
-        assert model_name == "test-model"
-
-    def best_matches(self, queries, choices):
-        return [(choices[0] if choices else None, 0.65) for _ in queries]
-
-    def similarity(self, queries, choices):
-        return np.zeros((len(queries), len(choices)))
-
-
-def test_speciality_with_an_uncovered_parent_is_flagged_for_review_not_dropped(monkeypatch):
-    # Same gap one level down, and one that's live today: SkillsFuture
-    # specialities do have parent categories. speciality_outcomes.get(...)
-    # used to return None here, so the record was reported as "no speciality
-    # could be resolved" instead of being flagged for review.
-    datasets = {
-        "original": TaxonomyDataset(
-            name="original",
-            services=[{"id": 1, "name": "Industry"}],
-            categories=[{"id": 1, "name": "Information Technology", "service_id": 1}],
-            specialities=[{"id": 1, "name": "Infocomm Specialist", "category_id": 1}],
-        ),
-        "skillsfuture": TaxonomyDataset(
-            name="skillsfuture",
-            categories=[{"id": 501, "name": "Infocomm Tech", "service_id": 1}],
-            specialities=[{"id": 601, "name": "Infocomm Specialist", "category_id": 501}],
-            tags=[{"id": 9001, "name": "cloud computing"}],
-            speciality_tags=[{"id": 701, "speciality_id": 601, "tag_id": 9001}],
-        ),
-    }
-    monkeypatch.setattr(category_adaptation, "SemanticMatcher", _InconsistentSemanticMatcher)
-    result = CategoryAdaptationMetric().run(
-        datasets,
-        {"baseline": "original", "incoming": "skillsfuture", "new_tag_ids": [9001], "semantic_model": "test-model"},
-    )
-
-    assert result.status == "ok"
-    placement = result.details["placements"][0]
-    assert placement["action"] in ("SKIP_DUPLICATE", "SKIP_SEMANTIC_DUPLICATE")  # category itself resolved fine
-    assert placement["speciality_action"] == "REVIEW_NEW_PLACEMENT"
-    assert placement["needs_review"] is True
-    assert placement["speciality_unmatched_incoming_parents"] == ["Infocomm Tech"]
-    assert placement["speciality_existing_parents"] == ["Information Technology"]
+    # Not confirmed, so only offered for review - never placed automatically.
+    assert placement["placement_basis"] == "review_candidate"
+    assert placement["candidate_category_name"] == "Banking"
+    assert placement["candidate_score_type"] == "lexical"

@@ -133,9 +133,11 @@ def _placement_rows(resolution: ResolutionReport, blocked: bool) -> list[Preview
             if approved:
                 status = "blocked" if blocked else "reused" if link.existing else "proposed"
             row = PreviewRow(
-                status=status, **placement.model_dump(exclude={"reason"}), reason=placement.reason,
+                status=status, **placement.model_dump(exclude={"reason", "needs_review"}), reason=placement.reason,
                 canonical_tag_id=tag.id if tag else None, canonical_tag=tag.name if tag else "",
                 review_reason=disposition.reason,
+                # The representative may be an unflagged variant; any flagged one means review evidence exists.
+                needs_review=any(item.needs_review for item in variants),
             )
             if len(variants) > 1:
                 row.note = (

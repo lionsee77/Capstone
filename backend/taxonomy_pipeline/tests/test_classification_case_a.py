@@ -39,8 +39,43 @@ def test_places_only_report_tags_with_a_parent_and_stamps_the_run(saturation_rep
     assert [record["tag_id"] for record in records] == ["9001"]
     assert records[0]["service"] == "Industry"
     assert records[0]["category"] == "Banking"
-    assert records[0]["speciality"] == "Retail Banking"
+    assert records[0]["speciality"] == "loan processing"  # the skill itself, not the source speciality it hangs off
     assert records[0]["saturation_run_id"] == "sat-7"
+    CLASSIFICATION_OUTPUTS.validate_python(records)
+
+
+def test_emits_one_record_per_source_category_however_many_source_specialities_link_the_tag(saturation_report):
+    datasets = _datasets()
+    for offset in range(2, 12):
+        datasets["skillsfuture"].specialities.append({"id": 600 + offset, "name": f"Role {offset}", "category_id": 501})
+        datasets["skillsfuture"].speciality_tags.append({"id": 700 + offset, "speciality_id": 600 + offset,
+                                                         "tag_id": 9001})
+    records = run_case_a(datasets, saturation_report(CONCEPTS), baseline="original", incoming="skillsfuture")
+
+    assert len(records) == 1
+
+
+def test_every_case_a_tag_ends_placed_pending_review_or_unresolved_never_dropped(saturation_report):
+    # "Banking Svc" only partly matches "Banking" (spelling 78), so it isn't
+    # confirmed: its tag must come out as review candidates, not as an empty
+    # record that merge-preview would silently set aside.
+    datasets = _datasets()
+    datasets["skillsfuture"].categories.append({"id": 502, "name": "Banking Svc", "service_id": 1})
+    datasets["skillsfuture"].specialities.append({"id": 602, "name": "Teller", "category_id": 502})
+    datasets["skillsfuture"].tags.append({"id": 9003, "name": "cash handling"})
+    datasets["skillsfuture"].speciality_tags.append({"id": 702, "speciality_id": 602, "tag_id": 9003})
+    concepts = [
+        {"recommended_action": "ADD_CANDIDATE", "parent_status": "HAS_PARENT", "incoming_ids": [9001, 9003]},
+    ]
+    records = run_case_a(datasets, saturation_report(concepts), baseline="original", incoming="skillsfuture")
+
+    outcomes: dict[str, set[str]] = {}
+    for record in records:
+        outcome = "pending_review" if record.get("needs_review") else "placed" if record["category"] else "unresolved"
+        outcomes.setdefault(record["tag_id"], set()).add(outcome)
+    assert outcomes == {"9001": {"placed"}, "9003": {"pending_review"}}
+    review = next(record for record in records if record["tag_id"] == "9003")
+    assert (review["category"], review["speciality"]) == ("Banking", "cash handling")
     CLASSIFICATION_OUTPUTS.validate_python(records)
 
 

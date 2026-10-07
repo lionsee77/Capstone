@@ -81,7 +81,7 @@ def test_case_a_then_merge_preview_run_end_to_end_from_the_cli(tmp_path, saturat
                  "--output", str(case_a_output)]) == 0
     records = json.loads(case_a_output.read_text())
     assert [(record["tag_id"], record["category"], record["speciality"]) for record in records] == [
-        ("9001", "Marketing", "Brand Strategy"),
+        ("9001", "Marketing", "campaign planning"),  # the skill itself becomes the proposed speciality
     ]
 
     out_dir = tmp_path / "merge"

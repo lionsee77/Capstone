@@ -271,3 +271,13 @@ def test_shared_reuse_target_does_not_hide_unapproved_source_placement(baseline:
     statuses = {row.tag_id: row.status for row in preview.rows if row.row_type == "placement"}
     assert statuses == {"one": "proposed", "two": "unapproved"}
     assert preview.counts.added_links == 1 and preview.counts.unapproved_placements == 1
+
+
+# One path proposed both confidently and as a review candidate keeps the review flag visible on its row.
+def test_shared_path_shows_needs_review_when_any_variant_is_flagged(baseline: TaxonomyDataset) -> None:
+    # The unflagged variant sorts first, so it is the representative the row is built from.
+    rows = [placement(confidence=0.4), placement(confidence=0.9, needs_review=True)]
+    preview = build_preview(resolve(rows, baseline, []), baseline)
+    [row] = [row for row in preview.rows if row.row_type == "placement"]
+    assert row.status == "pending"
+    assert row.needs_review is True

@@ -163,12 +163,27 @@ def _baseline_match_reasons(tags: dict[SourceKey, TagProposal], taxonomy: Taxono
     return reasons
 
 
-# Accept supplied placements only when neither incoming candidates nor baseline names flag the source.
+# Hold tags whose producer could only offer candidate placements, naming how many a reviewer chooses from.
+def _producer_review_reasons(tags: dict[SourceKey, TagProposal]) -> dict[SourceKey, str]:
+    reasons = {}
+    for key, tag in tags.items():
+        flagged = {_path_key(TaxonomyPath(service=row.service, category=row.category, speciality=row.speciality))
+                   for row in tag.placements if row.needs_review}
+        if flagged:
+            reasons[key] = (
+                f"Producer requested review: {len(flagged)} candidate placement(s). Approve the right path with a "
+                "create decision, or exclude/defer the tag."
+            )
+    return reasons
+
+
+# Accept supplied placements only when nothing flags the source: no incoming duplicate candidate, no
+# baseline name match, and no placement its producer marked for review.
 def _default_decisions(
     report: DeduplicationReport, tags: dict[SourceKey, TagProposal], decisions: Sequence[ReviewDecision],
-    baseline_matches: dict[SourceKey, str],
+    flagged_reasons: dict[SourceKey, str],
 ) -> list[ReviewDecision]:
-    flagged: set[SourceKey] = set(baseline_matches)
+    flagged: set[SourceKey] = set(flagged_reasons)
     for pair in report.candidates:
         left, right = _source_key(pair.left), _source_key(pair.right)
         if left not in tags or right not in tags or left == right:
@@ -242,7 +257,8 @@ def resolve_outputs(
     """Return stable canonical mappings and approved nodes for preview construction.
 
     Unflagged tags and their supplied paths are accepted by default. Source candidate
-    participants and baseline name matches stay pending without decisions. Explicit decisions take precedence.
+    participants, baseline name matches and tags with a producer `needs_review`
+    placement stay pending without decisions. Explicit decisions take precedence.
     Separate accepted groups remain separate even
     when matching suggested equivalence; one multi-member decision confirms a merge.
     Contradictory decisions or changed baseline paths raise ValueError before a
@@ -253,8 +269,9 @@ def resolve_outputs(
     tags = _index_tags(report)
     nodes = _resolve_hierarchy(report, taxonomy, tags)
     prepared = _prepare_decisions(decisions, tags)
-    baseline_matches = _baseline_match_reasons(tags, taxonomy)
-    defaults = _default_decisions(report, tags, prepared, baseline_matches)
+    # A baseline name match is the more specific reason, so it wins when a tag has both.
+    flagged_reasons = _producer_review_reasons(tags) | _baseline_match_reasons(tags, taxonomy)
+    defaults = _default_decisions(report, tags, prepared, flagged_reasons)
     canonical: dict[int | str, CanonicalTag] = {}
     mappings: list[CanonicalMapping] = []
     dispositions: dict[SourceKey, SourceDisposition] = {}
@@ -291,7 +308,7 @@ def resolve_outputs(
         paths = _tag_paths(tags[key])
         dispositions[key] = SourceDisposition(
             source=tags[key].source.model_copy(deep=True), status="pending",
-            reason=baseline_matches.get(
+            reason=flagged_reasons.get(
                 key, "Potential duplicate: review whether to merge or keep this source tag separate",
             ),
             unapproved_paths=[paths[path] for path in sorted(paths)],
