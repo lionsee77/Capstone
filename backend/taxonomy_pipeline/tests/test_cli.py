@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 import yaml
 
 from taxonomy_pipeline.cli import main
@@ -34,3 +36,100 @@ def test_exit_code_nonzero_when_a_metric_errors(tmp_path, isolated_db, capsys):
     )
     code = main(["run", "--config", str(config_path)])
     assert code != 0
+
+
+BASELINE_SQL = """
+INSERT INTO `services` (`id`, `name`) VALUES (1, 'Industry');
+INSERT INTO `categories` (`id`, `name`, `service_id`) VALUES (1, 'Marketing', 1);
+INSERT INTO `specialities` (`id`, `name`, `category_id`) VALUES (10, 'Brand Strategy', 1);
+INSERT INTO `tags` (`id`, `name`) VALUES (100, 'branding');
+INSERT INTO `speciality_tags` (`id`, `speciality_id`, `tag_id`) VALUES (1000, 10, 100);
+"""
+INCOMING_SQL = """
+INSERT INTO categories (id,name,service_id) VALUES (501,'Marketing',1);
+INSERT INTO specialities (id,name,category_id) VALUES (601,'Brand Strategy',501);
+INSERT INTO tags (id,name) VALUES (9001,'campaign planning'),(9002,'stage lighting');
+INSERT INTO speciality_tags (id,speciality_id,tag_id) VALUES (701,601,9001);
+"""
+
+
+def _write_stage_config(tmp_path):
+    (tmp_path / "baseline.sql").write_text(BASELINE_SQL)
+    (tmp_path / "incoming.sql").write_text(INCOMING_SQL)
+    config = {
+        "datasets": [
+            {"name": "original", "paths": ["baseline.sql"]},
+            {"name": "skillsfuture", "paths": ["incoming.sql"]},
+            {"name": "ssic", "type": "ssic", "paths": ["not-needed-by-these-commands.xlsx"]},
+        ],
+        "metrics": [],
+    }
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(yaml.safe_dump(config))
+    return config_path
+
+
+def test_case_a_then_merge_preview_run_end_to_end_from_the_cli(tmp_path, saturation_report, capsys):
+    config_path = _write_stage_config(tmp_path)
+    report = saturation_report([
+        {"recommended_action": "ADD_CANDIDATE", "parent_status": "HAS_PARENT", "incoming_ids": [9001]},
+        {"recommended_action": "ADD_CANDIDATE", "parent_status": "NO_PARENT", "incoming_ids": [9002]},
+    ])
+    case_a_output = tmp_path / "case_a_output.json"
+
+    assert main(["case-a", "--config", str(config_path), "--report", str(report), "--semantic-model", "",
+                 "--output", str(case_a_output)]) == 0
+    records = json.loads(case_a_output.read_text())
+    assert [(record["tag_id"], record["category"], record["speciality"]) for record in records] == [
+        ("9001", "Marketing", "Brand Strategy"),
+    ]
+
+    out_dir = tmp_path / "merge"
+    assert main(["merge-preview", "--config", str(config_path), "--input", str(case_a_output),
+                 "--out-dir", str(out_dir)]) == 0
+    assert (out_dir / "preview.csv").exists()
+    assert "1 new tags" in capsys.readouterr().err
+
+
+def test_case_a_fails_cleanly_without_a_saturation_report(tmp_path, capsys):
+    config_path = _write_stage_config(tmp_path)
+
+    code = main(["case-a", "--config", str(config_path), "--report", str(tmp_path / "missing.json")])
+
+    assert code == 1
+    assert "taxonomy-pipeline run" in capsys.readouterr().err
+
+
+def test_case_b_fails_cleanly_for_an_unknown_dataset(tmp_path, capsys):
+    config_path = _write_stage_config(tmp_path)
+
+    code = main(["case-b", "--config", str(config_path), "--incoming", "nope", "--report", "r.json"])
+
+    assert code == 1
+    assert "no taxonomy dataset named 'nope'" in capsys.readouterr().err
+
+
+def test_merge_preview_rejects_outputs_from_different_saturation_runs(tmp_path, capsys):
+    config_path = _write_stage_config(tmp_path)
+    row = {
+        "source_dataset": "skillsfuture", "tag_id": "9002", "tag": "stage lighting",
+        "original_classification": "unclassified", "service": None, "category": None, "speciality": None,
+        "confidence": None, "reason": "Unresolved",
+    }
+    inputs = []
+    for run_id in ("run-1", "run-2"):
+        path = tmp_path / f"{run_id}.json"
+        path.write_text(json.dumps([{**row, "tag_id": run_id, "saturation_run_id": run_id}]))
+        inputs += ["--input", str(path)]
+
+    code = main(["merge-preview", "--config", str(config_path), *inputs, "--out-dir", str(tmp_path / "m")])
+
+    assert code == 1
+    assert "different saturation runs" in capsys.readouterr().err
+
+
+def test_merge_preview_requires_an_input(tmp_path, capsys):
+    code = main(["merge-preview", "--config", str(_write_stage_config(tmp_path))])
+
+    assert code == 1
+    assert "at least one --input" in capsys.readouterr().err

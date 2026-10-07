@@ -6,8 +6,14 @@ on the same basis. Runs as a config-driven CLI, and as a FastAPI service so
 a future admin dashboard (or the client, if scope changes again) can drive
 it over HTTP.
 
+It also hosts the classification workflow that places the new tags a
+saturation run finds into the existing taxonomy (Case A and Case B) and
+merges both results into one reviewable preview - see
+[Classification workflow](#classification-workflow).
+
 The CLI and the API call the exact same `pipeline.run_pipeline` - there is
-one implementation of "what a run does," not two.
+one implementation of "what a run does," not two. Every CLI command is a thin
+wrapper around one library function in the same way.
 
 ## Project structure
 
@@ -17,8 +23,6 @@ taxonomy_pipeline/
 ├── docs/                             # design notes and future-work references
 │   ├── saturation-coverage-options.md      #   options for deciding "good coverage" from the saturation curve
 │   └── saturation-threshold-calibration.md #   method for choosing saturation thresholds from labelled pairs
-├── scripts/
-│   └── run_case_a.py                 # saturation -> category_adaptation -> classification output, end to end
 ├── src/taxonomy_pipeline/
 │   ├── datasets/                     # pluggable taxonomy and reference sources
 │   │   ├── __init__.py               #   source registry - register new `type:` values here
@@ -34,41 +38,133 @@ taxonomy_pipeline/
 │   │   ├── saturation.py             #   new-items curve across ordered incoming sources
 │   │   ├── category_adaptation.py    #   Case A: place a new source's own categories/specialities (see below)
 │   │   └── registry.py               #   METRICS dict - register new metrics here
-│   ├── classification/                # Case A/B -> consumer handoff (see "Classification output contract")
-│   │   ├── models.py                 #   ClassificationOutput and the shared contract models
-│   │   └── from_category_adaptation.py #  serializes category_adaptation's placements into the contract
+│   ├── classification/               # Case A/B producers and the merge stages (see "Classification workflow")
+│   │   ├── models.py                 #   ClassificationOutput contract + every stage's report model
+│   │   ├── routing.py                #   splits one saved saturation report into Case A / Case B tags
+│   │   ├── case_a.py                 #   Case A: category_adaptation -> contract records
+│   │   ├── from_category_adaptation.py #  serializes category_adaptation's placements into the contract
+│   │   ├── case_b.py                 #   Case B: LLM placement for tags with no source category
+│   │   ├── validation.py             #   merge 1: combine producer files, check paths against the baseline
+│   │   ├── deduplication.py          #   merge 2: group hierarchy paths, suggest duplicate tag pairs
+│   │   ├── resolution.py             #   merge 3: apply review decisions, assign temporary IDs
+│   │   ├── preview.py                #   merge 4: assemble and structurally check the combined taxonomy
+│   │   ├── export.py                 #   merge 5: preview -> CSV
+│   │   └── runner.py                 #   chains merge 1-5 for `merge-preview`
 │   ├── config.py                     # YAML/JSON pipeline config (datasets + metrics)
 │   ├── models.py                     # MetricResult / RunReport - one report shape everywhere
 │   ├── pipeline.py                   # run_pipeline(config) -> RunReport
 │   ├── db.py                         # SQLite run history
 │   ├── api/app.py                    # FastAPI: /metrics, /runs
-│   └── cli.py                        # `taxonomy-pipeline run|serve`
+│   └── cli.py                        # `taxonomy-pipeline run|serve|case-a|case-b|merge-preview`
+├── schemas/
+│   └── classification_output.schema.json # JSON Schema for the producer contract
 └── tests/
     └── fixtures/                     # tiny synthetic SQL dumps used by the tests
+        └── classification/           #   synthetic producer outputs, taxonomy and review decisions
 ```
 
-## Classification output contract
+## Classification workflow
 
-Shared models and fixtures define Case A/B handoffs. Taxonomy
-lookup, deduplication, and merge preview generation are still pending.
+Places the new tags saturation finds into the baseline taxonomy and builds one
+reviewable merge preview. Nothing here writes to a database.
 
 ```text
-src/taxonomy_pipeline/classification/models.py  # classification and merge data models
-schemas/classification_output.schema.json      # JSON array contract for both branches
-tests/fixtures/classification/                 # sample outputs and taxonomy snapshot
-tests/test_classification_models.py            # contract validation tests
+taxonomy-pipeline run --output report.json     # saturation, ONCE per round
+        │  ADD_CANDIDATE tags, split by parent_status (classification/routing.py)
+        ├── HAS_PARENT ─► taxonomy-pipeline case-a ─► case_a_output.json
+        └── NO_PARENT ──► taxonomy-pipeline case-b ─► case_b_output.json
+                                      │
+                 taxonomy-pipeline merge-preview ─► merge_runs/<timestamp>/
+                 validate → deduplicate → resolve → preview → preview.csv
+                                      │
+                 reviewer writes decisions.json, reruns merge-preview --decisions
 ```
 
-Both branches supply exactly nine fields: `source_dataset`, `tag_id`, `tag`,
-`original_classification`, `service`, `category`, `speciality`, `confidence`,
-and `reason`. Parse an array with `CLASSIFICATION_OUTPUTS.validate_json(payload)`
-from `taxonomy_pipeline.classification.models`. Unresolved placements use explicit
-`null` values for service, category, speciality, and confidence. The model checks
-types and complete placements; checking names against the taxonomy is not yet
-implemented.
+Run from `backend/taxonomy_pipeline/` (the commands default to
+`configs/original_vs_skillsfuture.yaml`, `--baseline original` and
+`--incoming skillsfuture`):
 
-See the [classification output contract](CLASSIFICATION_OUTPUT_CONTRACT.md) for fields,
-examples and handoff rules.
+```bash
+taxonomy-pipeline run --config configs/original_vs_skillsfuture.yaml --output report.json
+taxonomy-pipeline case-a --report report.json
+taxonomy-pipeline case-b --report report.json        # needs .[llm] and OPENAI_API_KEY
+taxonomy-pipeline merge-preview --input case_a_output.json --input case_b_output.json
+# review, then:
+taxonomy-pipeline merge-preview --input case_a_output.json --input case_b_output.json \
+    --decisions decisions.json
+```
+
+**Run saturation once per round and give both producers the same
+`report.json`.** Case A takes the report's `ADD_CANDIDATE` + `HAS_PARENT` tags,
+Case B its `ADD_CANDIDATE` + `NO_PARENT` tags, so together they cover every new
+tag exactly once. Both fail if the report is missing or has no saturation
+result for `--incoming`. Each record they write carries the report's `run_id`
+as `saturation_run_id`, and `merge-preview` refuses to combine files from
+different runs (unstamped files only produce a warning). `report.json` and the
+stage outputs are git-ignored: regenerate them rather than committing them,
+since they go stale whenever the data, thresholds or code change.
+
+### Producer contract
+
+Case A and Case B both write a JSON array in the shared contract: exactly nine
+fields - `source_dataset`, `tag_id`, `tag`, `original_classification`,
+`service`, `category`, `speciality`, `confidence` and `reason`. Unresolved
+placements use explicit `null` for service, category, speciality and
+confidence. Extra fields (Case B's `action`, the `saturation_run_id` stamp) are
+allowed and ignored by the merge stages. Parse an array with
+`CLASSIFICATION_OUTPUTS.validate_json(payload)` from
+`taxonomy_pipeline.classification.models`; the published schema is
+`schemas/classification_output.schema.json`. Field definitions, the merge
+stages' rules and the review-decision format are in the
+[classification output contract](CLASSIFICATION_OUTPUT_CONTRACT.md).
+
+### Case B (LLM classification)
+
+`case-b` asks an OpenAI model to place each parentless new tag into the
+baseline's existing categories and specialities, or to propose a new one,
+using the SkillsFuture unique-skills workbook (`--unique`, defaults to the one
+in `backend/skillsfuture/`) for skill descriptions. Both taxonomies come from
+the pipeline config, the same datasets saturation and Case A use. Install the
+optional dependencies and set the key in `backend/.env` (copy
+`backend/.env.example`):
+
+```bash
+pip install -e ".[dev,llm]"
+```
+
+```env
+OPENAI_API_KEY=your-openai-api-key
+OPENAI_MODEL=gpt-4o-mini
+```
+
+Options: `--batch-size` (default 5), `--model`, `--debug-response`,
+`--checkpoint`, `--output` (default `case_b_output.json`; a CSV is written next
+to it). Completed batches are checkpointed to a hidden file next to the output,
+so an interrupted run resumes without paying for finished tags, even with a
+different `--batch-size`; a successful run removes it. The checkpoint records
+the saturation run, source and model it was written for: rerunning against a
+different `report.json` or `--model` stops with an error rather than reusing
+old proposals, so delete the checkpoint if you mean to start over. Each record also carries an `action`:
+`assign_existing`, `propose_new_speciality` or `propose_new_category`.
+
+### Merge preview
+
+`merge-preview` chains the five merge stages and writes each one's report to
+`--out-dir` (default `merge_runs/<timestamp>/`): `validation.json`,
+`deduplication.json`, `resolution.json` and `preview.csv`.
+
+- Tags with no duplicate candidates are accepted with their proposed
+  placements; tags named in a candidate pair stay `pending` until a decision
+  covers them (see [Resolve reviewed tags and links](CLASSIFICATION_OUTPUT_CONTRACT.md#resolve-reviewed-tags-and-links)
+  for the `ReviewDecision` format, and
+  `tests/fixtures/classification/review_decisions.json` for an example).
+- `--semantic-model all-MiniLM-L6-v2` adds meaning-based duplicate candidates
+  (needs `.[semantic]`); without it, only name/spelling candidates are found and
+  the preview is marked partial.
+- Older exports go through temporary adapters: `--legacy-case-a FILE`,
+  `--legacy-case-b FILE=SOURCE_DATASET`, and `--skip-case-a-handoffs`.
+- Exit code is non-zero if an input file is unreadable or the preview is
+  blocked because the merge would introduce structural errors.
 
 ## Setup
 
@@ -80,7 +176,8 @@ pip install -e ".[dev]"
 
 `pip install -e .` makes the package importable and gives you the
 `taxonomy-pipeline` console command; `[dev]` additionally pulls in `pytest`,
-`httpx` (for the FastAPI test client) and `ruff`.
+`httpx` (for the FastAPI test client) and `ruff`. Running Case B also needs
+the `[llm]` extra (`openai`, `python-dotenv`).
 
 The supplied SkillsFuture comparison also enables optional semantic matching.
 Install it once with `pip install -e ".[dev,semantic]"`. The first semantic
@@ -331,23 +428,17 @@ category, speciality and confidence to be all-present or all-null together).
 
 ### Running it end to end
 
-`scripts/run_case_a.py` wires saturation and `category_adaptation` together
-and serializes the result into the classification output contract - this
-stands in for CLI commands that don't exist yet for this part of the pipeline:
+`taxonomy-pipeline case-a` reads the tag IDs from a saved saturation report
+(`ADD_CANDIDATE` + `HAS_PARENT`, see [Classification workflow](#classification-workflow)),
+runs `category_adaptation` on them, serializes the placements via
+`classification.from_category_adaptation.build_classification_outputs`, and
+validates the result against the contract before writing it out
+(`case_a_output.json` by default). `--semantic-model ''` runs it lexically only.
 
 ```bash
-.venv/bin/python scripts/run_case_a.py
-.venv/bin/python scripts/run_case_a.py --config configs/original_vs_skillsfuture.yaml \
-    --baseline original --incoming skillsfuture --output case_a_output.json
+taxonomy-pipeline run --config configs/original_vs_skillsfuture.yaml --output report.json
+taxonomy-pipeline case-a --report report.json --output case_a_output.json
 ```
-
-It runs saturation, splits `ADD_CANDIDATE` tags by `parent_status` (`HAS_PARENT`
-tag IDs go into `category_adaptation`; `NO_PARENT` ones are reported as the
-Case B handoff count), runs `category_adaptation`, serializes the placements
-via `classification.from_category_adaptation.build_classification_outputs`,
-and validates the result against the contract before writing it out
-(`case_a_output.json`, git-ignored - regenerate it rather than committing it,
-since it goes stale whenever the data or thresholds change).
 
 ## Industry and occupational breadth
 
@@ -578,6 +669,15 @@ Ruff linting and the test suite run in CI (see the root
 `.github/workflows/ci.yml`).
 
 ## Known gaps
+
+- **Case B service:** every resolved Case B placement is written with
+  `service="Industry"`, although most baseline categories sit under Function,
+  Subject or Others. A correct pick such as "Data analytics" (under Subject)
+  therefore reaches the merge preview as a proposed *new* category under
+  Industry. Tracked in #52; treat Case B rows in `preview.csv` accordingly.
+- **No promotion step:** `merge-preview` stops at a reviewable CSV. Writing the
+  merged taxonomy out, scoring it against the baseline and promoting it to the
+  next baseline is the incremental flow in #49.
 
 - **`saturation`** recommendations are review aids, not database
   operations. Its thresholds are not yet calibrated against a hand-labelled

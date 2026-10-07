@@ -128,6 +128,11 @@ the combined snapshot and exports a CSV for review.
 - [Case B fixture](tests/fixtures/classification/case_b.json)
 - [All fixture scenarios](tests/fixtures/classification/README.md)
 
+The stages below are library functions; `taxonomy-pipeline merge-preview` runs
+all of them in order and writes each report (see the
+[README](README.md#classification-workflow)). The Python snippets show what each
+stage does on its own.
+
 ## Temporary intake for current exports
 
 Use [validate_outputs](src/taxonomy_pipeline/classification/validation.py) to combine
@@ -150,34 +155,32 @@ named JSON batches. Without adapter options, inputs must follow the nine-field c
   placements and the explicit phrase `route to Case B` in their reason. Skips remain
   in the report and do not participate in cross-branch conflict checks. Default: false.
 
-Run from `backend/taxonomy_pipeline/`:
+From the command line, `merge-preview` maps these options to flags: plain
+`--input FILE` for nine-field files, `--legacy-case-a FILE`,
+`--legacy-case-b FILE=SOURCE_DATASET` and `--skip-case-a-handoffs`. Run from
+`backend/taxonomy_pipeline/`:
+
+```bash
+taxonomy-pipeline merge-preview --input case_a_output.json --input case_b_output.json
+# or, for exports made before the producers wrote nine fields:
+taxonomy-pipeline merge-preview --legacy-case-a old_case_a.json \
+    --legacy-case-b classification_proposals.json=skillsfuture --skip-case-a-handoffs
+```
+
+The same call in Python:
 
 ```python
-import json
 from pathlib import Path
 
 from taxonomy_pipeline.classification.validation import validate_outputs
-from taxonomy_pipeline.datasets.sql_dump import SqlDumpSource
+from taxonomy_pipeline.config import load_config
+from taxonomy_pipeline.pipeline import load_datasets
 
-backend = Path("..")
-taxonomy = SqlDumpSource("ankit-original", sorted((backend / "sql-files-nus").glob("*.sql"))).load()
-inputs = {
-    name: (backend / "reference_data" / name).read_text(encoding="utf-8")
-    for name in ("case_a_output.json", "classification_proposals.json")
-}
-report = validate_outputs(
-    inputs, taxonomy,
-    case_a_inputs={"case_a_output.json"},
-    case_b_sources={"classification_proposals.json": "skillsfuture"},
-    skip_case_a_handoffs=True,
-)
-destination = Path("../../exports/classification-intake")
-destination.mkdir(parents=True, exist_ok=True)
-(destination / "validation.json").write_text(report.model_dump_json(indent=2), encoding="utf-8")
-(destination / "merged_outputs.json").write_text(
-    json.dumps([row.model_dump(mode="json") for row in report.merged_outputs], indent=2),
-    encoding="utf-8",
-)
+config = load_config("configs/original_vs_skillsfuture.yaml")
+config.datasets = [dataset for dataset in config.datasets if dataset.name == "original"]
+taxonomy = load_datasets(config)["original"]
+inputs = {name: Path(name).read_text(encoding="utf-8") for name in ("case_a_output.json", "case_b_output.json")}
+report = validate_outputs(inputs, taxonomy)
 ```
 
 `merged_outputs` contains only unique valid placements in the nine-field format.
@@ -210,9 +213,7 @@ Pass the intake report to `deduplicate_outputs`:
 from taxonomy_pipeline.classification.deduplication import deduplicate_outputs
 
 deduplication = deduplicate_outputs(report)
-(destination / "deduplication.json").write_text(
-    deduplication.model_dump_json(indent=2), encoding="utf-8",
-)
+Path("deduplication.json").write_text(deduplication.model_dump_json(indent=2), encoding="utf-8")
 ```
 
 - `tags` groups eligible placements by `(source_dataset, tag_id)`, retaining source
@@ -323,7 +324,7 @@ from taxonomy_pipeline.classification.preview import build_preview
 from taxonomy_pipeline.classification.export import export_preview_csv
 
 preview = build_preview(resolution, taxonomy)
-export_preview_csv(preview, destination / "preview.csv")
+export_preview_csv(preview, "preview.csv")
 ```
 
 `preview.csv` contains four row types. Filter `row_type=placement` for the review table.
@@ -364,4 +365,5 @@ Neither flag authorizes a database write.
 
 UTF-8 CSV output supports Excel and standard CSV readers. Formula-like source text
 is prefixed with an apostrophe in the CSV; model evidence remains unchanged.
-Exporting to the same path replaces that file. CLI-managed run directories are still pending.
+Exporting to the same path replaces that file. `merge-preview` writes each run to its
+own timestamped directory under `merge_runs/` unless `--out-dir` is given.
