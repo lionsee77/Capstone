@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { pollWhileActive, RUN_POLL_INTERVAL_MS } from "@/lib/api/queries";
+import { hasOlderRuns, pollWhileActive, RUN_POLL_INTERVAL_MS, RUNS_PAGE_SIZE } from "@/lib/api/queries";
 
 describe("pollWhileActive", () => {
   it("keeps polling while any run is queued or running", () => {
@@ -15,5 +15,16 @@ describe("pollWhileActive", () => {
 
   it("does not poll without data, so an unknown run id is not retried forever", () => {
     expect(pollWhileActive(undefined)).toBe(false);
+  });
+});
+
+describe("hasOlderRuns", () => {
+  it("offers older runs only after a full page", () => {
+    expect(hasOlderRuns(RUNS_PAGE_SIZE, RUNS_PAGE_SIZE)).toBe(true);
+    expect(hasOlderRuns(12, RUNS_PAGE_SIZE)).toBe(false);
+  });
+
+  it("stops once a larger page comes back short", () => {
+    expect(hasOlderRuns(73, 2 * RUNS_PAGE_SIZE)).toBe(false);
   });
 });

@@ -1,11 +1,12 @@
 import type { NextRequest } from "next/server";
 
-import { resolveUpstream } from "@/lib/api/proxy";
+import { decideProxyRequest } from "@/lib/api/proxy";
 
 // Forwards allowlisted requests to the pipeline API; see `lib/api/proxy.ts` for why it is restricted.
 async function forward(request: NextRequest, ctx: RouteContext<"/api/pipeline/[...path]">): Promise<Response> {
   const { path } = await ctx.params;
-  const decision = resolveUpstream(request.method, path, request.nextUrl.searchParams, {
+  const hasBody = request.method === "POST";
+  const decision = decideProxyRequest(request.method, path, request.nextUrl.searchParams, request.headers, {
     TAXONOMY_API_URL: process.env.TAXONOMY_API_URL,
     PIPELINE_ALLOW_RUN_CREATION: process.env.PIPELINE_ALLOW_RUN_CREATION,
   });
@@ -17,8 +18,9 @@ async function forward(request: NextRequest, ctx: RouteContext<"/api/pipeline/[.
   try {
     const upstream = await fetch(decision.url, {
       method: request.method,
-      headers: { "Content-Type": "application/json" },
-      body: request.method === "POST" ? await request.text() : undefined,
+      // Forward the caller's Content-Type (checked above) rather than vouching for the body ourselves.
+      headers: hasBody ? { "Content-Type": request.headers.get("content-type") ?? "" } : undefined,
+      body: hasBody ? await request.text() : undefined,
       cache: "no-store",
     });
     return new Response(upstream.body, {
