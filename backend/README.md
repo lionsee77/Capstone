@@ -61,8 +61,9 @@ services → sf_categories → sf_specialities → sf_speciality_tags → sf_tag
 The generated SQL is the incoming SkillsFuture dataset for
 `taxonomy_pipeline/`. Classifying its new tags into the original taxonomy -
 Case A (tags with their own SkillsFuture category), Case B (LLM placement for
-the rest) and the merge preview that combines them - runs from there as
-`taxonomy-pipeline case-a | case-b | merge-preview`; see
+the rest), the merge preview that combines them, and the integrate step that
+turns the reviewed result into an enriched taxonomy snapshot - runs from there
+as `taxonomy-pipeline case-a | case-b | merge-preview | integrate`; see
 [Classification workflow](taxonomy_pipeline/README.md#classification-workflow).
 Case B's OpenAI settings still go in `backend/.env` (copy `.env.example`).
 

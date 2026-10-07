@@ -90,6 +90,37 @@ def test_case_a_then_merge_preview_run_end_to_end_from_the_cli(tmp_path, saturat
     assert (out_dir / "preview.csv").exists()
     assert "1 new tags" in capsys.readouterr().err
 
+    snapshot = tmp_path / "enriched"
+    assert main(["integrate", "--config", str(config_path), "--merge-run", str(out_dir),
+                 "--out-dir", str(snapshot)]) == 0
+    assert "1 new tags" in capsys.readouterr().err
+    manifest = json.loads((snapshot / "manifest.json").read_text())
+    assert manifest["merge_run"]["saturation_run_ids"] == [records[0]["saturation_run_id"]]
+    # The snapshot's own config scores the enriched taxonomy.
+    assert main(["run", "--config", str(snapshot / "enriched.yaml"), "--no-save"]) == 0
+
+
+def test_integrate_refuses_a_merge_run_with_nothing_to_add(tmp_path, capsys):
+    from tests.test_classification_integrate import PRODUCER_FILES
+
+    # These producer files target another baseline, so validation sets every record aside.
+    config_path = _write_stage_config(tmp_path)
+    out_dir = tmp_path / "merge"
+    main(["merge-preview", "--config", str(config_path), "--out-dir", str(out_dir),
+          *[arg for path in PRODUCER_FILES for arg in ("--input", str(path))]])
+    capsys.readouterr()
+
+    assert main(["integrate", "--config", str(config_path), "--merge-run", str(out_dir),
+                 "--out-dir", str(tmp_path / "enriched")]) == 1
+    assert "Nothing to integrate" in capsys.readouterr().err
+    assert not (tmp_path / "enriched").exists()
+
+
+def test_integrate_fails_cleanly_without_a_merge_run(tmp_path, capsys):
+    assert main(["integrate", "--config", str(_write_stage_config(tmp_path)),
+                 "--merge-run", str(tmp_path / "missing")]) == 1
+    assert "[FAILED] integrate" in capsys.readouterr().err
+
 
 def test_case_a_fails_cleanly_without_a_saturation_report(tmp_path, capsys):
     config_path = _write_stage_config(tmp_path)

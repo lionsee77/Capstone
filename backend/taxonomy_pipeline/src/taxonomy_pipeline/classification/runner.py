@@ -52,8 +52,22 @@ def load_decisions(path: str | Path) -> list[ReviewDecision]:
     return REVIEW_DECISIONS.validate_json(Path(path).read_text(encoding="utf-8"))
 
 
+def saturation_run_ids(payloads: dict[str, str]) -> list[str]:
+    """The distinct `saturation_run_id` stamps across inputs (more than one only before the check refuses)."""
+    return sorted(_run_ids_by_input(payloads)[0])
+
+
 def check_saturation_runs(payloads: dict[str, str]) -> list[str]:
     """Refuse inputs stamped with different saturation runs; warn about unstamped ones."""
+    run_ids, warnings = _run_ids_by_input(payloads)
+    if len(run_ids) > 1:
+        detail = "; ".join(f"{run_id}: {', '.join(sorted(names))}" for run_id, names in sorted(run_ids.items()))
+        raise MixedSaturationRunsError(f"Inputs come from different saturation runs ({detail}). Rerun Case A and "
+                                       "Case B against one saturation report.")
+    return warnings
+
+
+def _run_ids_by_input(payloads: dict[str, str]) -> tuple[dict[str, set[str]], list[str]]:
     run_ids: dict[str, set[str]] = {}
     warnings = []
     for name, payload in payloads.items():
@@ -69,11 +83,7 @@ def check_saturation_runs(payloads: dict[str, str]) -> list[str]:
         for stamp in stamps:
             if stamp is not None:
                 run_ids.setdefault(str(stamp), set()).add(name)
-    if len(run_ids) > 1:
-        detail = "; ".join(f"{run_id}: {', '.join(sorted(names))}" for run_id, names in sorted(run_ids.items()))
-        raise MixedSaturationRunsError(f"Inputs come from different saturation runs ({detail}). Rerun Case A and "
-                                       "Case B against one saturation report.")
-    return warnings
+    return run_ids, warnings
 
 
 def _input_names(paths: list[Path]) -> dict[Path, str]:
@@ -125,4 +135,14 @@ def run_merge_preview(
     ):
         (out_dir / filename).write_text(report.model_dump_json(indent=2), encoding="utf-8")
     export_preview_csv(preview, out_dir / "preview.csv")
+    # What `integrate` records as this snapshot's provenance; resolution.json doesn't carry the run stamp.
+    run_info = {
+        "saturation_run_ids": saturation_run_ids(payloads),
+        "inputs": [str(path) for path in paths],
+        "decisions": len(decisions),
+        "baseline_snapshot_id": resolution.baseline_snapshot_id,
+        "blocked": preview.blocked,
+        "pending_sources": preview.counts.pending_sources,
+    }
+    (out_dir / "run.json").write_text(json.dumps(run_info, indent=2), encoding="utf-8")
     return MergeRun(out_dir=out_dir, validation=validation, preview=preview, warnings=warnings)

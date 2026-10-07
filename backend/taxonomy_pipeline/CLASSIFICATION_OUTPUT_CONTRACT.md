@@ -361,7 +361,10 @@ batch: the returned taxonomy contains only the baseline, addition counts are zer
 and affected review rows are marked `blocked`. A changed baseline requires rerunning
 resolution. `validation.complete` means structural checks passed without introduced
 errors; `partial` still records upstream omissions or incomplete review/checks.
-Neither flag authorizes a database write.
+Neither flag authorizes a database write. `taxonomy-pipeline integrate` is the
+step after review: it refuses while any source is still pending, then writes an
+INSERT-only `additions.sql` with real IDs alongside copies of the baseline dumps
+(see the README's "Integrate" section). It still never touches a database.
 
 UTF-8 CSV output supports Excel and standard CSV readers. Formula-like source text
 is prefixed with an apostrophe in the CSV; model evidence remains unchanged.

@@ -1,11 +1,11 @@
-"""`taxonomy-pipeline run|serve|case-a|case-b|merge-preview`
+"""`taxonomy-pipeline run|serve|case-a|case-b|merge-preview|integrate`
 
 Every command is a thin wrapper around one library function, so the CLI never
 holds logic of its own: `run` calls `pipeline.run_pipeline` - the exact same
 function the FastAPI `/runs` route calls - plus optional SQLite persistence and
 a JSON report on stdout or a file. The classification commands call
-`classification.case_a.run_case_a`, `classification.case_b.run_case_b` and
-`classification.runner.run_merge_preview`.
+`classification.case_a.run_case_a`, `classification.case_b.run_case_b`,
+`classification.runner.run_merge_preview` and `classification.integrate.integrate`.
 """
 from __future__ import annotations
 
@@ -148,6 +148,43 @@ def _cmd_merge_preview(args: argparse.Namespace) -> int:
     return 0 if run.ok else 1
 
 
+def _cmd_integrate(args: argparse.Namespace) -> int:
+    from .classification.integrate import IntegrationError, integrate
+    from .classification.models import ResolutionReport
+
+    merge_run = Path(args.merge_run)
+    out_dir = args.out_dir or f"integrations/{datetime.now():%Y%m%d-%H%M%S}"
+    try:
+        resolution = ResolutionReport.model_validate_json((merge_run / "resolution.json").read_text(encoding="utf-8"))
+        run_info = merge_run / "run.json"
+        provenance = json.loads(run_info.read_text(encoding="utf-8")) if run_info.exists() else {}
+        baseline = next((d for d in load_config(args.config).datasets if d.name == args.baseline), None)
+        if baseline is None:
+            raise IntegrationError(f"{args.config} declares no dataset named {args.baseline!r}")
+        result = integrate(
+            resolution, baseline, out_dir=out_dir, provenance={"merge_run": str(merge_run), **provenance},
+        )
+    except (OSError, ValueError) as exc:
+        print(f"[FAILED] integrate: {exc}", file=sys.stderr)
+        return 1
+    omitted = sum(result.manifest["omitted_records"].values())
+    if omitted:
+        print(f"[WARN] {omitted} input record(s) were omitted before review and are not in the snapshot "
+              f"(by status: {result.manifest['omitted_records']}); see {merge_run}/validation.json", file=sys.stderr)
+    for table, rows in result.manifest["exact_duplicate_rows"].items():
+        if rows["enriched"] > rows["baseline"]:
+            print(f"[WARN] {table}: rows in exact-duplicate name clusters rose from {rows['baseline']} to "
+                  f"{rows['enriched']}; check the new names before using this snapshot", file=sys.stderr)
+    counts = result.counts
+    print(
+        f"[OK] {counts['categories']} new categories, {counts['specialities']} new specialities, "
+        f"{counts['tags']} new tags, {counts['speciality_tags']} new links",
+        file=sys.stderr,
+    )
+    print(f"wrote {result.out_dir}/ (score it: taxonomy-pipeline run --config {result.out_dir}/enriched.yaml)")
+    return 0
+
+
 def _add_dataset_args(parser: argparse.ArgumentParser, *, incoming: bool = True) -> None:
     parser.add_argument("--config", default="configs/original_vs_skillsfuture.yaml", help="pipeline config (YAML)")
     parser.add_argument("--baseline", default="original", help="taxonomy dataset to place tags into")
@@ -202,6 +239,12 @@ def build_parser() -> argparse.ArgumentParser:
     merge.add_argument("--semantic-model", help="sentence model for semantic duplicate candidates")
     merge.add_argument("--out-dir", help="where to write the reports (default: merge_runs/<timestamp>)")
     merge.set_defaults(func=_cmd_merge_preview)
+
+    integrate = subparsers.add_parser("integrate", help="turn a fully reviewed merge run into an enriched taxonomy")
+    _add_dataset_args(integrate, incoming=False)
+    integrate.add_argument("--merge-run", required=True, help="merge-preview output folder (merge_runs/<timestamp>)")
+    integrate.add_argument("--out-dir", help="where to write the snapshot (default: integrations/<timestamp>)")
+    integrate.set_defaults(func=_cmd_integrate)
 
     return parser
 
