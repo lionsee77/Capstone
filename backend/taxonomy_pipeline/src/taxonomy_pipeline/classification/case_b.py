@@ -1,9 +1,10 @@
 """Case B: propose placements for new tags that have no category of their own.
 
-Saturation marks these tags `ADD_CANDIDATE` + `NO_PARENT` (see `routing.py`),
-so there is nothing in their source to adapt; an LLM proposes a category and
+Saturation marks these tags `NO_PARENT` (see `routing.py`), so there is nothing
+in their source to adapt; an LLM proposes a category and
 speciality in the baseline taxonomy instead, using the SkillsFuture workbook's
-skill descriptions as context.
+skill descriptions as context. Tags saturation could not confirm as new
+(`REVIEW_AMBIGUOUS`) are classified too, and their records flagged for review.
 
 Proposal-only: writes JSON and CSV review files and never touches a database.
 Taxonomies come from the pipeline config, the same datasets saturation and Case A
@@ -22,14 +23,14 @@ from typing import Any
 
 from ..datasets.base import TaxonomyDataset
 from .models import CLASSIFICATION_OUTPUTS
-from .routing import RUN_ID_FIELD, case_b_tag_ids, load_saturation
+from .routing import RUN_ID_FIELD, case_b_tag_ids, load_saturation, mark_ambiguous
 
 ACTIONS = ["assign_existing", "propose_new_speciality", "propose_new_category"]
 VALID_ACTIONS = set(ACTIONS)
 PROPOSAL_FIELDS = ("tag", "tag_id", "action", "category", "speciality", "confidence", "reason")
 CSV_FIELDS = [
     "action", "source_dataset", "tag_id", "tag", "original_classification", "service", "category",
-    "speciality", "confidence", "reason", RUN_ID_FIELD,
+    "speciality", "confidence", "reason", "needs_review", RUN_ID_FIELD,
 ]
 # The response shape the model is asked to return, embedded verbatim in the prompt.
 RESPONSE_SCHEMA = {
@@ -266,7 +267,8 @@ async def run_case_b(
     input_tag_ids = [tag_id for tag_id in map(str, case_b_tag_ids(saturation)) if tag_id in tags]
     if not input_tag_ids:
         raise CaseBError(f"None of the Case B tags in {report_path} exist in dataset {incoming!r}")
-    print(f"Using {len(input_tag_ids)} Case B tag(s) from {report_path} (ADD_CANDIDATE + NO_PARENT)")
+    ambiguous = sum(tag_id in saturation.ambiguous_matches() for tag_id in input_tag_ids)
+    print(f"Using {len(input_tag_ids)} Case B tag(s) from {report_path} (NO_PARENT; {ambiguous} need review)")
 
     skills = source_skills(unique_skills)
     tag_to_skill = {str(TAG_ID_OFFSET + index): skill_id for index, skill_id in enumerate(sorted(skills))}
@@ -297,7 +299,10 @@ async def run_case_b(
         print(f"Processed {len(proposals)}/{len(input_tag_ids)}")
 
     ordered = [proposals[tag_id] for tag_id in input_tag_ids]
-    records = to_contract_records(ordered, tags, source_dataset=incoming, run_id=saturation.run_id)
+    records = mark_ambiguous(
+        to_contract_records(ordered, tags, source_dataset=incoming, run_id=saturation.run_id), saturation,
+    )
+    CLASSIFICATION_OUTPUTS.validate_python(records)
     write_outputs(records, output)
     print(f"Wrote {len(records)} classifications to {output} and {output.with_suffix('.csv')}")
     if checkpoint.exists():

@@ -72,7 +72,7 @@ taxonomy snapshot. Nothing here writes to a database.
 
 ```text
 taxonomy-pipeline run --output report.json     # saturation, ONCE per round
-        │  ADD_CANDIDATE tags, split by parent_status (classification/routing.py)
+        │  ADD_CANDIDATE + REVIEW_AMBIGUOUS tags, split by parent_status (classification/routing.py)
         ├── HAS_PARENT ─► taxonomy-pipeline case-a ─► case_a_output.json
         └── NO_PARENT ──► taxonomy-pipeline case-b ─► case_b_output.json
                                       │
@@ -102,9 +102,16 @@ taxonomy-pipeline run --config integrations/<timestamp>/enriched.yaml   # score 
 ```
 
 **Run saturation once per round and give both producers the same
-`report.json`.** Case A takes the report's `ADD_CANDIDATE` + `HAS_PARENT` tags,
-Case B its `ADD_CANDIDATE` + `NO_PARENT` tags, so together they cover every new
-tag exactly once. Both fail if the report is missing or has no saturation
+`report.json`.** Case A takes the report's `HAS_PARENT` tags and Case B its
+`NO_PARENT` tags, each from both `ADD_CANDIDATE` (nothing in the baseline is
+close) and `REVIEW_AMBIGUOUS` (something is moderately close, so saturation
+can't confirm the tag is new). Together they cover every new or possibly new
+tag exactly once; duplicates (`SKIP_*`), `REVIEW_NEW_PLACEMENT` and
+`REVIEW_OTHER_LEVEL` tags are not routed. Ambiguous tags are placed like the
+others, but every placement is flagged `needs_review` and its `reason` names
+the baseline concept saturation found close (`routing.mark_ambiguous`), so
+`merge-preview` holds them for a reviewer. On the SkillsFuture run that adds
+1,225 `HAS_PARENT` and 185 `NO_PARENT` tags (about 37 more Case B batches of 5). Both fail if the report is missing or has no saturation
 result for `--incoming`. Each record they write carries the report's `run_id`
 as `saturation_run_id`, and `merge-preview` refuses to combine files from
 different runs (unstamped files only produce a warning). `report.json` and the
@@ -118,7 +125,8 @@ fields - `source_dataset`, `tag_id`, `tag`, `original_classification`,
 `service`, `category`, `speciality`, `confidence` and `reason`. Unresolved
 placements use explicit `null` for service, category, speciality and
 confidence. One optional field, `needs_review: true`, marks a placement the
-producer can only offer as a candidate (Case A's review candidates); it is
+producer can only offer as a candidate (Case A's review candidates), or the
+placement of a tag saturation couldn't confirm as new (both producers); it is
 omitted when false, and resolution keeps such a tag pending until a reviewer
 decides. Extra fields (Case B's `action`, the `saturation_run_id` stamp) are
 allowed and ignored by the merge stages. Parse an array with
@@ -167,9 +175,13 @@ snapshot's provenance).
 
 - Tags with no duplicate candidates are accepted with their proposed
   placements; tags named in a candidate pair, and tags with a `needs_review`
-  placement (Case A's review candidates, shown in the `needs_review` column of
-  `preview.csv`), stay `pending` until a decision covers them. For a review
-  candidate, approve the one path to keep with `create` and `approved_paths`
+  placement (Case A's review candidates and every ambiguous tag, shown in the
+  `needs_review` column of `preview.csv`), stay `pending` until a decision
+  covers them. For an ambiguous tag the placement's `reason` names what it
+  resembles: decide `create` (it is new), `reuse` with `existing_tag_id` (it is
+  that existing tag; `approved_paths` still says where to link it), or
+  `exclude`/`defer`. For a review candidate, approve the one path to keep with
+  `create` and `approved_paths`
   (see [Resolve reviewed tags and links](CLASSIFICATION_OUTPUT_CONTRACT.md#resolve-reviewed-tags-and-links)
   for the `ReviewDecision` format, and
   `tests/fixtures/classification/review_decisions.json` for an example).
@@ -421,7 +433,7 @@ export other groups.
 ## Category adaptation (Case A)
 
 `category_adaptation` is the next step after saturation for tags a saturation
-run already flagged as new (`ADD_CANDIDATE`) **and** that have a parent in
+run flagged as new or possibly new (`ADD_CANDIDATE` or `REVIEW_AMBIGUOUS`) **and** that have a parent in
 their own source (saturation's `parent_status == HAS_PARENT` on that tag -
 tags with `NO_PARENT` have nothing of their own to place and are Case B's job
 instead, not this metric's).
@@ -485,7 +497,7 @@ Defaults come from `CategoryAdaptationMetric.default_params`
 |---|---|---|
 | `baseline` | - | Existing taxonomy dataset name |
 | `incoming` | - | The one source dataset name being adapted |
-| `new_tag_ids` | - | Required; the confirmed-new tag IDs to place (from saturation's `ADD_CANDIDATE` + `HAS_PARENT` tags) |
+| `new_tag_ids` | - | Required; the tag IDs to place (saturation's `ADD_CANDIDATE` and `REVIEW_AMBIGUOUS` + `HAS_PARENT` tags) |
 | `threshold` | 90 | RapidFuzz score (0-100) for a "close spelling"; never enough on its own |
 | `semantic_model` | none | Optional sentence-transformers model; without it only exact/spelling evidence is used |
 | `semantic_threshold` | 0.6 | Cosine similarity for a meaning match, used for both categories and specialities. Lower than saturation's tag default (0.70): categories are broader, less precisely-worded concepts, and real runs show correct matches scoring as low as 0.63-0.69 |
@@ -528,7 +540,7 @@ and a review candidate from its candidate category (`candidate_category_*`,
 ### Running it end to end
 
 `taxonomy-pipeline case-a` reads the tag IDs from a saved saturation report
-(`ADD_CANDIDATE` + `HAS_PARENT`, see [Classification workflow](#classification-workflow)),
+(`ADD_CANDIDATE` or `REVIEW_AMBIGUOUS`, + `HAS_PARENT`; see [Classification workflow](#classification-workflow)),
 runs `category_adaptation` on them, serializes the placements via
 `classification.from_category_adaptation.build_classification_outputs`, and
 validates the result against the contract before writing it out
@@ -769,6 +781,12 @@ Ruff linting and the test suite run in CI (see the root
 
 ## Known gaps
 
+- **Ambiguous tags make a large review queue:** routing every
+  `REVIEW_AMBIGUOUS` tag holds each one for a decision. A lexical-only
+  SkillsFuture run gives 1,749 pending sources and 5,769 flagged Case A
+  records (up to 48 for one tag: 16 partly matched sectors x 3 candidates).
+  Calibrating saturation's thresholds (#47) so clearly new tags become
+  `ADD_CANDIDATE` is what shrinks it; a bulk decision tool would also help.
 - **Case A matches tags by name only:** the content step compares the tag
   name with baseline speciality names, so a skill whose name shares nothing
   with its natural home (e.g. a functional skill used in one sector) falls

@@ -52,14 +52,17 @@ still undergo strict validation; extras cannot replace missing required fields.
 | `speciality`              | string or null | Proposed Ankit speciality name within that category                                     |
 | `confidence`              | number or null | Confidence in this placement, from `0` to `1` inclusive                                 |
 | `reason`                  | string         | Short placement explanation, or why no placement was found                              |
-| `needs_review` (optional) | boolean        | `true` when the producer can only offer this placement as a candidate; omitted when false |
+| `needs_review` (optional) | boolean        | `true` when this placement needs a human decision before it is accepted; omitted when false |
 
 `needs_review: true` requires a full placement (a reviewer needs a path to approve).
 A producer that cannot decide between several placements emits one record per
 candidate, each flagged. Resolution never accepts a tag with a flagged placement by
 default: it stays `pending` until a decision approves the path to keep, or excludes
 or defers the tag. Case A uses this when a source category only partly matches a
-baseline category; Case B never sets it.
+baseline category. Both cases also set it on every placement of a tag that saturation
+marked `REVIEW_AMBIGUOUS` (moderately close to an existing concept), with the close
+concept named in `reason`; the reviewer then decides whether the tag is new (`create`),
+an existing tag (`reuse`), or neither (`exclude`/`defer`).
 
 `original_classification` describes the tag **in its source dataset**, before Case
 A/B processing. `tag` preserves the source text and supplies the database tag name.

@@ -79,6 +79,25 @@ def test_every_case_a_tag_ends_placed_pending_review_or_unresolved_never_dropped
     CLASSIFICATION_OUTPUTS.validate_python(records)
 
 
+def test_places_ambiguous_tags_but_flags_every_placement_for_review(saturation_report):
+    datasets = _datasets()
+    datasets["skillsfuture"].tags.append({"id": 9004, "name": "loan servicing"})
+    datasets["skillsfuture"].speciality_tags.append({"id": 703, "speciality_id": 601, "tag_id": 9004})
+    concepts = [*CONCEPTS, {
+        "recommended_action": "REVIEW_AMBIGUOUS", "parent_status": "HAS_PARENT", "incoming_ids": [9004],
+        "reason": "partial_similarity", "closest_semantic_baseline_name": "Loan Origination",
+        "closest_semantic_score": 0.64, "closest_semantic_baseline_level": "tags",
+    }]
+    records = run_case_a(datasets, saturation_report(concepts), baseline="original", incoming="skillsfuture")
+
+    by_tag = {record["tag_id"]: record for record in records}
+    assert "needs_review" not in by_tag["9001"]  # ADD_CANDIDATE: accepted by default, as before
+    assert by_tag["9004"]["needs_review"] is True
+    assert (by_tag["9004"]["category"], by_tag["9004"]["speciality"]) == ("Banking", "loan servicing")
+    assert "tag 'Loan Origination' in meaning (0.64)" in by_tag["9004"]["reason"]
+    CLASSIFICATION_OUTPUTS.validate_python(records)
+
+
 def test_requires_a_saturation_report(tmp_path):
     with pytest.raises(FileNotFoundError):
         run_case_a(_datasets(), tmp_path / "report.json", baseline="original", incoming="skillsfuture")

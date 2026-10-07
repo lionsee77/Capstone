@@ -121,7 +121,7 @@
         },
         "needs_review": {
           "default": false,
-          "description": "Optional. True when the producer could only propose this placement as a candidate; the tag stays pending until a reviewer approves one of its placements. Omitted when false.",
+          "description": "Optional. True when this placement needs a human decision: a candidate the producer could only propose, or a tag saturation could not confirm as new. The tag stays pending until a reviewer decides. Omitted when false.",
           "title": "Needs Review",
           "type": "boolean"
         }

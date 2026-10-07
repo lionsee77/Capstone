@@ -1,5 +1,5 @@
-"""Case A: place the new tags a saturation run flagged (`ADD_CANDIDATE` with a
-parent in their own source) onto the baseline taxonomy.
+"""Case A: place the new tags a saturation run flagged (`ADD_CANDIDATE` or
+`REVIEW_AMBIGUOUS`, with a parent in their own source) onto the baseline taxonomy.
 
 A source's own levels don't have to mean what the baseline's do. In
 SkillsFuture the tag is a skill, its speciality a job role and its category a
@@ -249,9 +249,8 @@ class CategoryAdaptationMetric(Metric):
                 metric_id=self.id,
                 status="error",
                 summary=(
-                    "new_tag_ids is required: the confirmed-new tag ids from a saturation run's "
-                    "ADD_CANDIDATE outcomes (plus any REVIEW_AMBIGUOUS tags a reviewer resolved as "
-                    "new). "
+                    "new_tag_ids is required: the tag ids a saturation run marked ADD_CANDIDATE or "
+                    "REVIEW_AMBIGUOUS (see classification/routing.py)."
                 ),
             )
         new_tag_ids = set(new_tag_ids)
