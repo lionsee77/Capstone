@@ -148,8 +148,9 @@ def _review_candidate_output(placement: dict[str, Any], source_dataset: str) -> 
     """One of the closest categories offered for a source category that only partly matched.
 
     Flagged `needs_review`, so merge-preview holds the tag until a reviewer approves
-    one candidate path. Confidence is the candidate's own similarity, capped at the
-    floor, so it never ranks above a placement that was accepted automatically.
+    one candidate path. Confidence is the candidate's own similarity (source category
+    name vs candidate category name), so a reviewer can rank the candidates by it;
+    `needs_review`, not confidence, is what keeps the tag from being accepted.
     """
     score = placement["candidate_score"]
     similarity = score / 100 if placement["candidate_score_type"] == "lexical" else max(score, 0.0)
@@ -162,7 +163,7 @@ def _review_candidate_output(placement: dict[str, Any], source_dataset: str) -> 
         service=placement["candidate_service_name"],
         category=category,
         speciality=speciality,
-        confidence=round(min(similarity, _NEW_PROPOSAL_FLOOR), 4),
+        confidence=round(similarity, 4),
         reason=(
             _category_reason(placement)
             + f" Review candidate {placement['candidate_rank']} of {placement['candidate_count']}: proposing "

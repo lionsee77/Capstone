@@ -250,18 +250,19 @@ def test_review_candidate_is_a_full_placement_flagged_for_review():
     assert (record.service, record.category, record.speciality) == (
         "Industry", "Logistics, Shipping & Aviation", "Fire Prevention",
     )
-    assert record.confidence == 0.3  # 0.52 similarity, capped at the new-proposal floor
+    assert record.confidence == 0.52  # the candidate's own similarity
     assert "Review candidate 2 of 3" in record.reason
     assert "Air Transport" in record.reason
 
 
-def test_review_candidate_confidence_uses_its_own_score_below_the_floor():
-    semantic = build_classification_outputs([_candidate(candidate_score=0.18)], "skillsfuture")[0]
+def test_review_candidate_confidence_is_its_raw_similarity_and_keeps_the_ranking():
+    candidates = [_candidate(candidate_rank=rank, candidate_score=score)
+                  for rank, score in ((1, 0.5221), (2, 0.3741), (3, 0.3223))]
     lexical = build_classification_outputs(
         [_candidate(candidate_score=25.0, candidate_score_type="lexical")], "skillsfuture",
     )[0]
 
-    assert semantic.confidence == 0.18
+    assert [r.confidence for r in build_classification_outputs(candidates, "skillsfuture")] == [0.5221, 0.3741, 0.3223]
     assert lexical.confidence == 0.25
 
 

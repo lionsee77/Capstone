@@ -456,7 +456,8 @@ saturation's exact/lexical/semantic matcher rather than reimplementing it:
    confirmed. Instead the tag is proposed under each of the **3 closest
    baseline categories** (by meaning with a semantic model, else by
    spelling), as a new speciality named after itself, every record flagged
-   `needs_review: true` with confidence capped at 0.3. Resolution never
+   `needs_review: true` with confidence set to the candidate's similarity
+   (source category name vs candidate category name). Resolution never
    accepts a flagged tag by default, so it shows as `pending` in
    `merge-preview` until a reviewer approves one candidate path with a
    `create` decision, or excludes/defers the tag; `integrate` refuses while
