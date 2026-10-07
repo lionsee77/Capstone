@@ -211,6 +211,23 @@ def test_review_category_with_nothing_to_offer_stays_unresolved(monkeypatch):
     assert "candidate_category_name" not in placement
 
 
+def test_content_match_without_a_known_service_falls_back_instead_of_aborting():
+    # A matched speciality whose category has no service in the baseline can't be
+    # written as a full contract record; it must not be taken as a content match.
+    datasets = _datasets()
+    datasets["original"].categories.append({"id": 2, "name": "Procurement", "service_id": 99})
+    datasets["original"].specialities.append({"id": 2, "name": "Supplier Sourcing", "category_id": 2})
+    datasets["skillsfuture"].tags.append({"id": 9004, "name": "Supplier Sourcing"})
+    datasets["skillsfuture"].speciality_tags.append({"id": 704, "speciality_id": 601, "tag_id": 9004})
+    result = CategoryAdaptationMetric().run(
+        datasets, {"baseline": "original", "incoming": "skillsfuture", "new_tag_ids": [9004]}
+    )
+
+    [placement] = result.details["placements"]
+    assert placement["placement_basis"] == "source_category"
+    assert placement["target_category_name"] == "Banking"
+
+
 def test_tag_linked_to_many_source_specialities_in_one_category_yields_one_placement():
     # SkillsFuture links one skill to up to ~100 job roles in a sector; they are
     # evidence for the sector, not placements of their own.

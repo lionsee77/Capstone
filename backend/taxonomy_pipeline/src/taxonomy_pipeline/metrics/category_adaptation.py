@@ -305,13 +305,19 @@ class CategoryAdaptationMetric(Metric):
         )
         content_outcomes = _outcomes_by_incoming_id(content_comparison, NEW_SPECIALITY)
         baseline_specialities_by_id = {row.get("id"): row for row in baseline.specialities}
-        content_matched = {
-            tag_id: outcome for tag_id, outcome in content_outcomes.items()
-            if outcome["action"] in MATCHED_ACTIONS
-            and baseline_categories_by_id.get(
+        # A content match only counts when the matched speciality's category and
+        # service both exist: the contract needs all three, and a record with a
+        # category but no service would fail validation for the whole batch.
+        content_matched = {}
+        for tag_id, outcome in content_outcomes.items():
+            matched_category = baseline_categories_by_id.get(
                 baseline_specialities_by_id.get(outcome["target_id"], {}).get("category_id")
-            ) is not None
-        }
+            )
+            if (
+                outcome["action"] in MATCHED_ACTIONS and matched_category is not None
+                and baseline_services_by_id.get(matched_category.get("service_id")) is not None
+            ):
+                content_matched[tag_id] = outcome
 
         # Step 2, source category fallback for every tag step 1 didn't place.
         fallback_tag_ids = new_tag_ids - content_matched.keys()
