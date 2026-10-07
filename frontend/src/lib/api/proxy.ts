@@ -20,6 +20,8 @@ export type ProxyEnv = {
 export type ProxyRejection = { ok: false; status: 403 | 404 | 415; reason: string };
 export type ProxyDecision = { ok: true; url: string } | ProxyRejection;
 
+const CROSS_SITE: ProxyRejection = { ok: false, status: 403, reason: "Cross-site requests are not allowed" };
+
 /** The request headers `checkWriteRequest` looks at; `Headers.get` semantics (null when absent). */
 export type WriteRequestHeaders = Pick<Headers, "get">;
 
@@ -64,9 +66,13 @@ export function resolveUpstream(
  * - `Content-Type` must be `application/json`. Cross-site pages can only send
  *   `text/plain`, form or multipart bodies without a preflight.
  * - `Sec-Fetch-Site`, which every current browser sends, must be `same-origin`.
- *   Non-browser clients such as curl send none and are allowed.
- * - `Origin`, when present, must match `Host`, for browsers without
- *   `Sec-Fetch-Site`.
+ *   It is authoritative when present: it reflects the page's real origin even
+ *   behind a reverse proxy that rewrites `Host`.
+ * - Only when `Sec-Fetch-Site` is missing (older browsers) is `Origin`, if
+ *   present, compared with the host the request was made to
+ *   (`X-Forwarded-Host`, else `Host`). A cross-site page can't set
+ *   `X-Forwarded-Host` without triggering a preflight, so trusting it here is
+ *   safe. Non-browser clients such as curl send neither header and are allowed.
  */
 export function checkWriteRequest(headers: WriteRequestHeaders): ProxyRejection | null {
   const mediaType = (headers.get("content-type") ?? "").split(";", 1)[0].trim().toLowerCase();
@@ -75,8 +81,8 @@ export function checkWriteRequest(headers: WriteRequestHeaders): ProxyRejection 
   }
 
   const fetchSite = headers.get("sec-fetch-site");
-  if (fetchSite !== null && fetchSite !== "same-origin") {
-    return { ok: false, status: 403, reason: "Cross-site requests are not allowed" };
+  if (fetchSite !== null) {
+    return fetchSite === "same-origin" ? null : CROSS_SITE;
   }
 
   const origin = headers.get("origin");
@@ -87,9 +93,25 @@ export function checkWriteRequest(headers: WriteRequestHeaders): ProxyRejection 
     } catch {
       // `Origin: null` (sandboxed frames, file://) and junk values are treated as cross-site.
     }
-    if (originHost === null || originHost !== headers.get("host")) {
-      return { ok: false, status: 403, reason: "Cross-site requests are not allowed" };
-    }
+    const requestHost = headers.get("x-forwarded-host") ?? headers.get("host");
+    if (originHost === null || originHost !== requestHost) return CROSS_SITE;
   }
   return null;
+}
+
+/**
+ * The full proxy decision for one request. The allowlist runs first, so unknown
+ * paths stay 404 and disabled run creation stays 403. The write guard only
+ * judges requests that would otherwise be forwarded.
+ */
+export function decideProxyRequest(
+  method: string,
+  segments: string[],
+  searchParams: URLSearchParams,
+  headers: WriteRequestHeaders,
+  env: ProxyEnv,
+): ProxyDecision {
+  const allowed = resolveUpstream(method, segments, searchParams, env);
+  if (!allowed.ok || method !== "POST") return allowed;
+  return checkWriteRequest(headers) ?? allowed;
 }

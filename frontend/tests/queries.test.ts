@@ -20,16 +20,11 @@ describe("pollWhileActive", () => {
 
 describe("hasOlderRuns", () => {
   it("offers older runs only after a full page", () => {
-    expect(hasOlderRuns(RUNS_PAGE_SIZE, RUNS_PAGE_SIZE, false)).toBe(true);
-    expect(hasOlderRuns(12, RUNS_PAGE_SIZE, false)).toBe(false);
+    expect(hasOlderRuns(RUNS_PAGE_SIZE, RUNS_PAGE_SIZE)).toBe(true);
+    expect(hasOlderRuns(12, RUNS_PAGE_SIZE)).toBe(false);
   });
 
-  it("keeps offering them while the next page loads behind the previous rows", () => {
-    // Clicked "load older": limit is now 100, but the 50 rows shown came from the limit-50 request.
-    expect(hasOlderRuns(RUNS_PAGE_SIZE, 2 * RUNS_PAGE_SIZE, true)).toBe(true);
-  });
-
-  it("stops once the larger page comes back short", () => {
-    expect(hasOlderRuns(73, 2 * RUNS_PAGE_SIZE, false)).toBe(false);
+  it("stops once a larger page comes back short", () => {
+    expect(hasOlderRuns(73, 2 * RUNS_PAGE_SIZE)).toBe(false);
   });
 });

@@ -2,7 +2,7 @@
  * TanStack Query hooks - the only way components should talk to the API.
  * Query keys live in `queryKeys` so invalidation stays in one place.
  */
-import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { api } from "./client";
 import { isRunFinished, type PipelineConfig, type RunStatus } from "./schemas";
@@ -21,15 +21,9 @@ export function pollWhileActive(runs: { status: RunStatus }[] | undefined): numb
 
 export const RUNS_PAGE_SIZE = 50;
 
-/**
- * Whether older runs may exist beyond the rows shown. A full page means there
- * may be more; the API returns fewer once history runs out. While a larger
- * page loads, the rows shown are the previous page's (`showingPreviousPage`),
- * so compare against the limit they were fetched with, not the one requested.
- */
-export function hasOlderRuns(rowCount: number, requestedLimit: number, showingPreviousPage: boolean): boolean {
-  const shownLimit = showingPreviousPage ? requestedLimit - RUNS_PAGE_SIZE : requestedLimit;
-  return rowCount >= shownLimit;
+/** A full page means older runs may exist; the API returns fewer once history runs out. */
+export function hasOlderRuns(rowCount: number, limit: number): boolean {
+  return rowCount >= limit;
 }
 
 export const queryKeys = {
@@ -46,15 +40,30 @@ export function useMetricCatalogue() {
 /**
  * Newest `limit` runs. Polls while any listed run is still queued/running so
  * status badges update without a manual refresh. `GET /runs` has no offset,
- * so "load more" asks for a larger `limit`.
+ * so loading older runs asks for a larger `limit` (see `useLoadOlderRuns`).
  */
 export function useRuns(limit = RUNS_PAGE_SIZE) {
   return useQuery({
-    queryKey: queryKeys.runList(limit),
-    queryFn: () => api.listRuns(limit),
-    placeholderData: keepPreviousData,
+    ...runListQuery(limit),
     refetchInterval: (query) => pollWhileActive(query.state.data),
   });
+}
+
+/**
+ * Fetches a larger page of runs *before* the table switches to it, so the rows
+ * on screen stay put while it loads and if it fails (the button then works as
+ * a retry). `onLoaded` gets the new limit once its data is in the cache.
+ */
+export function useLoadOlderRuns(onLoaded: (limit: number) => void) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (limit: number) => queryClient.fetchQuery(runListQuery(limit)),
+    onSuccess: (_runs, limit) => onLoaded(limit),
+  });
+}
+
+function runListQuery(limit: number) {
+  return { queryKey: queryKeys.runList(limit), queryFn: () => api.listRuns(limit) };
 }
 
 /** Polls while the run is queued/running, stops once it is done or failed. */

@@ -37,6 +37,13 @@ describe("source draft store", () => {
       { id: "integrity", params: { dataset: "skillsfuture", fuzzy_threshold: 90 } },
     ]);
 
+
+    // The draft keeps its own copy: mutating the caller's object later changes nothing.
+    const formState: Record<string, unknown> = { dataset: "original", fuzzy_threshold: 80 };
+    setMetricParams(first, formState);
+    formState.fuzzy_threshold = 10;
+    expect(useSourceDraftStore.getState().metrics[0].params).toEqual({ dataset: "original", fuzzy_threshold: 80 });
+
     removeMetric(first);
     expect(useSourceDraftStore.getState().metrics.map((m) => m.key)).toEqual([second]);
   });

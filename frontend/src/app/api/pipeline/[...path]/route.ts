@@ -1,13 +1,12 @@
 import type { NextRequest } from "next/server";
 
-import { checkWriteRequest, resolveUpstream } from "@/lib/api/proxy";
+import { decideProxyRequest } from "@/lib/api/proxy";
 
 // Forwards allowlisted requests to the pipeline API; see `lib/api/proxy.ts` for why it is restricted.
 async function forward(request: NextRequest, ctx: RouteContext<"/api/pipeline/[...path]">): Promise<Response> {
   const { path } = await ctx.params;
   const hasBody = request.method === "POST";
-  const rejection = hasBody ? checkWriteRequest(request.headers) : null;
-  const decision = rejection ?? resolveUpstream(request.method, path, request.nextUrl.searchParams, {
+  const decision = decideProxyRequest(request.method, path, request.nextUrl.searchParams, request.headers, {
     TAXONOMY_API_URL: process.env.TAXONOMY_API_URL,
     PIPELINE_ALLOW_RUN_CREATION: process.env.PIPELINE_ALLOW_RUN_CREATION,
   });

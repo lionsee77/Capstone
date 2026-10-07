@@ -54,13 +54,17 @@ read whatever absolute dataset paths the request names. Until the API has auth:
   when `PIPELINE_ALLOW_RUN_CREATION=true`, `POST /runs`. The allowlist lives in
   `src/lib/api/proxy.ts`. Add a route there, with a test, when the dashboard
   starts using a new endpoint.
-- POSTs must be same-origin JSON. Other content types get 415, and browser
-  requests from another site (by `Sec-Fetch-Site` / `Origin`) get 403.
-  Without this, a page on another site could start runs through a visitor's
-  dashboard with a `text/plain` form post, which needs no CORS preflight.
-  Non-browser clients such as curl send neither header and are allowed. If the
-  dashboard ever sits behind a reverse proxy that rewrites `Host`, revisit the
-  `Origin` check in `checkWriteRequest`.
+- POSTs that pass the allowlist must also be same-origin JSON. Other content
+  types get 415, and browser requests from another site get 403. Without this,
+  a page on another site could start runs through a visitor's dashboard with a
+  `text/plain` form post, which needs no CORS preflight.
+  - `Sec-Fetch-Site` decides when the browser sends it, which every current
+    browser does, including behind a reverse proxy that rewrites `Host`.
+  - Older browsers fall back to comparing `Origin` with
+    `X-Forwarded-Host` (or `Host`).
+  - Non-browser clients such as curl send neither header and are allowed.
+- The allowlist is checked first, so unknown paths are always 404 and
+  disabled run creation is always 403, whatever the body.
 
 ## Project structure
 

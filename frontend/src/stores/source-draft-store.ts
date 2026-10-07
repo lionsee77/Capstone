@@ -47,7 +47,8 @@ export const useSourceDraftStore = create<SourceDraftState>()((set, get) => ({
   },
   removeMetric: (key) => set((state) => ({ metrics: state.metrics.filter((m) => m.key !== key) })),
   setMetricParams: (key, params) =>
-    set((state) => ({ metrics: state.metrics.map((m) => (m.key === key ? { ...m, params } : m)) })),
+    // Copy, like addMetric: a caller mutating its own object later must not change the draft behind zustand's back.
+    set((state) => ({ metrics: state.metrics.map((m) => (m.key === key ? { ...m, params: { ...params } } : m)) })),
   toPipelineConfig: () => ({
     datasets: get().datasets,
     metrics: get().metrics.map(({ id, params }) => ({ id, params })),

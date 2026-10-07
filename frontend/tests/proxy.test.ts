@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { checkWriteRequest, resolveUpstream } from "@/lib/api/proxy";
+import { checkWriteRequest, decideProxyRequest, resolveUpstream } from "@/lib/api/proxy";
 
 const env = { TAXONOMY_API_URL: "http://pipeline:8000/" };
 const resolve = (method: string, path: string, query = "", overrides = {}) =>
@@ -74,5 +74,38 @@ describe("write request guard", () => {
   it("rejects a foreign or opaque Origin when fetch metadata is missing", () => {
     expect(check({ "sec-fetch-site": null, origin: "https://evil.example" })).toMatchObject({ status: 403 });
     expect(check({ "sec-fetch-site": null, origin: "null" })).toMatchObject({ status: 403 });
+  });
+
+  it("trusts Sec-Fetch-Site over Origin behind a proxy that rewrites Host", () => {
+    // nginx without `proxy_set_header Host`: Next sees the upstream name, the browser the public one.
+    expect(check({ origin: "https://dashboard.example.com", host: "frontend:3000" })).toBeNull();
+  });
+
+  it("compares Origin with X-Forwarded-Host when the browser sends no fetch metadata", () => {
+    const behindProxy = { "sec-fetch-site": null, origin: "https://dashboard.example.com", host: "frontend:3000" };
+    expect(check({ ...behindProxy, "x-forwarded-host": "dashboard.example.com" })).toBeNull();
+    expect(check(behindProxy)).toMatchObject({ status: 403 });
+  });
+});
+
+describe("proxy decision order", () => {
+  const textPlain = { get: (name: string) => (name.toLowerCase() === "content-type" ? "text/plain" : null) };
+  const decide = (method: string, path: string, env = {}) =>
+    decideProxyRequest(method, path.split("/"), new URLSearchParams(), textPlain, { ...env });
+
+  it("reports an unknown path as 404 before judging the body", () => {
+    expect(decide("POST", "metrics", { PIPELINE_ALLOW_RUN_CREATION: "true" })).toMatchObject({ status: 404 });
+  });
+
+  it("reports disabled run creation as 403 before judging the body", () => {
+    expect(decide("POST", "runs")).toMatchObject({ status: 403, reason: expect.stringContaining("disabled") });
+  });
+
+  it("applies the write guard once a POST would be forwarded", () => {
+    expect(decide("POST", "runs", { PIPELINE_ALLOW_RUN_CREATION: "true" })).toMatchObject({ status: 415 });
+  });
+
+  it("does not apply the write guard to reads", () => {
+    expect(decide("GET", "metrics")).toMatchObject({ ok: true });
   });
 });
