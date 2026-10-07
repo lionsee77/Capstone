@@ -197,6 +197,38 @@ def _openai_client(debug: bool) -> Any:
     return AsyncOpenAI(api_key=api_key, base_url=base_url)
 
 
+def _load_checkpoint(path: Path, provenance: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    """Completed proposals by tag ID, but only from a checkpoint written for this exact run.
+
+    A checkpoint from another saturation run, source or model holds paid results
+    for a different question; reusing it would stamp old placements with the new
+    run ID. It is refused rather than discarded, so deleting paid work is the
+    user's decision.
+    """
+    if not path.exists():
+        return {}
+    saved = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(saved, dict):
+        raise CaseBError(
+            f"Checkpoint {path} has no record of its saturation run or model (written by an older version). "
+            "Delete it to start this run from scratch."
+        )
+    for field, expected in provenance.items():
+        if saved.get(field) != expected:
+            label = "saturation run" if field == "saturation_run_id" else field
+            raise CaseBError(
+                f"Checkpoint {path} was written for a different {label} ({field} {saved.get(field)!r}, "
+                f"this run {expected!r}). Rerun against the matching report and model, or delete the checkpoint."
+            )
+    return {str(proposal["tag_id"]): proposal for proposal in saved.get("proposals", [])}
+
+
+def _save_checkpoint(path: Path, provenance: dict[str, Any], proposals: dict[str, dict[str, Any]]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {**provenance, "proposals": list(proposals.values())}
+    path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+
+
 def default_model() -> str:
     return os.getenv("OPENAI_MODEL", "gpt-4o-mini")
 
@@ -218,7 +250,9 @@ async def run_case_b(
     """Classify every Case B tag and write `output` (JSON) plus a CSV next to it.
 
     Completed batches are checkpointed, so an interrupted run resumes where it
-    stopped; a successful run removes the checkpoint.
+    stopped, with any batch size; a successful run removes the checkpoint. The
+    checkpoint records the saturation run, source and model it was written for,
+    and a mismatched one is refused instead of reused.
     """
     for name in (baseline, incoming):
         if not isinstance(datasets.get(name), TaxonomyDataset):
@@ -242,26 +276,28 @@ async def run_case_b(
     if debug:
         print(f"Model: {model}")
 
+    provenance = {"saturation_run_id": saturation.run_id, "incoming": incoming, "model": model}
     wanted = set(input_tag_ids)
-    proposals = json.loads(checkpoint.read_text(encoding="utf-8")) if checkpoint.exists() else []
-    proposals = [proposal for proposal in proposals if str(proposal.get("tag_id")) in wanted]
-    completed = {str(proposal.get("tag_id")) for proposal in proposals}
-    for start in range(0, len(input_tag_ids), batch_size):
-        done = min(start + batch_size, len(input_tag_ids))
+    proposals = {
+        tag_id: proposal for tag_id, proposal in _load_checkpoint(checkpoint, provenance).items() if tag_id in wanted
+    }
+    # Batch only what is still missing, so resuming with a different --batch-size never resends finished tags.
+    pending = [tag_id for tag_id in input_tag_ids if tag_id not in proposals]
+    if proposals:
+        print(f"Resuming from {checkpoint}: {len(proposals)}/{len(input_tag_ids)} already classified")
+    for start in range(0, len(pending), batch_size):
         batch = []
-        for tag_id in input_tag_ids[start:start + batch_size]:
+        for tag_id in pending[start:start + batch_size]:
             skill_id = tag_to_skill.get(tag_id)
             batch.append({"tag_id": tag_id, "title": tags[tag_id], "skill_id": skill_id, **skills.get(skill_id, {})})
-        if all(item["tag_id"] in completed for item in batch):
-            print(f"Skipped completed batch {done}/{len(input_tag_ids)}")
-            continue
         prompt = build_prompt(categories, specialities, batch)
-        proposals.extend(await classify_batch(client, prompt, batch, model, debug=debug))
-        checkpoint.parent.mkdir(parents=True, exist_ok=True)
-        checkpoint.write_text(json.dumps(proposals, indent=2, ensure_ascii=False), encoding="utf-8")
-        print(f"Processed {done}/{len(input_tag_ids)}")
+        for proposal in await classify_batch(client, prompt, batch, model, debug=debug):
+            proposals[proposal["tag_id"]] = proposal
+        _save_checkpoint(checkpoint, provenance, proposals)
+        print(f"Processed {len(proposals)}/{len(input_tag_ids)}")
 
-    records = to_contract_records(proposals, tags, source_dataset=incoming, run_id=saturation.run_id)
+    ordered = [proposals[tag_id] for tag_id in input_tag_ids]
+    records = to_contract_records(ordered, tags, source_dataset=incoming, run_id=saturation.run_id)
     write_outputs(records, output)
     print(f"Wrote {len(records)} classifications to {output} and {output.with_suffix('.csv')}")
     if checkpoint.exists():

@@ -140,8 +140,11 @@ OPENAI_MODEL=gpt-4o-mini
 Options: `--batch-size` (default 5), `--model`, `--debug-response`,
 `--checkpoint`, `--output` (default `case_b_output.json`; a CSV is written next
 to it). Completed batches are checkpointed to a hidden file next to the output,
-so an interrupted run resumes without paying for finished batches; a
-successful run removes it. Each record also carries an `action`:
+so an interrupted run resumes without paying for finished tags, even with a
+different `--batch-size`; a successful run removes it. The checkpoint records
+the saturation run, source and model it was written for: rerunning against a
+different `report.json` or `--model` stops with an error rather than reusing
+old proposals, so delete the checkpoint if you mean to start over. Each record also carries an `action`:
 `assign_existing`, `propose_new_speciality` or `propose_new_category`.
 
 ### Merge preview
