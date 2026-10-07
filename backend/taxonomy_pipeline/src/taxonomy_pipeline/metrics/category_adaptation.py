@@ -1,13 +1,25 @@
-"""Case A: adapt incoming source categories into taxonomy, after lionel's
-saturation metrics run confirms is new "ADD_CANDIDATE" and "REVIEW_AMBIGUOUS"
-that has been resolved as new
+"""Case A: place the new tags a saturation run flagged (`ADD_CANDIDATE` with a
+parent in their own source) onto the baseline taxonomy.
 
-reuses saturation's exact/lexical/semantic matcher one level up: source
-categories against baseline categories, instead of tags against tags. Then,
-under whichever baseline category a source category matched, does the same
-thing one level back down: source specialities against just the baseline
-specialities that belong to that one matched category. A resolved placement
-therefore always carries both a category and a speciality, the way the
+A source's own levels don't have to mean what the baseline's do. In
+SkillsFuture the tag is a skill, its speciality a job role and its category a
+sector, while the baseline's specialities are themselves skills. Placing a
+tag through its source specialities therefore proposes job titles as
+specialities (one row per job role, up to ~100 per skill), so this metric
+never uses source specialities as placement targets. It asks what the tag
+*is*, the same question Case B asks, in two steps:
+
+1. **Content**: the tag itself is matched against every baseline speciality
+   with saturation's exact/lexical/semantic matcher. A confident match is the
+   placement - one row, with the category and service that speciality really
+   sits under.
+2. **Source category fallback**: a tag that matches nothing is placed under
+   the baseline category its source category (e.g. SkillsFuture sector)
+   matches, as a proposed new speciality named after the tag itself - one row
+   per distinct source category. The source specialities linking the tag to
+   that category (job roles) are kept as evidence only.
+
+A resolved placement always carries both a category and a speciality, as the
 classification output contract (CLASSIFICATION_OUTPUT_CONTRACT.md) requires.
 """
 from __future__ import annotations
@@ -24,21 +36,25 @@ NEW_CATEGORY = "NEW_CATEGORY"
 NEW_SPECIALITY = "NEW_SPECIALITY"
 NO_SOURCE_CATEGORY = "NO_SOURCE_CATEGORY"
 INVALID_CATEGORY_NAME = "INVALID_CATEGORY_NAME"
-RESOLVED_CATEGORY_ACTIONS = {"SKIP_DUPLICATE", "SKIP_SEMANTIC_DUPLICATE", NEW_CATEGORY}
+MATCHED_ACTIONS = {"SKIP_DUPLICATE", "SKIP_SEMANTIC_DUPLICATE"}
+RESOLVED_CATEGORY_ACTIONS = MATCHED_ACTIONS | {NEW_CATEGORY}
+# How a placement was reached - see the module docstring.
+CONTENT_BASIS = "content"
+SOURCE_CATEGORY_BASIS = "source_category"
+# Source specialities named on a fallback placement, as evidence for a reviewer.
+EVIDENCE_SAMPLE = 3
 
 
-def _tag_source_specialities(
-    dataset: TaxonomyDataset, tag_ids: set[Any]
-) -> dict[Any, list[dict[str, Any]]]:
-    """For each of `tag_ids`, the distinct (speciality, category) pairs it's
-    linked to via speciality_tags -> specialities.category_id -> categories.
-    link only followed if both speciality and category exists, broken link not treated as real one
+def _tag_source_categories(dataset: TaxonomyDataset, tag_ids: set[Any]) -> dict[Any, list[dict[str, Any]]]:
+    """For each of `tag_ids`, its distinct source categories, each with the
+    source specialities (e.g. job roles) that link the tag to it, via
+    speciality_tags -> specialities.category_id -> categories. A link is only
+    followed if both the speciality and the category exist.
     """
     categories_by_id = {row.get("id"): row for row in dataset.categories}
     specialities_by_id = {row.get("id"): row for row in dataset.specialities}
 
-    result: dict[Any, list[dict[str, Any]]] = {tag_id: [] for tag_id in tag_ids}
-    seen_speciality_ids: dict[Any, set[Any]] = {tag_id: set() for tag_id in tag_ids}
+    grouped: dict[Any, dict[Any, dict[str, Any]]] = {tag_id: {} for tag_id in tag_ids}
     for link in dataset.speciality_tags:
         tag_id = link.get("tag_id")
         if tag_id not in tag_ids:
@@ -49,12 +65,16 @@ def _tag_source_specialities(
         category = categories_by_id.get(speciality.get("category_id"))
         if category is None:
             continue
-        speciality_id = speciality.get("id")
-        if speciality_id in seen_speciality_ids[tag_id]:
-            continue
-        seen_speciality_ids[tag_id].add(speciality_id)
-        result[tag_id].append({"speciality": speciality, "category": category})
-    return result
+        entry = grouped[tag_id].setdefault(category.get("id"), {"category": category, "specialities": {}})
+        entry["specialities"][speciality.get("id")] = speciality
+    return {
+        tag_id: [
+            {"category": entry["category"],
+             "speciality_names": sorted(str(row.get("name")) for row in entry["specialities"].values())}
+            for entry in by_category.values()
+        ]
+        for tag_id, by_category in grouped.items()
+    }
 
 
 def _assign_service(matched_baseline_categories: list[dict[str, Any]]) -> Any:
@@ -93,10 +113,6 @@ def _outcomes_by_incoming_id(comparison: dict[str, Any], new_action: str) -> dic
     # _match_entry) but flag it for review instead - a category whose source
     # service doesn't match the baseline's (REVIEW_NEW_PLACEMENT), or one that
     # matched something at a different taxonomy level (REVIEW_OTHER_LEVEL).
-    # Both used to be silently missing from `outcomes`: a category landing
-    # here made run()'s category_outcomes[category_id] lookup raise KeyError,
-    # and a speciality landing here was reported as "no speciality could be
-    # resolved" instead of "needs review".
     for match in (
         comparison["exact_match_details"] + comparison["fuzzy_match_details"] + comparison["semantic_match_details"]
         + comparison["new_placement_details"] + comparison["other_level_match_details"]
@@ -147,13 +163,24 @@ def _outcomes_by_incoming_id(comparison: dict[str, Any], new_action: str) -> dic
     return outcomes
 
 
+def _near_miss(outcome: dict[str, Any] | None) -> dict[str, Any]:
+    """The closest baseline speciality a tag missed in the content step, for the reason text."""
+    if outcome is None or outcome["action"] != "REVIEW_AMBIGUOUS":
+        return {}
+    return {
+        "closest_speciality_name": outcome.get("closest_baseline_name"),
+        "closest_speciality_score": outcome.get("closest_baseline_score"),
+        "closest_semantic_speciality_name": outcome.get("closest_semantic_baseline_name"),
+        "closest_semantic_speciality_score": outcome.get("closest_semantic_score"),
+    }
+
+
 class CategoryAdaptationMetric(Metric):
     id = "category_adaptation"
     description = (
-        "places an incoming source's own categories and specialities onto the taxonomy for tags "
-        "a saturation run has already flagged as new. Reuses saturation's exact/lexical/semantic "
-        "matcher one level up for categories, then one level back down for specialities within "
-        "whichever category matched."
+        "places tags a saturation run has already flagged as new: first by matching the tag itself against "
+        "every baseline speciality, otherwise as a new speciality under the baseline category its own source "
+        "category matches. Source specialities (e.g. SkillsFuture job roles) are evidence, never targets."
     )
     default_params = {
         "baseline": None,
@@ -227,97 +254,77 @@ class CategoryAdaptationMetric(Metric):
             "semantic_threshold_by_level": {},
         }
         parents = _Parents(incoming)
+        baseline_categories_by_id = {row.get("id"): row for row in baseline.categories}
+        baseline_services_by_id = {row.get("id"): row.get("name") for row in baseline.services}
+        tag_rows = [row for row in incoming.tags if row.get("id") in new_tag_ids]
 
-        source_specialities_by_tag = _tag_source_specialities(incoming, new_tag_ids)
+        # Step 1, content: the tag against every baseline speciality. A tag row
+        # has no category_id, so the parent check is skipped (no_incoming_parent)
+        # and a name match is a plain match, never REVIEW_NEW_PLACEMENT.
+        content_comparison = _match_against_pool(
+            "specialities", tag_rows, baseline.specialities, baseline, parents, settings, semantic_matcher,
+        )
+        content_outcomes = _outcomes_by_incoming_id(content_comparison, NEW_SPECIALITY)
+        baseline_specialities_by_id = {row.get("id"): row for row in baseline.specialities}
+        content_matched = {
+            tag_id: outcome for tag_id, outcome in content_outcomes.items()
+            if outcome["action"] in MATCHED_ACTIONS
+            and baseline_categories_by_id.get(
+                baseline_specialities_by_id.get(outcome["target_id"], {}).get("category_id")
+            ) is not None
+        }
 
-        
-        referenced_categories: dict[Any, dict[str, Any]] = {}
-        for entries in source_specialities_by_tag.values():
-            for entry in entries:
-                referenced_categories[entry["category"].get("id")] = entry["category"]
-        source_category_rows = list(referenced_categories.values())
-
-        """ step 1: categories, pool seeded with just baseline, category vs category
-       """
+        # Step 2, source category fallback for every tag step 1 didn't place.
+        fallback_tag_ids = new_tag_ids - content_matched.keys()
+        source_categories_by_tag = _tag_source_categories(incoming, fallback_tag_ids)
+        referenced_categories = {
+            entry["category"].get("id"): entry["category"]
+            for entries in source_categories_by_tag.values() for entry in entries
+        }
         category_comparison = _match_against_pool(
-            "categories", source_category_rows, baseline.categories, baseline, parents, settings,
+            "categories", list(referenced_categories.values()), baseline.categories, baseline, parents, settings,
             semantic_matcher,
         )
         category_outcomes = _outcomes_by_incoming_id(category_comparison, NEW_CATEGORY)
-
-        baseline_categories_by_id = {row.get("id"): row for row in baseline.categories}
-        baseline_services_by_id = {row.get("id"): row.get("name") for row in baseline.services}
-        matched_baseline_rows = [
-            baseline_categories_by_id[outcome["target_id"]]
-            for outcome in category_outcomes.values()
-            if outcome["action"] in ("SKIP_DUPLICATE", "SKIP_SEMANTIC_DUPLICATE")
-            and baseline_categories_by_id.get(outcome["target_id"]) is not None
-        ]
-
-        """step 2: specialities, for categories that are matched or proposed, a source
-        speciality is never matched against a baseline speciality that belongs to a different category.
-        """
-        speciality_outcomes: dict[Any, dict[str, Any]] = {}
-        specialities_by_category: dict[Any, dict[Any, dict[str, Any]]] = {}
-        for entries in source_specialities_by_tag.values():
-            for entry in entries:
-                category_id = entry["category"].get("id")
-                specialities_by_category.setdefault(category_id, {})[entry["speciality"].get("id")] = entry[
-                    "speciality"
-                ]
-
-        for category_id, source_specialities_by_id in specialities_by_category.items():
-            category_outcome = category_outcomes.get(category_id)
-            if category_outcome is None or category_outcome["action"] not in RESOLVED_CATEGORY_ACTIONS:
-                continue  # category itself unresolved - nothing to check specialities against
-            source_specialities = list(source_specialities_by_id.values())
-            if category_outcome["action"] == NEW_CATEGORY:
-                baseline_specialities_here: list[dict[str, Any]] = []  # brand new category, nothing to match yet
-            else:
-                target_category_id = category_outcome["target_id"]
-                baseline_specialities_here = [
-                    row for row in baseline.specialities if row.get("category_id") == target_category_id
-                ]
-            speciality_comparison = _match_against_pool(
-                "specialities", source_specialities, baseline_specialities_here, baseline, parents, settings,
-                semantic_matcher,
-            )
-            speciality_outcomes.update(_outcomes_by_incoming_id(speciality_comparison, NEW_SPECIALITY))
-
         for invalid in category_comparison["skipped_invalid"]:
             category_outcomes[invalid["incoming_id"]] = {
                 "action": INVALID_CATEGORY_NAME, "target_id": None, "target_name": None,
                 "match_type": None, "score": None, "semantic_score": None,
             }
+        matched_baseline_rows = [
+            baseline_categories_by_id[outcome["target_id"]]
+            for outcome in category_outcomes.values()
+            if outcome["action"] in MATCHED_ACTIONS and baseline_categories_by_id.get(outcome["target_id"]) is not None
+        ]
 
         placements: list[dict[str, Any]] = []
-        for tag_id, entries in source_specialities_by_tag.items():
-            tag_name = tags_by_id[tag_id].get("name")
-            if not entries:
-                placements.append(
-                    {"tag_id": tag_id, "tag_name": tag_name, "action": NO_SOURCE_CATEGORY, "needs_review": True}
-                )
+        for row in tag_rows:
+            tag_id, tag_name = row.get("id"), row.get("name")
+            if tag_id in content_matched:
+                placements.append(self._content_placement(
+                    tag_id, tag_name, content_matched[tag_id], baseline_specialities_by_id,
+                    baseline_categories_by_id, baseline_services_by_id,
+                ))
                 continue
-            seen_unresolved_category_ids: set[Any] = set()
+            entries = source_categories_by_tag[tag_id]
+            near_miss = _near_miss(content_outcomes.get(tag_id))
+            if not entries:
+                placements.append({
+                    "tag_id": tag_id, "tag_name": tag_name, "action": NO_SOURCE_CATEGORY, "needs_review": True,
+                    **near_miss,
+                })
+                continue
             for entry in entries:
-                category, speciality = entry["category"], entry["speciality"]
+                category = entry["category"]
                 category_outcome = category_outcomes[category.get("id")]
-                if category_outcome["action"] not in RESOLVED_CATEGORY_ACTIONS:
-                    # The category itself didn't resolve, so which speciality
-                    # it came through changes nothing about this placement -
-                    # several specialities under the same unresolved category
-                    # would otherwise produce pure duplicate rows. Collapse
-                    # to one row per (tag, category) instead of one per
-                    # (tag, speciality) here; resolved categories still get a
-                    # row per speciality below, since those genuinely differ.
-                    if category.get("id") in seen_unresolved_category_ids:
-                        continue
-                    seen_unresolved_category_ids.add(category.get("id"))
                 placement: dict[str, Any] = {
                     "tag_id": tag_id,
                     "tag_name": tag_name,
+                    "placement_basis": SOURCE_CATEGORY_BASIS,
                     "source_category_id": category.get("id"),
                     "source_category_name": category.get("name"),
+                    "source_speciality_count": len(entry["speciality_names"]),
+                    "source_speciality_sample": entry["speciality_names"][:EVIDENCE_SAMPLE],
                     "action": category_outcome["action"],
                     "category_match_type": category_outcome["match_type"],
                     "category_score": category_outcome["score"],
@@ -328,64 +335,42 @@ class CategoryAdaptationMetric(Metric):
                         else f"{incoming.name}:{category.get('id')}"
                     ),
                     "target_category_name": category_outcome["target_name"],
-                    "needs_review": category_outcome["action"] not in ("SKIP_DUPLICATE", "SKIP_SEMANTIC_DUPLICATE"),
+                    "needs_review": category_outcome["action"] not in MATCHED_ACTIONS,
+                    **near_miss,
                 }
                 if category_outcome["action"] == "REVIEW_AMBIGUOUS":
-                    placement["closest_baseline_name"] = category_outcome.get("closest_baseline_name")
-                    placement["closest_baseline_score"] = category_outcome.get("closest_baseline_score")
-                    placement["closest_semantic_baseline_name"] = category_outcome.get(
-                        "closest_semantic_baseline_name"
-                    )
-                    placement["closest_semantic_score"] = category_outcome.get("closest_semantic_score")
+                    for field in ("closest_baseline_name", "closest_baseline_score",
+                                  "closest_semantic_baseline_name", "closest_semantic_score"):
+                        placement[field] = category_outcome.get(field)
                 elif category_outcome["action"] == "REVIEW_NEW_PLACEMENT":
                     placement["unmatched_incoming_parents"] = category_outcome.get("unmatched_incoming_parents")
                     placement["existing_parents"] = category_outcome.get("existing_parents")
-                if category_outcome["action"] in ("SKIP_DUPLICATE", "SKIP_SEMANTIC_DUPLICATE"):
+                if category_outcome["action"] in MATCHED_ACTIONS:
                     # A matched category already has a real service in the
                     # baseline - look it up, don't guess.
                     placement["target_service_id"] = baseline_categories_by_id[category_outcome["target_id"]].get(
                         "service_id"
                     )
-                    placement["target_service_name"] = baseline_services_by_id.get(placement["target_service_id"])
                 elif category_outcome["action"] == NEW_CATEGORY:
                     placement["target_service_id"] = _assign_service(matched_baseline_rows)
-                    placement["target_service_name"] = baseline_services_by_id.get(placement["target_service_id"])
-
                 if category_outcome["action"] in RESOLVED_CATEGORY_ACTIONS:
-                    # The speciality genuinely distinguishes placements once
-                    # the category resolves - unlike the unresolved case
-                    # above, keep one row per (tag, speciality) here.
-                    placement["source_speciality_id"] = speciality.get("id")
-                    placement["source_speciality_name"] = speciality.get("name")
-                    speciality_outcome = speciality_outcomes.get(speciality.get("id"))
-                    if speciality_outcome is not None:
-                        placement["speciality_action"] = speciality_outcome["action"]
-                        placement["speciality_match_type"] = speciality_outcome["match_type"]
-                        placement["speciality_score"] = speciality_outcome["score"]
-                        placement["speciality_semantic_score"] = speciality_outcome["semantic_score"]
-                        target_speciality_id = speciality_outcome["target_id"]
-                        placement["target_speciality_id"] = (
-                            target_speciality_id
-                            if speciality_outcome["action"] != NEW_SPECIALITY
-                            else f"{incoming.name}:{speciality.get('id')}"
-                        )
-                        placement["target_speciality_name"] = speciality_outcome["target_name"]
-                        if speciality_outcome["action"] not in (
-                            "SKIP_DUPLICATE", "SKIP_SEMANTIC_DUPLICATE", NEW_SPECIALITY,
-                        ):
-                            placement["needs_review"] = True
-                        if speciality_outcome["action"] == "REVIEW_NEW_PLACEMENT":
-                            placement["speciality_unmatched_incoming_parents"] = speciality_outcome.get(
-                                "unmatched_incoming_parents"
-                            )
-                            placement["speciality_existing_parents"] = speciality_outcome.get("existing_parents")
-
+                    placement["target_service_name"] = baseline_services_by_id.get(placement["target_service_id"])
+                    # Step 1 already searched every baseline speciality, so
+                    # nothing under this category matches the tag either: the
+                    # tag itself is the proposed speciality.
+                    placement["speciality_action"] = NEW_SPECIALITY
+                    placement["target_speciality_id"] = f"{incoming.name}:tag:{tag_id}"
+                    placement["target_speciality_name"] = tag_name
                 placements.append(placement)
 
+        basis_counts = Counter(placement.get("placement_basis", NO_SOURCE_CATEGORY) for placement in placements)
         action_counts = Counter(placement["action"] for placement in placements)
         summary = (
-            f"{incoming.name}: {len(new_tag_ids)} new tags across {len(source_category_rows)} source "
-            f"categories against {baseline.name} - "
+            f"{incoming.name}: {len(new_tag_ids)} new tags against {baseline.name} - "
+            f"{len(content_matched)} placed by content, {len(fallback_tag_ids)} via {len(referenced_categories)} "
+            f"source categories; placements "
+            + ", ".join(f"{basis}={count}" for basis, count in sorted(basis_counts.items()))
+            + "; actions "
             + ", ".join(f"{action}={count}" for action, count in sorted(action_counts.items()))
         )
         return MetricResult(
@@ -395,7 +380,38 @@ class CategoryAdaptationMetric(Metric):
             details={
                 "baseline": baseline.name,
                 "incoming": incoming.name,
+                "content_comparison": content_comparison,
                 "category_comparison": category_comparison,
                 "placements": placements,
             },
         )
+
+    @staticmethod
+    def _content_placement(
+        tag_id: Any,
+        tag_name: Any,
+        outcome: dict[str, Any],
+        specialities_by_id: dict[Any, dict[str, Any]],
+        categories_by_id: dict[Any, dict[str, Any]],
+        services_by_id: dict[Any, Any],
+    ) -> dict[str, Any]:
+        """A tag matched to an existing baseline speciality sits wherever that speciality really is."""
+        speciality = specialities_by_id[outcome["target_id"]]
+        category = categories_by_id[speciality.get("category_id")]
+        return {
+            "tag_id": tag_id,
+            "tag_name": tag_name,
+            "placement_basis": CONTENT_BASIS,
+            "action": outcome["action"],
+            "target_category_id": category.get("id"),
+            "target_category_name": category.get("name"),
+            "target_service_id": category.get("service_id"),
+            "target_service_name": services_by_id.get(category.get("service_id")),
+            "speciality_action": outcome["action"],
+            "speciality_match_type": outcome["match_type"],
+            "speciality_score": outcome["score"],
+            "speciality_semantic_score": outcome["semantic_score"],
+            "target_speciality_id": outcome["target_id"],
+            "target_speciality_name": outcome["target_name"],
+            "needs_review": False,
+        }

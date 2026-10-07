@@ -7,14 +7,16 @@ from __future__ import annotations
 
 from typing import Any
 
-from ..metrics.category_adaptation import INVALID_CATEGORY_NAME, NEW_CATEGORY, NEW_SPECIALITY, NO_SOURCE_CATEGORY
+from ..metrics.category_adaptation import (
+    CONTENT_BASIS,
+    INVALID_CATEGORY_NAME,
+    NEW_CATEGORY,
+    NEW_SPECIALITY,
+    NO_SOURCE_CATEGORY,
+    RESOLVED_CATEGORY_ACTIONS,
+)
 from .models import ClassificationOutput
 
-# A resolved category (matched or newly proposed) still needs one of these
-# speciality outcomes before the whole placement can be reported - anything
-# else (REVIEW_AMBIGUOUS, or no speciality outcome at all) leaves the record
-# unresolved, per the contract's all-or-null rule on category/speciality/confidence.
-_RESOLVED_SPECIALITY_ACTIONS = {"SKIP_DUPLICATE", "SKIP_SEMANTIC_DUPLICATE", NEW_SPECIALITY}
 # A from-scratch proposal (new category, or a new speciality under an
 # existing category) has no baseline evidence of its own to score. Rather
 # than one flat number - which would make a new speciality under a perfectly
@@ -99,69 +101,89 @@ def _category_reason(placement: dict[str, Any]) -> str:
     return "Unresolved."
 
 
+def _evidence_reason(placement: dict[str, Any]) -> str:
+    """Why the tag fell back to its source category: what links it there, and what it nearly matched."""
+    reason = ""
+    count = placement.get("source_speciality_count")
+    if count:
+        sample = ", ".join(placement.get("source_speciality_sample") or [])
+        more = ", ..." if count > len(placement.get("source_speciality_sample") or []) else ""
+        reason += (
+            f" Linked to {count} source specialit{'y' if count == 1 else 'ies'} in "
+            f"'{placement.get('source_category_name')}' ({sample}{more})."
+        )
+    semantic, lexical = placement.get("closest_semantic_speciality_name"), placement.get("closest_speciality_name")
+    if semantic or lexical:
+        hints = []
+        if semantic:
+            hints.append(f"'{semantic}' in meaning ({placement.get('closest_semantic_speciality_score')})")
+        if lexical and lexical != semantic:
+            hints.append(f"'{lexical}' in spelling ({placement.get('closest_speciality_score')})")
+        reason += f" Closest existing speciality: {' and '.join(hints)}, below the confidence threshold."
+    return reason
+
+
+def _content_output(placement: dict[str, Any], source_dataset: str) -> ClassificationOutput:
+    """A tag matched straight to an existing baseline speciality, wherever that speciality sits."""
+    speciality, category = placement["target_speciality_name"], placement["target_category_name"]
+    return ClassificationOutput(
+        source_dataset=source_dataset,
+        tag_id=str(placement["tag_id"]),
+        tag=placement["tag_name"],
+        original_classification="classified",
+        service=placement["target_service_name"],
+        category=category,
+        speciality=speciality,
+        confidence=_confidence(placement.get("speciality_score"), placement.get("speciality_semantic_score")),
+        reason=(
+            f"Tag matches existing speciality '{speciality}' ({placement['speciality_match_type']} match) "
+            f"under '{category}'."
+        ),
+    )
+
+
 def build_classification_outputs(placements: list[dict[str, Any]], source_dataset: str) -> list[ClassificationOutput]:
     """The Case A producer side of the contract: one ClassificationOutput per
     placement `category_adaptation.py` produced.
     """
     records = []
     for placement in placements:
+        if placement.get("placement_basis") == CONTENT_BASIS:
+            records.append(_content_output(placement, source_dataset))
+            continue
         action = placement["action"]
         reason = _category_reason(placement)
         service = category = speciality = None
         confidence: float | None = None
 
-        if action in ("SKIP_DUPLICATE", "SKIP_SEMANTIC_DUPLICATE", NEW_CATEGORY):
+        if action in RESOLVED_CATEGORY_ACTIONS:
             category_confidence = (
                 _new_proposal_confidence(None)  # the category itself has nothing to verify against
                 if action == NEW_CATEGORY
                 else _confidence(placement.get("category_score"), placement.get("category_semantic_score"))
             )
-            speciality_action = placement.get("speciality_action")
             service_name = placement.get("target_service_name")
-            if speciality_action in _RESOLVED_SPECIALITY_ACTIONS and service_name is not None:
+            if placement.get("speciality_action") == NEW_SPECIALITY and service_name is not None:
                 service = service_name
                 category = placement["target_category_name"]
                 speciality = placement["target_speciality_name"]
-                if speciality_action == NEW_SPECIALITY:
-                    # Scale by the category's confidence only when the
-                    # category is itself a real, verified match - if it's
-                    # also new, there's nothing to scale from either.
-                    known = category_confidence if action != NEW_CATEGORY else None
-                    speciality_confidence = _new_proposal_confidence(known)
-                    reason += f" Speciality '{speciality}' proposed from the source's own grouping."
-                else:
-                    speciality_confidence = _confidence(
-                        placement.get("speciality_score"), placement.get("speciality_semantic_score")
-                    )
-                    reason += (
-                        f" Speciality matches existing '{speciality}' ({placement['speciality_match_type']} match)."
-                    )
-                confidence = min(c for c in (category_confidence, speciality_confidence) if c is not None)
+                # Scale by the category's confidence only when the category is
+                # itself a real, verified match - if it's also new, there's
+                # nothing to scale from either.
+                confidence = _new_proposal_confidence(category_confidence if action != NEW_CATEGORY else None)
+                reason += (
+                    f" No existing speciality matches the tag; proposing '{speciality}' as a new speciality "
+                    f"under '{category}'."
+                )
+            elif service_name is None:
+                # A brand new category with nothing in this run to vote a
+                # service from - the contract requires all four or none, so
+                # the record stays fully unresolved even though the category
+                # itself is known; `reason` still says so for a human.
+                reason += " No service could be determined for this placement."
             else:
-                # Category is placed but either no speciality could be
-                # resolved under it (e.g. still under review), or no service
-                # could be determined (a brand new category with nothing in
-                # this run to vote a service from) - the contract requires
-                # all four or none, so this record stays fully unresolved
-                # even though the category itself is known; `reason` still
-                # says so for a human reading the record.
-                if speciality_action == "REVIEW_NEW_PLACEMENT":
-                    unmatched = placement.get("speciality_unmatched_incoming_parents") or []
-                    existing = placement.get("speciality_existing_parents") or []
-                    detail = ""
-                    if unmatched and existing:
-                        detail = (
-                            f" (source gives it '{', '.join(unmatched)}'; "
-                            f"baseline already has '{', '.join(existing)}')"
-                        )
-                    reason += (
-                        f" Speciality matches existing '{placement.get('target_speciality_name')}', but under a "
-                        f"different category than the source gives it{detail}; needs manual review."
-                    )
-                elif speciality_action not in _RESOLVED_SPECIALITY_ACTIONS:
-                    reason += " No speciality could be resolved for this placement."
-                if service_name is None:
-                    reason += " No service could be determined for this placement."
+                reason += " No speciality could be resolved for this placement."
+        reason += _evidence_reason(placement)
 
         # original_classification describes *this tag* in its source dataset,
         # before Case A/B processing - not "is this source generally Case A".

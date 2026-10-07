@@ -36,7 +36,7 @@ taxonomy_pipeline/
 │   │   ├── depth.py                  #   branching factor
 │   │   ├── breadth.py                #   coverage vs. a reference dataset
 │   │   ├── saturation.py             #   new-items curve across ordered incoming sources
-│   │   ├── category_adaptation.py    #   Case A: place a new source's own categories/specialities (see below)
+│   │   ├── category_adaptation.py    #   Case A: place new tags by content, else via their source category (see below)
 │   │   └── registry.py               #   METRICS dict - register new metrics here
 │   ├── classification/               # Case A/B producers and the merge stages (see "Classification workflow")
 │   │   ├── models.py                 #   ClassificationOutput contract + every stage's report model
@@ -415,29 +415,43 @@ export other groups.
 ## Category adaptation (Case A)
 
 `category_adaptation` is the next step after saturation for tags a saturation
-run already flagged as new (`ADD_CANDIDATE`) **and** that have a resolvable
-source category of their own (saturation's own `parent_status ==
-HAS_PARENT` on that tag - tags with `NO_PARENT` have nothing of their own to
-place and are Case B's job instead, not this metric's).
+run already flagged as new (`ADD_CANDIDATE`) **and** that have a parent in
+their own source (saturation's `parent_status == HAS_PARENT` on that tag -
+tags with `NO_PARENT` have nothing of their own to place and are Case B's job
+instead, not this metric's).
 
-It adapts the incoming source's own category/speciality structure onto the
-baseline, one level at a time, reusing saturation's exact/lexical/semantic
-matcher rather than reimplementing it:
+A source's levels don't have to mean what the baseline's do. In SkillsFuture
+the tag is a skill, its speciality a job role and its category a sector,
+while the baseline's specialities are themselves skills. Placing a tag through
+its source specialities would propose job titles as specialities, one row per
+job role (up to ~100 per skill), so Case A never uses source specialities as
+targets. It asks what the tag *is*, the same question Case B asks, reusing
+saturation's exact/lexical/semantic matcher rather than reimplementing it:
 
-1. **Category, one level up**: each new tag's source category is matched
-   against every baseline category. A confident match reuses that baseline
-   category's real ID; no confident match proposes a `NEW_CATEGORY`.
-2. **Speciality, one level down, scoped to that category**: the same
-   matcher runs again, but only against the baseline specialities that sit
-   under whichever category just resolved (never the whole baseline
-   speciality table). A `NEW_CATEGORY` has nothing under it yet, so its
-   specialities all cascade to `NEW_SPECIALITY` automatically.
+1. **Content** (`placement_basis: content`): the tag itself is matched
+   against every baseline speciality. A confident match is the placement -
+   one row, under the category and service that speciality really sits
+   under, whatever the tag's source category says.
+2. **Source category fallback** (`placement_basis: source_category`): a tag
+   that matches nothing is placed via its source category (a SkillsFuture
+   sector), one row per distinct source category. The source category is
+   matched against every baseline category; a confident match reuses that
+   category's real ID, no confident match proposes a `NEW_CATEGORY`. Under a
+   resolved category the tag itself is proposed as a `NEW_SPECIALITY` (step 1
+   already searched every baseline speciality, so none fits). The source
+   specialities linking the tag to that category are evidence only:
+   `source_speciality_count` and `source_speciality_sample` on the placement,
+   and named in the record's `reason`.
 
 A category match that needs review (`REVIEW_AMBIGUOUS`, `REVIEW_NEW_PLACEMENT`,
-`REVIEW_OTHER_LEVEL`, or an invalid name) is never auto-resolved and its
-speciality is never evaluated either - resolving a speciality under an
-unconfirmed category would look like a confident placement when the
-foundation under it isn't confirmed.
+`REVIEW_OTHER_LEVEL`, or an invalid name) is never auto-resolved and no
+speciality is proposed under it - that would look like a confident placement
+when the foundation under it isn't confirmed.
+
+On the SkillsFuture run (221 tags) this gives 242 records instead of 1,768, at
+most 4 per tag instead of 98, and no job titles proposed as specialities. Every
+one of those tags takes the fallback: being `ADD_CANDIDATE`, none is close to
+an existing speciality by name.
 
 ### Params
 
@@ -457,27 +471,33 @@ Defaults come from `CategoryAdaptationMetric.default_params`
 
 ### Actions
 
-Every placement has a category-level `action` and, once the category
-resolves, a `speciality_action`:
+Every placement has an `action`: the category-level outcome for the
+fallback, or the speciality match for a content placement. A resolved
+placement also has a `speciality_action`:
 
 | Action | Level | Meaning |
 |---|---|---|
 | `SKIP_DUPLICATE` / `SKIP_SEMANTIC_DUPLICATE` | category, speciality | Matched an existing baseline node; reuse its real ID |
-| `NEW_CATEGORY` | category | No existing category matches; propose a new one |
-| `NEW_SPECIALITY` | speciality | No existing speciality under the resolved category matches (or the category itself is brand new); propose a new one |
-| `REVIEW_AMBIGUOUS` | category, speciality | Partial similarity at best; both the closest lexical and closest semantic baseline names are surfaced for review |
-| `REVIEW_NEW_PLACEMENT` | category, speciality | Matches a known concept, but under a different parent than the source gives it (`unmatched_incoming_parents` vs `existing_parents`) |
+| `NEW_CATEGORY` | category | No existing category matches the source category; propose it as a new one |
+| `NEW_SPECIALITY` | speciality | The tag matches no existing speciality; propose the tag itself as one, under the resolved category |
+| `REVIEW_AMBIGUOUS` | category | Partial similarity at best; both the closest lexical and closest semantic baseline names are surfaced for review |
+| `REVIEW_NEW_PLACEMENT` | category | Matches a known category, but under a different parent than the source gives it (`unmatched_incoming_parents` vs `existing_parents`) |
 | `REVIEW_OTHER_LEVEL` | category | Matches a known concept at a different taxonomy level |
 | `INVALID_CATEGORY_NAME` | category | Source category name is blank or a placeholder |
-| `NO_SOURCE_CATEGORY` | tag | The tag has no source category/speciality in this dataset at all - Case A has nothing to place it against; route to Case B |
+| `NO_SOURCE_CATEGORY` | tag | The tag matches no speciality and has no source category in this dataset - Case A has nothing to place it against; route to Case B |
 
-A resolved category (`SKIP_*` or `NEW_CATEGORY`) also carries `target_service_id`/
+A tag that fell back after a near miss in the content step also carries
+`closest_speciality_name` / `closest_semantic_speciality_name` and their
+scores, named in its `reason`.
+
+A resolved fallback category (`SKIP_*` or `NEW_CATEGORY`) also carries `target_service_id`/
 `target_service_name`: looked up directly from the baseline for a matched
 category, or guessed by majority vote across whichever *other* source
 categories matched in the same run for a brand new one (`None` if nothing
 else in the run matched anything to vote from - the placement then stays
 fully unresolved, since the classification contract requires service,
 category, speciality and confidence to be all-present or all-null together).
+A content placement takes its service from the matched speciality's category.
 
 ### Running it end to end
 
@@ -723,6 +743,11 @@ Ruff linting and the test suite run in CI (see the root
 
 ## Known gaps
 
+- **Case A matches tags by name only:** the content step compares the tag
+  name with baseline speciality names, so a skill whose name shares nothing
+  with its natural home (e.g. a functional skill used in one sector) falls
+  back to its sector's industry category. Case B reads the skill description;
+  embedding it here too is a possible follow-up.
 - **Case B service:** every resolved Case B placement is written with
   `service="Industry"`, although most baseline categories sit under Function,
   Subject or Others. A correct pick such as "Data analytics" (under Subject)

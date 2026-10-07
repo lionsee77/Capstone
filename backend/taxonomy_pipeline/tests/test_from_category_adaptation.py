@@ -22,28 +22,54 @@ def _base(**overrides):
     return placement
 
 
-def test_matched_category_and_speciality_resolves_fully():
-    placement = _base(
-        speciality_action="SKIP_SEMANTIC_DUPLICATE",
-        speciality_match_type="semantic",
-        speciality_score=None,
-        speciality_semantic_score=0.82,
-        target_speciality_id=1,
-        target_speciality_name="Retail Banking",
-    )
-    records = build_classification_outputs([placement], "skillsfuture")
+def _content(**overrides):
+    placement = {
+        "tag_id": 9004,
+        "tag_name": "Supplier Sourcing",
+        "placement_basis": "content",
+        "action": "SKIP_SEMANTIC_DUPLICATE",
+        "target_category_id": 2,
+        "target_category_name": "Procurement",
+        "target_service_id": 2,
+        "target_service_name": "Function",
+        "speciality_action": "SKIP_SEMANTIC_DUPLICATE",
+        "speciality_match_type": "semantic",
+        "speciality_score": None,
+        "speciality_semantic_score": 0.82,
+        "target_speciality_id": 2,
+        "target_speciality_name": "Vendor Sourcing",
+        "needs_review": False,
+    }
+    placement.update(overrides)
+    return placement
+
+
+def test_content_match_resolves_to_the_matched_speciality_and_its_own_category():
+    records = build_classification_outputs([_content()], "skillsfuture")
 
     assert len(records) == 1
     record = records[0]
     assert record.source_dataset == "skillsfuture"
-    assert record.tag_id == "9001"
-    assert record.tag == "loan processing"
+    assert record.tag_id == "9004"
+    assert record.tag == "Supplier Sourcing"
     assert record.original_classification == "classified"
-    assert record.service == "Industry"
-    assert record.category == "Banking"
-    assert record.speciality == "Retail Banking"
-    assert record.confidence == 0.82  # min(1.0 exact category, 0.82 semantic speciality)
-    assert "Banking" in record.reason and "Retail Banking" in record.reason
+    assert (record.service, record.category, record.speciality) == ("Function", "Procurement", "Vendor Sourcing")
+    assert record.confidence == 0.82  # the match's own evidence; no category step was involved
+    assert "Vendor Sourcing" in record.reason and "semantic" in record.reason
+
+
+def test_fallback_reason_names_the_source_evidence_and_the_closest_speciality_missed():
+    placement = _base(
+        speciality_action="NEW_SPECIALITY", target_speciality_id="skillsfuture:tag:9001",
+        target_speciality_name="loan processing", placement_basis="source_category",
+        source_speciality_count=26, source_speciality_sample=["Bank Teller", "Branch Manager", "Credit Analyst"],
+        closest_semantic_speciality_name="Retail Banking", closest_semantic_speciality_score=0.44,
+    )
+    record = build_classification_outputs([placement], "skillsfuture")[0]
+
+    assert record.speciality == "loan processing"
+    assert "26 source specialities in 'Banking' (Bank Teller, Branch Manager, Credit Analyst, ...)" in record.reason
+    assert "'Retail Banking' in meaning (0.44)" in record.reason
 
 
 def test_new_category_and_new_speciality_fall_back_to_the_floor():
@@ -173,25 +199,6 @@ def test_review_new_placement_category_reason_names_the_mismatched_parent():
     assert "Industry" in record.reason
 
 
-def test_review_new_placement_speciality_reason_is_specific_not_generic():
-    # Same mismatch one level down: used to fall back to the same generic
-    # "No speciality could be resolved" text as a truly unresolved placement,
-    # losing the fact that a baseline speciality was actually found.
-    placement = _base(
-        speciality_action="REVIEW_NEW_PLACEMENT",
-        target_speciality_name="Infocomm Specialist",
-        speciality_unmatched_incoming_parents=["Infocomm Tech"],
-        speciality_existing_parents=["Information Technology"],
-    )
-    records = build_classification_outputs([placement], "skillsfuture")
-
-    record = records[0]
-    assert (record.service, record.category, record.speciality, record.confidence) == (None, None, None, None)
-    assert "No speciality could be resolved" not in record.reason
-    assert "Infocomm Specialist" in record.reason
-    assert "Infocomm Tech" in record.reason
-    assert "Information Technology" in record.reason
-
 
 def test_matched_category_with_unresolved_speciality_nulls_the_whole_record():
     # Category (and service) are confidently known, but nothing could be said
@@ -221,16 +228,12 @@ def test_no_source_category_is_unresolved_and_correctly_unclassified():
 
 
 def test_output_validates_against_the_shared_contract():
-    resolved = _base(
-        speciality_action="SKIP_DUPLICATE", speciality_match_type="exact", speciality_score=100.0,
-        speciality_semantic_score=None, target_speciality_id=1, target_speciality_name="Retail Banking",
-    )
     unresolved = {
         "tag_id": 9002, "tag_name": "rocket fuel", "action": "REVIEW_AMBIGUOUS",
         "closest_baseline_name": None, "closest_baseline_score": None,
         "target_category_id": None, "target_category_name": None, "needs_review": True,
     }
-    records = build_classification_outputs([resolved, unresolved], "skillsfuture")
+    records = build_classification_outputs([_content(), unresolved], "skillsfuture")
 
     # Round-trips through the exact validator Bryan's side uses.
     validated = CLASSIFICATION_OUTPUTS.validate_json(CLASSIFICATION_OUTPUTS.dump_json(records))

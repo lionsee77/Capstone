@@ -39,9 +39,20 @@ def test_places_only_report_tags_with_a_parent_and_stamps_the_run(saturation_rep
     assert [record["tag_id"] for record in records] == ["9001"]
     assert records[0]["service"] == "Industry"
     assert records[0]["category"] == "Banking"
-    assert records[0]["speciality"] == "Retail Banking"
+    assert records[0]["speciality"] == "loan processing"  # the skill itself, not the source speciality it hangs off
     assert records[0]["saturation_run_id"] == "sat-7"
     CLASSIFICATION_OUTPUTS.validate_python(records)
+
+
+def test_emits_one_record_per_source_category_however_many_source_specialities_link_the_tag(saturation_report):
+    datasets = _datasets()
+    for offset in range(2, 12):
+        datasets["skillsfuture"].specialities.append({"id": 600 + offset, "name": f"Role {offset}", "category_id": 501})
+        datasets["skillsfuture"].speciality_tags.append({"id": 700 + offset, "speciality_id": 600 + offset,
+                                                         "tag_id": 9001})
+    records = run_case_a(datasets, saturation_report(CONCEPTS), baseline="original", incoming="skillsfuture")
+
+    assert len(records) == 1
 
 
 def test_requires_a_saturation_report(tmp_path):
