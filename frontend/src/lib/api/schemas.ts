@@ -97,3 +97,43 @@ export const createRunResponseSchema = z.object({
 export function isRunFinished(status: RunStatus): boolean {
   return status === "done" || status === "failed";
 }
+
+/** Matches `datasets/base.py`'s CONCEPTS, minus `speciality_tags` (a join table, not a level). */
+export const conceptLevelSchema = z.enum(["services", "categories", "specialities", "tags"]);
+export type ConceptLevel = z.infer<typeof conceptLevelSchema>;
+
+/** A concept id is usually an integer, but a proposed-not-yet-integrated
+ * concept can carry a temporary string id (e.g. "skillsfuture:501"). */
+const conceptIdSchema = z.union([z.number(), z.string()]);
+
+export const taxonomyConceptRefSchema = z.object({
+  id: conceptIdSchema,
+  name: z.string(),
+});
+export type TaxonomyConceptRef = z.infer<typeof taxonomyConceptRefSchema>;
+
+/** `GET /taxonomy/search` result row. */
+export const taxonomyConceptSummarySchema = taxonomyConceptRefSchema.extend({
+  level: conceptLevelSchema,
+});
+export type TaxonomyConceptSummary = z.infer<typeof taxonomyConceptSummarySchema>;
+
+/** One parent chain from a concept up to its service; any step can be null (an orphan row). */
+export const taxonomyPathSchema = z.object({
+  service: taxonomyConceptRefSchema.nullable(),
+  category: taxonomyConceptRefSchema.nullable(),
+  speciality: taxonomyConceptRefSchema.nullable(),
+});
+export type TaxonomyPath = z.infer<typeof taxonomyPathSchema>;
+
+/** `GET /taxonomy/{level}/{id}` - a concept's path(s) up, children, and (for a speciality) its tags. */
+export const taxonomyConceptDetailSchema = z.object({
+  id: conceptIdSchema,
+  name: z.string(),
+  level: conceptLevelSchema,
+  dataset: z.string(),
+  paths: z.array(taxonomyPathSchema),
+  children: z.array(taxonomyConceptRefSchema),
+  tags: z.array(taxonomyConceptRefSchema),
+});
+export type TaxonomyConceptDetail = z.infer<typeof taxonomyConceptDetailSchema>;

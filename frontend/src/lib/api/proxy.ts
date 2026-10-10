@@ -28,6 +28,19 @@ export type WriteRequestHeaders = Pick<Headers, "get">;
 const DEFAULT_API_URL = "http://localhost:8000";
 const RUN_ID = /^[A-Za-z0-9_-]{1,64}$/;
 const LIMIT = /^\d{1,4}$/;
+const DATASET_NAME = /^[\w.-]{1,128}$/;
+const CONCEPT_LEVEL = /^(services|categories|specialities|tags)$/;
+// Concept ids are usually a plain integer, but a proposed-but-not-yet-integrated
+// concept can carry a temporary id like "skillsfuture:501" or "new:category:<hash>".
+const CONCEPT_ID = /^[\w:.-]{1,200}$/;
+
+/** `run_id` + `dataset`, required by both /taxonomy endpoints; null if either is missing or malformed. */
+function requireRunAndDataset(searchParams: URLSearchParams): { run_id: string; dataset: string } | null {
+  const runId = searchParams.get("run_id");
+  const dataset = searchParams.get("dataset");
+  if (!runId || !RUN_ID.test(runId) || !dataset || !DATASET_NAME.test(dataset)) return null;
+  return { run_id: runId, dataset };
+}
 
 export function resolveUpstream(
   method: string,
@@ -36,25 +49,50 @@ export function resolveUpstream(
   env: ProxyEnv,
 ): ProxyDecision {
   const base = (env.TAXONOMY_API_URL ?? DEFAULT_API_URL).replace(/\/+$/, "");
-  const [resource, id, ...rest] = segments;
+  // Three segments covers every allowed route today (/taxonomy/{level}/{id}
+  // is the deepest); a resource with fewer just leaves the later ones undefined.
+  const [resource, a, b, ...rest] = segments;
   const notFound = { ok: false, status: 404, reason: "Not an allowed pipeline endpoint" } as const;
   if (rest.length > 0) return notFound;
 
-  if (method === "GET" && resource === "metrics" && id === undefined) {
+  if (method === "GET" && resource === "metrics" && a === undefined) {
     return { ok: true, url: `${base}/metrics` };
   }
-  if (method === "GET" && resource === "runs" && id === undefined) {
+  if (method === "GET" && resource === "runs" && a === undefined) {
     const limit = searchParams.get("limit");
     return { ok: true, url: limit && LIMIT.test(limit) ? `${base}/runs?limit=${limit}` : `${base}/runs` };
   }
-  if (method === "GET" && resource === "runs" && id !== undefined && RUN_ID.test(id)) {
-    return { ok: true, url: `${base}/runs/${id}` };
+  if (method === "GET" && resource === "runs" && a !== undefined && b === undefined && RUN_ID.test(a)) {
+    return { ok: true, url: `${base}/runs/${a}` };
   }
-  if (method === "POST" && resource === "runs" && id === undefined) {
+  if (method === "POST" && resource === "runs" && a === undefined) {
     if (env.PIPELINE_ALLOW_RUN_CREATION !== "true") {
       return { ok: false, status: 403, reason: "Run creation is disabled for this dashboard" };
     }
     return { ok: true, url: `${base}/runs` };
+  }
+  if (method === "GET" && resource === "taxonomy" && a === "search" && b === undefined) {
+    const identity = requireRunAndDataset(searchParams);
+    if (!identity) return notFound;
+    const forwarded = new URLSearchParams(identity);
+    const q = searchParams.get("q");
+    if (q) forwarded.set("q", q);
+    const level = searchParams.get("level");
+    if (level) {
+      if (!CONCEPT_LEVEL.test(level)) return notFound;
+      forwarded.set("level", level);
+    }
+    const limit = searchParams.get("limit");
+    if (limit && LIMIT.test(limit)) forwarded.set("limit", limit);
+    return { ok: true, url: `${base}/taxonomy/search?${forwarded}` };
+  }
+  if (
+    method === "GET" && resource === "taxonomy" &&
+    a !== undefined && CONCEPT_LEVEL.test(a) && b !== undefined && CONCEPT_ID.test(b)
+  ) {
+    const identity = requireRunAndDataset(searchParams);
+    if (!identity) return notFound;
+    return { ok: true, url: `${base}/taxonomy/${a}/${encodeURIComponent(b)}?${new URLSearchParams(identity)}` };
   }
   return notFound;
 }
