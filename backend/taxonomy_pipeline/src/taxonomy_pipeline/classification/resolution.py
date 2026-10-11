@@ -14,6 +14,9 @@ from typing import Any
 
 from ..datasets.base import TaxonomyDataset
 from ..metrics.integrity import normalize
+from ..proposals.models import ProposalScreeningReport, ScreeningSettings
+from ..proposals.screening import screen_proposals
+from .deduplication import SimilarityMatcher
 from .models import (
     CanonicalMapping,
     CanonicalTag,
@@ -79,6 +82,7 @@ def _tag_paths(tag: TagProposal) -> dict[PathKey, TaxonomyPath]:
 # Recheck path reuse against the baseline and assign deterministic IDs before constructing any links.
 def _resolve_hierarchy(
     report: DeduplicationReport, taxonomy: TaxonomyDataset, tags: dict[SourceKey, TagProposal],
+    screening: ProposalScreeningReport,
 ) -> dict[tuple[str, ...], ResolvedHierarchyNode]:
     expected: set[tuple[str, ...]] = set()
     for tag in tags.values():
@@ -88,6 +92,9 @@ def _resolve_hierarchy(
     if len(groups) != len(report.hierarchy) or set(groups) != expected:
         raise ValueError("Hierarchy groups must match the source placement paths exactly")
     nodes: dict[tuple[str, ...], ResolvedHierarchyNode] = {}
+    screened = {tuple(proposal.path): proposal for proposal in screening.proposals}
+    if not groups.keys() <= screened.keys():
+        raise ValueError("Screening must cover every eligible hierarchy path")
     # Categories must be resolved before their specialities, independently of report order.
     for key in sorted(groups, key=lambda key: (len(key), key)):
         group = groups[key]
@@ -104,12 +111,15 @@ def _resolve_hierarchy(
         existing_id = target.category_id if size == 2 else target.speciality_id
         if existing_id != group.existing_id:
             raise ValueError(f"Baseline path changed; rerun validation and deduplication: {key}")
+        existing_id = screened[key].existing_id
         parent_id = target.service_id if size == 2 else nodes[key[:2]].id
+        # Parent spelling variants that reuse one category must share any new child node as well.
+        identity = key if size == 2 else (key[0], normalize(nodes[key[:2]].name), key[2])
         if existing_id is not None:
             rows = taxonomy.categories if size == 2 else taxonomy.specialities
             label = next(row["name"] for row in rows if row["id"] == existing_id)
         nodes[key] = ResolvedHierarchyNode(
-            level=group.level, id=existing_id or f"new:{group.level}:{_digest(key)}",
+            level=group.level, id=existing_id or f"new:{group.level}:{_digest(identity)}",
             parent_id=parent_id, name=label, path=list(key), existing=existing_id is not None,
         )
     return nodes
@@ -211,11 +221,14 @@ def _approved_paths(
     approved = {_path_key(path) for path in decision.approved_paths}
     if approved - proposed:
         raise ValueError("Approved paths must be proposed placements of this decision's members")
-    by_id = {nodes[path].id: path for path in proposed if nodes[path].existing}
+    by_id: dict[int | str, set[PathKey]] = {}
+    for path in proposed:
+        if nodes[path].existing:
+            by_id.setdefault(nodes[path].id, set()).add(path)
     for identifier in decision.approved_speciality_ids:
         if identifier not in by_id:
             raise ValueError(f"Approved speciality {identifier} is not an existing proposed placement of this group")
-        approved.add(by_id[identifier])
+        approved.update(by_id[identifier])
     return approved
 
 
@@ -254,6 +267,8 @@ def taxonomy_snapshot_id(taxonomy: TaxonomyDataset) -> str:
 # Resolve reviewed identities and approved links without mutating source evidence or the baseline.
 def resolve_outputs(
     report: DeduplicationReport, taxonomy: TaxonomyDataset, decisions: Sequence[ReviewDecision] = (),
+    *, semantic_matcher: SimilarityMatcher | None = None, screening: ProposalScreeningReport | None = None,
+    screening_settings: ScreeningSettings | None = None,
 ) -> ResolutionReport:
     """Return stable canonical mappings and approved nodes for preview construction.
 
@@ -268,10 +283,21 @@ def resolve_outputs(
     if report.taxonomy != taxonomy.name:
         raise ValueError("The deduplication report and baseline taxonomy names must match")
     tags = _index_tags(report)
-    nodes = _resolve_hierarchy(report, taxonomy, tags)
+    snapshot_id = taxonomy_snapshot_id(taxonomy)
+    screening = screen_proposals(
+        report.screening_hierarchy if report.screening_hierarchy is not None else report.hierarchy,
+        taxonomy, baseline_snapshot_id=snapshot_id,
+        settings=screening_settings, semantic_matcher=semantic_matcher, replay=screening,
+    )
+    nodes = _resolve_hierarchy(report, taxonomy, tags, screening)
     prepared = _prepare_decisions(decisions, tags)
-    # A baseline name match is the more specific reason, so it wins when a tag has both.
-    flagged_reasons = _producer_review_reasons(tags) | _baseline_match_reasons(tags, taxonomy)
+    hierarchy_reasons = {
+        source: f"Hierarchy screening: {proposal.reason}. See resolution.screening for candidates and scores."
+        for proposal in screening.proposals if proposal.status == "review" for source in proposal.source_tags
+    }
+    blocked_paths = {tuple(proposal.path) for proposal in screening.proposals if proposal.blocks_creation}
+    # Hierarchy holds take precedence so bulk tag decisions cannot bypass placement review.
+    flagged_reasons = _producer_review_reasons(tags) | _baseline_match_reasons(tags, taxonomy) | hierarchy_reasons
     defaults = _default_decisions(report, tags, prepared, flagged_reasons)
     canonical: dict[int | str, CanonicalTag] = {}
     mappings: list[CanonicalMapping] = []
@@ -285,6 +311,14 @@ def resolve_outputs(
     for decision in prepared + defaults:
         accepted = decision.action in {"reuse", "create"}
         approved = _approved_paths(decision, tags, nodes)
+        if accepted and any(path in blocked_paths or path[:2] in blocked_paths for path in approved):
+            # A tag decision cannot approve a duplicate or unresolved hierarchy concept.
+            for member in decision.members:
+                flagged_reasons[_source_key(member)] = (
+                    "Hierarchy screening blocks this placement: resolve the exact match, parent or failed check "
+                    "before creating a concept. See resolution.screening."
+                )
+            continue
         if accepted:
             tag = _canonical_tag(decision, tags, taxonomy)
             if tag.id in canonical:
@@ -330,15 +364,19 @@ def resolve_outputs(
     for status in ("accepted", "excluded", "deferred", "pending"):
         counts[f"{status}_sources"] = sum(item.status == status for item in dispositions.values())
     for level in ("category", "speciality"):
-        counts[f"added_{level}_nodes"] = sum(node.level == level and not node.existing for node in hierarchy)
-        counts[f"reused_{level}_nodes"] = sum(node.level == level and node.existing for node in hierarchy)
+        counts[f"added_{level}_nodes"] = len({
+            node.id for node in hierarchy if node.level == level and not node.existing
+        })
+        counts[f"reused_{level}_nodes"] = len({node.id for node in hierarchy if node.level == level and node.existing})
     return ResolutionReport(
-        baseline_snapshot_id=taxonomy_snapshot_id(taxonomy), evidence=report.model_copy(deep=True), decisions=prepared,
+        baseline_snapshot_id=snapshot_id, evidence=report.model_copy(deep=True), decisions=prepared,
+        screening=screening,
         hierarchy=hierarchy, tags=resolved_tags,
         mappings=sorted(mappings, key=lambda mapping: _source_key(mapping.source)), links=resolved_links,
         dispositions=[dispositions[key] for key in sorted(dispositions)], counts=counts,
         partial=(
             not report.complete or bool(sum(report.omitted_counts.values()))
+            or screening.semantic_status == "failed"
             or any(item.status in {"pending", "deferred"} for item in dispositions.values())
             or any(item.status == "accepted" and item.unapproved_paths for item in dispositions.values())
         ),

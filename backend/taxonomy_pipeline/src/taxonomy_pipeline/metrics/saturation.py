@@ -252,6 +252,11 @@ class _Evidence:
         return self.semantic is not None and self.semantic[2] >= p["semantic_threshold"]
 
 
+# Share saturation's 0-100 RapidFuzz ratio and precision with downstream proposal screening.
+def lexical_scores(queries: list[str], choices: list[str]) -> np.ndarray:
+    return process.cdist(queries, choices, scorer=fuzz.ratio)
+
+
 def _gather_evidence(
     concepts: list[tuple[str, list[dict[str, Any]]]],
     candidates: dict[str, tuple[str, dict[str, Any]]],
@@ -265,7 +270,7 @@ def _gather_evidence(
         if key in candidates:
             item.exact = (*candidates[key], 100.0)
 
-    scores = process.cdist([key for key, _ in concepts], keys, scorer=fuzz.ratio)
+    scores = lexical_scores([key for key, _ in concepts], keys)
     for item, row_scores in zip(evidence, scores, strict=True):
         index = int(np.argmax(row_scores))
         item.lexical = (*candidates[keys[index]], float(row_scores[index]))

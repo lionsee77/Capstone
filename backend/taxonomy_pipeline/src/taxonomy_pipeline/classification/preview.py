@@ -84,9 +84,12 @@ def _integrity(taxonomy: TaxonomyDataset) -> MetricResult:
 # Add only tags with approved links, preserving baseline rows and stable temporary IDs.
 def _assemble(resolution: ResolutionReport, baseline: TaxonomyDataset) -> TaxonomyDataset:
     combined = baseline.model_copy(deep=True)
+    added_nodes: set[tuple[str, int | str]] = set()
     for node in sorted(resolution.hierarchy, key=lambda node: (node.level != "category", _key(node.id))):
-        if node.existing:
+        identity = node.level, node.id
+        if node.existing or identity in added_nodes:
             continue
+        added_nodes.add(identity)
         table, parent = ("categories", "service_id") if node.level == "category" else ("specialities", "category_id")
         getattr(combined, table).append({"id": node.id, "name": node.name, parent: node.parent_id})
     linked = {link.tag_id for link in resolution.links}
@@ -111,6 +114,7 @@ def _placement_rows(resolution: ResolutionReport, blocked: bool) -> list[Preview
     mappings = {(item.source.source_dataset, item.source.tag_id): item.canonical_tag_id for item in resolution.mappings}
     dispositions = {(item.source.source_dataset, item.source.tag_id): item for item in resolution.dispositions}
     links = {(link.speciality_id, link.tag_id): link for link in resolution.links}
+    screened = {tuple(item.path): item for item in resolution.screening.proposals} if resolution.screening else {}
     rows = []
     for proposal in resolution.evidence.tags:
         source = proposal.source.source_dataset, proposal.source.tag_id
@@ -126,6 +130,7 @@ def _placement_rows(resolution: ResolutionReport, blocked: bool) -> list[Preview
         }
         for path, variants in sorted(placements.items()):
             placement = min(variants, key=lambda item: item.model_dump_json())
+            concepts = [screened[key] for key in (path[:2], path) if key in screened]
             speciality, category = nodes.get(path), nodes.get(path[:2])
             link = links.get((speciality.id, tag.id)) if speciality and tag else None
             approved = disposition.status == "accepted" and path not in unapproved and link is not None
@@ -137,12 +142,19 @@ def _placement_rows(resolution: ResolutionReport, blocked: bool) -> list[Preview
                 canonical_tag_id=tag.id if tag else None, canonical_tag=tag.name if tag else "",
                 review_reason=disposition.reason,
                 # The representative may be an unflagged variant; any flagged one means review evidence exists.
-                needs_review=any(item.needs_review for item in variants),
+                needs_review=any(item.needs_review for item in variants)
+                or any(item.status == "review" for item in concepts),
             )
             if len(variants) > 1:
                 row.note = (
                     f"{len(variants)} evidence records share this placement; one representative is shown. "
                     "All variants are retained in resolution.evidence."
+                )
+            matched = [item for item in concepts if item.matches]
+            if matched:
+                row.note += (" " if row.note else "") + "Hierarchy matches in resolution.screening: " + "; ".join(
+                    f"{item.level} {item.proposal_id} ({item.status}, {len(item.matches)} candidates)"
+                    for item in matched
                 )
             if approved:
                 row.category_id, row.speciality_id = category.id, speciality.id
@@ -165,7 +177,7 @@ def build_preview(resolution: ResolutionReport, baseline: TaxonomyDataset) -> Me
     """
     if taxonomy_snapshot_id(baseline) != resolution.baseline_snapshot_id:
         raise ValueError("Baseline snapshot changed; rerun resolution before building a preview")
-    expected = resolve_outputs(resolution.evidence, baseline, resolution.decisions)
+    expected = resolve_outputs(resolution.evidence, baseline, resolution.decisions, screening=resolution.screening)
     findings = []
     fields = {"hierarchy", "tags", "links", "mappings", "dispositions"}
     if _ordered(expected.model_dump(include=fields)) != _ordered(resolution.model_dump(include=fields)):
@@ -189,6 +201,9 @@ def build_preview(resolution: ResolutionReport, baseline: TaxonomyDataset) -> Me
             findings.append(ValidationFinding(code=f"supporting.{name}_integrity", message=metric.summary))
     findings.extend(ValidationFinding(code=f"skipped.{name}", message=reason)
                     for name, reason in sorted(expected.evidence.skipped_checks.items()))
+    if expected.screening:
+        findings.extend(ValidationFinding(code=f"screening.{name}", message=reason)
+                        for name, reason in sorted(expected.screening.skipped_checks.items()))
     rows = _placement_rows(expected, blocked)
     linked = set() if blocked else {link.tag_id for link in expected.links}
     counts = PreviewCounts(
@@ -200,9 +215,9 @@ def build_preview(resolution: ResolutionReport, baseline: TaxonomyDataset) -> Me
         pending_sources=expected.counts["pending_sources"], deferred_sources=expected.counts["deferred_sources"],
         excluded_sources=expected.counts["excluded_sources"],
         unapproved_placements=sum(row.status == "unapproved" for row in rows),
-        **{f"{action}_{table}": 0 if blocked else sum(
-            node.level == level and node.existing == (action == "reused") for node in expected.hierarchy
-        ) for action in ("added", "reused")
+        **{f"{action}_{table}": 0 if blocked else len({
+            node.id for node in expected.hierarchy if node.level == level and node.existing == (action == "reused")
+        }) for action in ("added", "reused")
           for level, table in (("category", "categories"), ("speciality", "specialities"))},
     )
     partial = expected.partial or blocked or baseline_integrity.status != "ok" or preview_integrity.status != "ok"

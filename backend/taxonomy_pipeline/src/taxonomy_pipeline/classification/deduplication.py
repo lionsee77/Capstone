@@ -62,7 +62,9 @@ def _collect_tags(records: list[IntakeRecord]) -> list[TagProposal]:
 
 
 # Consolidate identical hierarchy paths without merging names across different parents.
-def _collect_hierarchy(records: list[IntakeRecord]) -> list[HierarchyGroup]:
+def _collect_hierarchy(
+    records: list[IntakeRecord], *, allow_unresolved_targets: bool = False,
+) -> list[HierarchyGroup]:
     groups: dict[tuple[str, ...], list[IntakeRecord]] = defaultdict(list)
     for record in records:
         output = record.output
@@ -73,9 +75,10 @@ def _collect_hierarchy(records: list[IntakeRecord]) -> list[HierarchyGroup]:
     for path, group in sorted(groups.items()):
         is_category = len(path) == 2
         identifiers = {
-            record.target.category_id if is_category else record.target.speciality_id for record in group
+            record.target.category_id if is_category else record.target.speciality_id
+            for record in group if record.target is not None
         }
-        if len(identifiers) != 1:
+        if len(identifiers) != 1 and not allow_unresolved_targets:
             raise ValueError("Inconsistent resolved IDs for one hierarchy path; rerun validation against one taxonomy")
         variants = {
             (record.output.service, record.output.category) if is_category else
@@ -84,7 +87,8 @@ def _collect_hierarchy(records: list[IntakeRecord]) -> list[HierarchyGroup]:
         sources = sorted({(record.output.source_dataset, record.output.tag_id) for record in group})
         hierarchy.append(HierarchyGroup(
             level="category" if is_category else "speciality", path=list(path),
-            variants=[list(variant) for variant in sorted(variants)], existing_id=identifiers.pop(),
+            variants=[list(variant) for variant in sorted(variants)],
+            existing_id=identifiers.pop() if len(identifiers) == 1 else None,
             members=[SourceTagRef(source_dataset=dataset, tag_id=identifier) for dataset, identifier in sources],
             origins=_origins(group),
         ))
@@ -181,6 +185,11 @@ def deduplicate_outputs(
             omitted[record.status] += 1
     tags = _collect_tags(records)
     hierarchy = _collect_hierarchy(records)
+    # Screen complete proposals held by intake as well; they still remain omitted from resolution.
+    screening_hierarchy = _collect_hierarchy([
+        record for record in validation.records
+        if record.output is not None and record.output.service is not None
+    ], allow_unresolved_targets=True)
     candidates, skipped = _find_candidates(tags, lexical_threshold, semantic_threshold, semantic_matcher)
     counts = {
         "received_records": len(validation.records), "included_records": len(records),
@@ -201,4 +210,5 @@ def deduplicate_outputs(
         skipped_checks=skipped, thresholds={"lexical": lexical_threshold, "semantic": semantic_threshold},
         counts=counts, omitted_counts=dict(sorted(omitted.items())),
         tags=tags, hierarchy=hierarchy, candidates=candidates,
+        screening_hierarchy=screening_hierarchy,
     )

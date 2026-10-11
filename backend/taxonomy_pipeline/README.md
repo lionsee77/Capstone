@@ -178,7 +178,7 @@ saturation run ID, inputs and review state, which `integrate` records as the
 snapshot's provenance).
 
 - Tags with no duplicate candidates are accepted with their proposed
-  placements; tags named in a candidate pair, and tags with a `needs_review`
+  placements, provided hierarchy screening also clears them; tags named in a candidate pair, and tags with a `needs_review`
   placement (Case A's review candidates and every ambiguous tag, shown in the
   `needs_review` column of `preview.csv`), stay `pending` until a decision
   covers them. For an ambiguous tag the placement's `reason` names what it
@@ -196,6 +196,59 @@ snapshot's provenance).
   `--legacy-case-b FILE=SOURCE_DATASET`, and `--skip-case-a-handoffs`.
 - Exit code is non-zero if an input file is unreadable or the preview is
   blocked because the merge would introduce structural errors.
+
+### Hierarchy proposal screening
+
+`merge-preview` screens every complete category and speciality proposal against
+the baseline's categories and specialities before resolution. This includes
+complete placements held by intake for review; invalid and unplaced rows remain
+accounted for in `validation.json`. Incoming tag-pair deduplication still runs
+separately.
+
+Screening reuses integrity's `normalize`, saturation's `match_key`, its shared
+RapidFuzz scorer and its optional `SemanticMatcher`. Name handling covers case,
+whitespace, Unicode dash variants, trailing punctuation, `&`/`and`,
+`-isation`/`-ization`, and the matcher's trailing-plural rule. It does not remove
+all internal punctuation or apply a general spelling dictionary.
+
+Each proposal in `resolution.json` under `screening.proposals` contains a stable
+ID, original label variants, proposed path, source tags, input locations and all
+qualifying baseline matches. Each match retains its existing ID, level, full
+branch, match types, lexical score (0-1) and optional cosine score (-1 to 1).
+Thresholds default to 0.9 lexical and 0.7 semantic; scores are review evidence,
+not probabilities or confirmation of equivalence. The Python `resolve_outputs`
+entry point accepts `screening_settings=ScreeningSettings(...)` to override them.
+
+| Screening status | Effect |
+|---|---|
+| `reuse` | An unambiguous exact name/spelling variant under the same parent reuses the baseline ID and label. |
+| `new` | No candidates from enabled checks; normal tag-resolution rules still apply. |
+| `review` | Near matches hold automatic acceptance. Exact matches at another parent/level, ambiguous exact matches and broken exact targets block creating another concept. |
+
+A tag's `create` or `reuse` decision cannot override `blocks_creation` on its
+approved category or speciality. Such sources remain pending, with the reason
+shown in `preview.csv`. Near matches can still be accepted through explicit
+placement decisions. Hierarchy merge/relocation decisions belong to issue #57;
+until then, correct the producer placement to the intended existing branch or
+exclude/defer the affected source. No existing nodes are moved automatically.
+
+`--semantic-model` enables hierarchy screening with the same matcher used for
+tag deduplication. Disabled checks are labelled `disabled`; a failed requested
+semantic check holds new concepts until rerun. Preview and integration recheck
+the baseline and replay saved screening evidence without loading the model.
+Saved reports predating screening may need a fresh `merge-preview` run when the
+new checks find conflicts. `deduplication.json` also retains `screening_hierarchy`,
+including complete proposals that intake held outside eligible tag resolution.
+
+```text
+src/taxonomy_pipeline/proposals/
+  models.py     # persisted proposal, match and screening shapes
+  intake.py     # existing hierarchy groups -> stable proposal identities
+  screening.py  # baseline candidates, parent-aware reuse and creation holds
+```
+
+The producer contract and JSON Schema are unchanged. Synonym relationships,
+hierarchy reviewer decisions and a dedicated review API/UI are later PB06 issues.
 
 ### Bulk decisions for ambiguous tags
 
@@ -843,8 +896,8 @@ Ruff linting and the test suite run in CI (see the root
 - **Case B service:** every resolved Case B placement is written with
   `service="Industry"`, although most baseline categories sit under Function,
   Subject or Others. A correct pick such as "Data analytics" (under Subject)
-  therefore reaches the merge preview as a proposed *new* category under
-  Industry. Tracked in #52; treat Case B rows in `preview.csv` accordingly.
+  therefore reaches hierarchy screening as an exact match under a different
+  parent and stays pending rather than creating another category. Tracked in #52.
 - **No promotion step:** `integrate` writes and checks an enriched snapshot,
   and `enriched.yaml` scores it, but comparing it against the baseline and
   promoting it to the next baseline is still the incremental flow in #49 (and

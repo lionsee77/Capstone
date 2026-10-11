@@ -20,6 +20,7 @@ from pydantic import (
 
 from ..datasets.base import TaxonomyDataset
 from ..models import MetricResult
+from ..proposals.models import ProposalScreeningReport
 
 NonBlankText = Annotated[str, StringConstraints(pattern=r"\S")]
 Confidence = Annotated[float, Field(ge=0, le=1, allow_inf_nan=False)]
@@ -213,6 +214,7 @@ class DeduplicationReport(BaseModel):
     tags: list[TagProposal]
     hierarchy: list[HierarchyGroup]
     candidates: list[DuplicateCandidate]
+    screening_hierarchy: list[HierarchyGroup] | None = None
 
 
 class TaxonomyPath(BaseModel):
@@ -330,6 +332,7 @@ class ResolutionReport(BaseModel):
     dispositions: list[SourceDisposition]
     counts: dict[str, int]
     partial: bool
+    screening: ProposalScreeningReport | None = None
 
 
 class PreviewCounts(BaseModel):

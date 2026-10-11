@@ -125,7 +125,7 @@ def run_merge_preview(
         skip_case_a_handoffs=skip_case_a_handoffs,
     )
     deduplication = deduplicate_outputs(validation, semantic_matcher=semantic_matcher)
-    resolution = resolve_outputs(deduplication, baseline, list(decisions))
+    resolution = resolve_outputs(deduplication, baseline, list(decisions), semantic_matcher=semantic_matcher)
     preview = build_preview(resolution, baseline)
 
     out_dir = Path(out_dir)
