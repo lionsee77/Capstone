@@ -206,10 +206,13 @@ def test_label_variants_and_repeated_placements_share_one_link(baseline: Taxonom
 
 # Stable IDs depend on identities and parent paths rather than report or decision ordering.
 def test_resolved_content_is_stable_when_inputs_and_decisions_are_reordered(baseline: TaxonomyDataset) -> None:
-    report = dedup([row("x", "First", category="New"), row("y", "Second", category="New")], baseline)
+    report = dedup([
+        row("x", "First", category="New", speciality="Operations"),
+        row("y", "Second", category="New", speciality="Operations"),
+    ], baseline)
     decisions = [
-        decision(approved_paths=[path(category="New")]),
-        decision([("catalogue", "y")], approved_paths=[path(category="New")]),
+        decision(approved_paths=[path(category="New", speciality="Operations")]),
+        decision([("catalogue", "y")], approved_paths=[path(category="New", speciality="Operations")]),
     ]
     first = resolve_outputs(report, baseline, decisions)
     report.tags.reverse()
@@ -218,7 +221,9 @@ def test_resolved_content_is_stable_when_inputs_and_decisions_are_reordered(base
     baseline.tags.reverse()
     second = resolve_outputs(report, baseline, list(reversed(decisions)))
     assert first.model_dump(exclude={"evidence"}) == second.model_dump(exclude={"evidence"})
-    expanded = dedup([row("z", "Unrelated"), row("x", "First", category="New")], baseline)
+    expanded = dedup([
+        row("z", "Unrelated"), row("x", "First", category="New", speciality="Operations"),
+    ], baseline)
     later = resolve_outputs(expanded, baseline, decisions[:1])
     assert next(tag.id for tag in first.tags if tag.name == "First") == next(
         tag.id for tag in later.tags if tag.name == "First"
@@ -306,7 +311,7 @@ def test_invalid_review_extensions_are_rejected(action: str) -> None:
             decision(action=action, approved_paths=[path()])
 
 
-# Legacy files enter through intake only; resolution sees the same generic report as current producers.
+# Apply the same screening to legacy and current outputs, including the legacy Industry default's conflicts.
 def test_legacy_adapter_reports_use_the_same_resolution_entry_point() -> None:
     baseline = TaxonomyDataset.model_validate_json((FIXTURES / "taxonomy.json").read_text(encoding="utf-8"))
     intake = validate_outputs(
@@ -321,8 +326,30 @@ def test_legacy_adapter_reports_use_the_same_resolution_entry_point() -> None:
         ],
     ) for tag in report.tags]
     result = resolve_outputs(report, baseline, decisions)
-    assert len(result.tags) == 3 and result.counts["omitted_input_records"] == 1
+    assert [tag.name for tag in result.tags] == ["Quantum analysis"]
+    assert result.counts["omitted_input_records"] == 1
+    assert {item.source.tag_id: item.status for item in result.dispositions} == {
+        "42": "pending", "48": "pending", "49": "accepted",
+    }
     assert all(node.path[0] == "Industry" for node in result.hierarchy)
+    assert {node.name for node in result.hierarchy} == {"Quantum science", "Quantum computing"}
+    blocked_categories = [
+        proposal for proposal in result.screening.proposals
+        if proposal.level == "category" and proposal.blocks_creation
+    ]
+    assert {proposal.name for proposal in blocked_categories} == {"Data analytics", "Biology"}
+    assert all(
+        any(match.concept.path[0] == "Subject" and not match.same_parent
+            and "normalized_name" in match.match_types for match in proposal.matches)
+        for proposal in blocked_categories
+    )
+    current = deduplicate_outputs(validate_outputs({
+        "current": json.dumps([output.model_dump() for output in intake.merged_outputs]),
+    }, baseline))
+    current_result = resolve_outputs(current, baseline, decisions)
+    assert current_result.tags == result.tags
+    assert current_result.hierarchy == result.hierarchy
+    assert current_result.dispositions == result.dispositions
 
 
 # Resolve the published current-contract fixture and review file through the full downstream sequence.
@@ -396,9 +423,9 @@ def test_unflagged_tags_and_new_paths_are_accepted_automatically(baseline: Taxon
 # Only sources named in duplicate candidates are held when unrelated proposals share the same batch.
 def test_candidates_hold_only_their_members_while_other_sources_proceed(baseline: TaxonomyDataset) -> None:
     report = dedup([
-        row("a", "Python", category="Programming"),
-        row("b", "Python", source_dataset="wildlife", category="Animals"),
-        row("c", "Payroll", service="Function", category="Finance"),
+        row("a", "Python", category="Programming", speciality="Software development"),
+        row("b", "Python", source_dataset="wildlife", category="Animals", speciality="Wildlife"),
+        row("c", "Payroll", service="Function", category="Finance", speciality="Payroll administration"),
     ], baseline)
     result = resolve_outputs(report, baseline)
     assert result.counts["pending_sources"] == 2 and result.counts["accepted_sources"] == 1
@@ -415,7 +442,7 @@ def test_producer_flagged_placement_stays_pending_without_a_decision(baseline: T
             confidence=0.3, needs_review=True),
         row("a", "Fire Prevention", service="Industry", category="Travel", speciality="Fire Prevention",
             confidence=0.2, needs_review=True),
-        row("c", "Payroll", service="Function", category="Finance"),
+        row("c", "Payroll", service="Function", category="Finance", speciality="Payroll administration"),
     ], baseline)
     result = resolve_outputs(report, baseline)
     pending = [item for item in result.dispositions if item.status == "pending"]

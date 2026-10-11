@@ -245,9 +245,14 @@ def test_default_acceptance_adds_unflagged_paths_and_retains_candidate_review(ba
 
 # Treat equal names as separate approved concepts when reviews explicitly retained both identities.
 def test_distinct_same_name_concepts_do_not_become_structural_errors(baseline: TaxonomyDataset) -> None:
-    rows = [placement(tag_id="one", tag="Python"), placement(tag_id="two", tag="Python", speciality="Zoology")]
+    rows = [
+        placement(tag_id="one", tag="Python"),
+        placement(tag_id="two", tag="Python", category="Biology", speciality="Zoology"),
+    ]
     preview = build_preview(resolve(rows, baseline, [approve([row]) for row in rows]), baseline)
     assert not preview.blocked and preview.counts.added_tags == 2
+    assert preview.counts.pending_sources == 0
+    assert preview.counts.added_categories == preview.counts.added_specialities == 0
     assert preview.preview_integrity.details["exact_duplicates"]["tags"]
 
 
