@@ -254,7 +254,21 @@ def _load_checkpoint(path: Path, provenance: dict[str, Any]) -> dict[str, dict[s
                 f"Checkpoint {path} was written for a different {label} ({field} {saved.get(field)!r}, "
                 f"this run {expected!r}). Rerun against the matching report and model, or delete the checkpoint."
             )
-    return {str(proposal["tag_id"]): proposal for proposal in saved.get("proposals", [])}
+    proposals = saved.get("proposals")
+    if not isinstance(proposals, list):
+        raise CaseBError(f"Checkpoint {path} has invalid proposals; delete it to start this run from scratch.")
+    required_fields = {"tag_id", "action", "service", "category", "speciality", "confidence", "reason"}
+    incompatible = [
+        str(proposal.get("tag_id", "<unknown>"))
+        for proposal in proposals
+        if not isinstance(proposal, dict) or not required_fields.issubset(proposal)
+    ]
+    if incompatible:
+        raise CaseBError(
+            f"Checkpoint {path} contains proposals from an incompatible format (missing service or other fields) "
+            f"for tag IDs {incompatible}; delete it to reclassify those tags."
+        )
+    return {str(proposal["tag_id"]): proposal for proposal in proposals}
 
 
 def _save_checkpoint(path: Path, provenance: dict[str, Any], proposals: dict[str, dict[str, Any]]) -> None:

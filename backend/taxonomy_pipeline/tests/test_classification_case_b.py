@@ -239,6 +239,20 @@ def test_refuses_a_checkpoint_in_the_old_list_format(tmp_path, workbook, saturat
         _run(saturation_report(SIX_TAGS), output, StubClient(), workbook=workbook)
 
 
+def test_refuses_a_checkpoint_without_service_before_calling_the_model(tmp_path, workbook, saturation_report):
+    output = tmp_path / "case_b_output.json"
+    checkpoint = output.with_name(".case_b_output.checkpoint.json")
+    checkpoint.write_text(json.dumps({
+        "saturation_run_id": "run-1", "incoming": "skillsfuture", "model": "gpt-4o-mini",
+        "proposals": [{key: value for key, value in PROPOSAL.items() if key != "service"}],
+    }), encoding="utf-8")
+    client = StubClient()
+
+    with pytest.raises(CaseBError, match="incompatible format"):
+        _run(saturation_report(SIX_TAGS), output, client, workbook=workbook)
+    assert client.prompts == []
+
+
 def test_run_rejects_report_tags_missing_from_the_incoming_dataset(tmp_path, workbook, saturation_report):
     concepts = [{"recommended_action": "ADD_CANDIDATE", "parent_status": "NO_PARENT", "incoming_ids": [42]}]
 

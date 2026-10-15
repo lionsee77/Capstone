@@ -166,7 +166,9 @@ so an interrupted run resumes without paying for finished tags, even with a
 different `--batch-size`; a successful run removes it. The checkpoint records
 the saturation run, source and model it was written for: rerunning against a
 different `report.json` or `--model` stops with an error rather than reusing
-old proposals, so delete the checkpoint if you mean to start over. Each record also carries an `action`:
+old proposals. Checkpoints from older proposal formats that lack required fields
+such as `service` are also rejected before any model call; delete the checkpoint
+to reclassify those tags. Each record also carries an `action`:
 `assign_existing`, `propose_new_speciality` or `propose_new_category`.
 
 ### Merge preview

@@ -22,6 +22,11 @@ def run_classification_validator(
 ) -> dict[str, Any]:
     """Run the original proposal validator and summarize its findings."""
     validator = Path(__file__).parents[2] / "skillsfuture" / "validate_classification_proposals.py"
+    if not validator.is_file():
+        raise FileNotFoundError(
+            f"Classification validator is missing: {validator}. "
+            "Restore backend/skillsfuture/validate_classification_proposals.py before evaluating."
+        )
     with tempfile.TemporaryDirectory(prefix="case-b-validation-") as directory:
         validated_path = Path(directory) / "validated.json"
         result = subprocess.run(
@@ -33,7 +38,14 @@ def run_classification_validator(
             text=True,
             check=False,
         )
-        records = json.loads(validated_path.read_text(encoding="utf-8")) if validated_path.exists() else []
+        if not validated_path.is_file():
+            raise RuntimeError(
+                "Classification validator did not produce validated output; "
+                f"exit code was {result.returncode}: {(result.stdout + result.stderr).strip()}"
+            )
+        records = json.loads(validated_path.read_text(encoding="utf-8"))
+        if not isinstance(records, list):
+            raise RuntimeError("Classification validator produced a non-list validated output")
     errors: dict[str, int] = {}
     warnings: dict[str, int] = {}
     for record in records:
