@@ -136,6 +136,8 @@ def _outcomes_by_incoming_id(comparison: dict[str, Any], new_action: str) -> dic
     # matched something at a different taxonomy level (REVIEW_OTHER_LEVEL).
     for match in (
         comparison["exact_match_details"] + comparison["fuzzy_match_details"] + comparison["semantic_match_details"]
+        # Present only when saturation's optional judge ran on this level; Case A doesn't enable it.
+        + comparison.get("judged_match_details", [])
         + comparison["new_placement_details"] + comparison["other_level_match_details"]
     ):
         outcome = {
