@@ -11,7 +11,6 @@ Taxonomies come from the pipeline config, the same datasets saturation and Case 
 use. The OpenAI client is an optional dependency (`pip install -e ".[llm]"`) and
 is imported only when a run needs it, so this module imports without it.
 
-Known gap (#52): every resolved placement is written with `service="Industry"`.
 """
 from __future__ import annotations
 
@@ -27,7 +26,7 @@ from .routing import RUN_ID_FIELD, case_b_tag_ids, load_saturation, mark_ambiguo
 
 ACTIONS = ["assign_existing", "propose_new_speciality", "propose_new_category"]
 VALID_ACTIONS = set(ACTIONS)
-PROPOSAL_FIELDS = ("tag", "tag_id", "action", "category", "speciality", "confidence", "reason")
+PROPOSAL_FIELDS = ("tag", "tag_id", "action", "service", "category", "speciality", "confidence", "reason")
 CSV_FIELDS = [
     "action", "source_dataset", "tag_id", "tag", "original_classification", "service", "category",
     "speciality", "confidence", "reason", "needs_review", RUN_ID_FIELD,
@@ -38,6 +37,7 @@ RESPONSE_SCHEMA = {
     "properties": {"proposals": {"type": "array", "items": {"type": "object", "properties": {
         "tag": {"type": "string"}, "tag_id": {"type": "string"},
         "action": {"type": "string", "enum": ACTIONS},
+        "service": {"type": "string", "enum": ["Industry", "Function", "Subject", "Others"]},
         "category": {"type": "string"}, "speciality": {"type": "string"}, "confidence": {"type": "number"},
         "reason": {"type": "string"},
     }, "required": list(PROPOSAL_FIELDS), "additionalProperties": False}}},
@@ -122,28 +122,61 @@ def source_skills(path: str | Path) -> dict[str, dict[str, str]]:
         workbook.close()
 
 
-def baseline_hierarchy(baseline: TaxonomyDataset) -> tuple[list[str], list[dict[str, str]]]:
-    """Baseline category names and (category, speciality) pairs the model may place into."""
-    categories = {str(row["id"]): str(row["name"]) for row in baseline.categories}
+def baseline_hierarchy(
+    baseline: TaxonomyDataset,
+) -> tuple[list[str], list[dict[str, str]], list[dict[str, str]]]:
+    """Baseline services, service-scoped categories, and speciality paths for model placement."""
+    services = {str(row["id"]): str(row["name"]) for row in baseline.services}
+    categories = [
+        {
+            "service": services.get(str(row["service_id"]), ""),
+            "name": str(row["name"]),
+        }
+        for row in baseline.categories
+    ]
+    category_names = {str(row["id"]): str(row["name"]) for row in baseline.categories}
     specialities = [
-        {"category": categories.get(str(row["category_id"]), str(row["category_id"])), "name": str(row["name"])}
+        {
+            "service": services.get(
+                next(
+                    (str(category["service_id"]) for category in baseline.categories
+                     if str(category["id"]) == str(row["category_id"])),
+                    "",
+                ),
+                "",
+            ),
+            "category": category_names.get(str(row["category_id"]), str(row["category_id"])),
+            "name": str(row["name"]),
+        }
         for row in baseline.specialities
     ]
-    return sorted(categories.values()), specialities
+    return sorted(services.values()), sorted(categories, key=lambda item: (item["service"], item["name"])), specialities
 
 
 def incoming_tags(incoming: TaxonomyDataset) -> dict[str, str]:
     return {str(row["id"]): str(row["name"]) for row in incoming.tags}
 
 
-def build_prompt(categories: list[str], specialities: list[dict[str, str]], batch: list[dict[str, Any]]) -> str:
+def build_prompt(
+    services: list[str], categories: list[dict[str, str]], specialities: list[dict[str, str]],
+    batch: list[dict[str, Any]],
+) -> str:
     return (
-        "Classify each incoming SkillsFuture skill into Ankit's taxonomy. Use only the Ankit "
-        "services/categories/specialities listed below for existing placements. Propose a new category or "
-        "speciality only when no suitable Ankit placement exists. The source tag remains a SkillsFuture tag; "
-        "the proposed placement must target Ankit's taxonomy. Return one proposal per tag_id and copy the "
-        "original skill title into the tag field exactly.\n\nAnkit categories:\n" + json.dumps(categories)
-        + "\nAnkit specialities:\n" + json.dumps(specialities) + "\nSkillsFuture skills:\n" + json.dumps(batch)
+        "You are classifying incoming SkillsFuture skills into Ankit's taxonomy. Follow this decision procedure "
+        "for every tag. First, inspect the supplied service/category/speciality hierarchy and choose the single "
+        "best existing placement. If a suitable existing category and speciality exist under the same service, "
+        "you MUST use action=assign_existing and copy both names exactly. Use action=propose_new_speciality "
+        "only when the category exists but no suitable speciality exists under that category. Use "
+        "action=propose_new_category only when no suitable category exists under the selected service. Never "
+        "propose a new category or speciality merely because the skill is specialised, and never propose a node "
+        "whose name already appears in the supplied hierarchy under the relevant parent. The service, category, "
+        "and speciality must form one consistent parent-child path. Do not choose a category from one service "
+        "and a speciality from another. The source tag remains a SkillsFuture tag, while the placement targets "
+        "Ankit's taxonomy. Copy the original skill title into the tag field exactly. Return exactly one proposal "
+        "per tag_id and no commentary outside JSON.\n\nAllowed Ankit services:\n" + json.dumps(services)
+        + "\nAnkit categories (each includes its parent service):\n" + json.dumps(categories)
+        + "\nAnkit specialities (each includes its parent service and category):\n" + json.dumps(specialities)
+        + "\nSkillsFuture skills:\n" + json.dumps(batch)
         + "\nReturn ONLY valid JSON matching this shape (no Markdown): " + json.dumps(RESPONSE_SCHEMA)
     )
 
@@ -161,7 +194,7 @@ def to_contract_records(
             "tag_id": str(proposal["tag_id"]),
             "tag": tags.get(str(proposal["tag_id"]), ""),
             "original_classification": "unclassified",
-            "service": None if unresolved else "Industry",
+            "service": None if unresolved else proposal["service"],
             "category": None if unresolved else proposal["category"],
             "speciality": None if unresolved else proposal["speciality"],
             "confidence": None if unresolved else proposal.get("confidence"),
@@ -272,7 +305,7 @@ async def run_case_b(
 
     skills = source_skills(unique_skills)
     tag_to_skill = {str(TAG_ID_OFFSET + index): skill_id for index, skill_id in enumerate(sorted(skills))}
-    categories, specialities = baseline_hierarchy(datasets[baseline])
+    services, categories, specialities = baseline_hierarchy(datasets[baseline])
     if client is None:
         client = _openai_client(debug)
     if debug:
@@ -292,7 +325,7 @@ async def run_case_b(
         for tag_id in pending[start:start + batch_size]:
             skill_id = tag_to_skill.get(tag_id)
             batch.append({"tag_id": tag_id, "title": tags[tag_id], "skill_id": skill_id, **skills.get(skill_id, {})})
-        prompt = build_prompt(categories, specialities, batch)
+        prompt = build_prompt(services, categories, specialities, batch)
         for proposal in await classify_batch(client, prompt, batch, model, debug=debug):
             proposals[proposal["tag_id"]] = proposal
         _save_checkpoint(checkpoint, provenance, proposals)
