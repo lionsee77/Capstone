@@ -72,8 +72,20 @@ Places the new tags saturation finds into the baseline taxonomy, builds one
 reviewable merge preview, and turns the reviewed result into an enriched
 taxonomy snapshot. Nothing here writes to a database.
 
+> **Use `judged_report.json` for every classification round.** The SkillsFuture
+> config runs saturation with the [Decisions API judge](#decisions-api-judge)
+> on, which settles most ambiguous tags before they reach Case A/B (1,410 ->
+> 177 on SkillsFuture). Write that report as `judged_report.json` and pass it
+> explicitly: `case-a`, `case-b` and `bulk-decide` still default to
+> `--report report.json` (an unjudged report), so always give `--report`.
+> Case A, Case B and bulk-decide must all read the **same** report - each run
+> has its own `run_id` and `merge-preview` refuses to mix them. Running the
+> judge needs `OPENAI_API_KEY` in `backend/.env` and `pip install -e ".[llm]"`;
+> without a key, comment out the `judge:` block, write `report.json` instead,
+> and use it for the whole round.
+
 ```text
-taxonomy-pipeline run --output report.json     # saturation, ONCE per round
+taxonomy-pipeline run --output judged_report.json   # saturation + judge, ONCE per round
         │  ADD_CANDIDATE + REVIEW_AMBIGUOUS tags, split by parent_status (classification/routing.py)
         ├── HAS_PARENT ─► taxonomy-pipeline case-a ─► case_a_output.json
         └── NO_PARENT ──► taxonomy-pipeline case-b ─► case_b_output.json
@@ -93,12 +105,12 @@ Run from `backend/taxonomy_pipeline/` (the commands default to
 `--incoming skillsfuture`):
 
 ```bash
-taxonomy-pipeline run --config configs/original_vs_skillsfuture.yaml --output report.json
-taxonomy-pipeline case-a --report report.json
-taxonomy-pipeline case-b --report report.json        # needs .[llm] and OPENAI_API_KEY
+taxonomy-pipeline run --config configs/original_vs_skillsfuture.yaml --output judged_report.json  # needs .[llm] + key
+taxonomy-pipeline case-a --report judged_report.json
+taxonomy-pipeline case-b --report judged_report.json        # needs .[llm] and OPENAI_API_KEY
 taxonomy-pipeline merge-preview --input case_a_output.json --input case_b_output.json
 # optionally draft decisions for the clear-cut ambiguous tags, then review the rest:
-taxonomy-pipeline bulk-decide --merge-run merge_runs/<timestamp> --report report.json \
+taxonomy-pipeline bulk-decide --merge-run merge_runs/<timestamp> --report judged_report.json \
     --create-below 0.6 --reuse-above 0.9 --output decisions.json
 taxonomy-pipeline merge-preview --input case_a_output.json --input case_b_output.json \
     --decisions decisions.json --out-dir merge_runs/reviewed
@@ -107,7 +119,7 @@ taxonomy-pipeline run --config integrations/<timestamp>/enriched.yaml   # score 
 ```
 
 **Run saturation once per round and give both producers the same
-`report.json`.** Case A takes the report's `HAS_PARENT` tags and Case B its
+`judged_report.json`.** Case A takes the report's `HAS_PARENT` tags and Case B its
 `NO_PARENT` tags, each from both `ADD_CANDIDATE` (nothing in the baseline is
 close) and `REVIEW_AMBIGUOUS` (something is moderately close, so saturation
 can't confirm the tag is new). Together they cover every new or possibly new
@@ -115,12 +127,14 @@ tag exactly once; duplicates (`SKIP_*`), `REVIEW_NEW_PLACEMENT` and
 `REVIEW_OTHER_LEVEL` tags are not routed. Ambiguous tags are placed like the
 others, but every placement is flagged `needs_review` and its `reason` names
 the baseline concept saturation found close (`routing.mark_ambiguous`), so
-`merge-preview` holds them for a reviewer. On the SkillsFuture run that adds
-1,225 `HAS_PARENT` and 185 `NO_PARENT` tags (about 37 more Case B batches of 5). Both fail if the report is missing or has no saturation
+`merge-preview` holds them for a reviewer. On the SkillsFuture run the judge
+leaves 140 of the 1,443 `HAS_PARENT` tags and 37 of the 317 `NO_PARENT` tags
+ambiguous (1,225 and 185 without it); tags it judges new arrive as
+`ADD_CANDIDATE`, unflagged, and its 3 judged duplicates are not routed. Both fail if the report is missing or has no saturation
 result for `--incoming`. Each record they write carries the report's `run_id`
 as `saturation_run_id`, and `merge-preview` refuses to combine files from
-different runs (unstamped files only produce a warning). `report.json` and the
-stage outputs are git-ignored: regenerate them rather than committing them,
+different runs (unstamped files only produce a warning). `judged_report.json`,
+`report.json`, `judge_cache.json` and the stage outputs are git-ignored: regenerate them rather than committing them,
 since they go stale whenever the data, thresholds or code change.
 
 ### Producer contract
@@ -166,7 +180,7 @@ to it). Completed batches are checkpointed to a hidden file next to the output,
 so an interrupted run resumes without paying for finished tags, even with a
 different `--batch-size`; a successful run removes it. The checkpoint records
 the saturation run, source and model it was written for: rerunning against a
-different `report.json` or `--model` stops with an error rather than reusing
+different saturation report or `--model` stops with an error rather than reusing
 old proposals, so delete the checkpoint if you mean to start over. Each record also carries an `action`:
 `assign_existing`, `propose_new_speciality` or `propose_new_category`.
 
@@ -206,7 +220,7 @@ saturation's closest-match similarity (meaning when the report has it, else
 spelling rescaled to 0-1) and leaves the middle band for a person:
 
 ```bash
-taxonomy-pipeline bulk-decide --merge-run merge_runs/<timestamp> --report report.json \
+taxonomy-pipeline bulk-decide --merge-run merge_runs/<timestamp> --report judged_report.json \
     --create-below 0.6 --reuse-above 0.9 [--decisions decisions.json] --output decisions.json
 ```
 
@@ -310,9 +324,10 @@ taxonomies against SSIC 2025 and SSOC 2024 for breadth, and compares
 SkillsFuture concepts against the original taxonomy for `saturation` (see
 [below](#saturation-new-items-curve)). Prints the full JSON report to stdout
 and a one-line-per-metric summary to stderr; pass
-`--output report.json` to write the report to a file instead (git-ignored;
-about 22 MB for this comparison, because every saturation entry lists its
-parents). Every run is also saved to SQLite run history; pass `--no-save` to
+`--output judged_report.json` to write the report to a file instead
+(git-ignored; about 22 MB for this comparison, because every saturation entry
+lists its parents). Saturation runs with the judge on in this config, so it
+needs `OPENAI_API_KEY`; reruns read `judge_cache.json` and make no new calls. Every run is also saved to SQLite run history; pass `--no-save` to
 skip that.
 
 ## Saturation: new-items curve
@@ -417,7 +432,7 @@ Defaults come from `SaturationMetric.default_params`
 | `add_candidate_lexical_threshold` | 60 | `ADD_CANDIDATE` needs the best spelling score at every level below this | 60 |
 | `add_candidate_semantic_threshold` | 0.50 | ...and (with a model) the best meaning score below this; otherwise `REVIEW_AMBIGUOUS` | 0.50 |
 | `cross_level` | true | Also search the other levels of the known taxonomy | true |
-| `judge` | none (off) | Optional LLM judge for `REVIEW_AMBIGUOUS` concepts; see [Decisions API judge](#decisions-api-judge) | off (commented block) |
+| `judge` | none (off) | Optional LLM judge for `REVIEW_AMBIGUOUS` concepts; see [Decisions API judge](#decisions-api-judge) | on: `gpt-6-luna`, `[tags]`, cache `judge_cache.json` |
 
 ### Decisions API judge
 
@@ -450,8 +465,9 @@ Every judged entry carries `judge: {model, choice, probability, candidates}`.
 | `workers` | 8 | Parallel requests |
 
 Setup: `pip install -e ".[llm]"`, `OPENAI_API_KEY` in `backend/.env` (the same
-key Case B uses), and `semantic_model` set (it picks the candidates). Uncomment
-the `judge:` block in `configs/original_vs_skillsfuture.yaml`. One request per
+key Case B uses), and `semantic_model` set (it picks the candidates). It is on
+in `configs/original_vs_skillsfuture.yaml`; its report is `judged_report.json`
+(see [Classification workflow](#classification-workflow)). One request per
 ambiguous concept: about 1,410 for SkillsFuture tags, roughly $0.04 at
 $0.10/1M input tokens, and free on a cached rerun. A request the API rejects
 outright (bad key, unknown model or endpoint) stops the run with a `judge:`
@@ -505,7 +521,7 @@ Example - export every new skill with its SkillsFuture job roles to CSV:
 import csv
 import json
 
-with open("report.json") as f:
+with open("judged_report.json") as f:
     report = json.load(f)
 saturation = next(r for r in report["results"] if r["metric_id"] == "saturation")["details"]
 skills = saturation["by_concept_level"]["tags"]["ambiguous_concepts"]
@@ -643,8 +659,8 @@ validates the result against the contract before writing it out
 (`case_a_output.json` by default). `--semantic-model ''` runs it lexically only.
 
 ```bash
-taxonomy-pipeline run --config configs/original_vs_skillsfuture.yaml --output report.json
-taxonomy-pipeline case-a --report report.json --output case_a_output.json
+taxonomy-pipeline run --config configs/original_vs_skillsfuture.yaml --output judged_report.json
+taxonomy-pipeline case-a --report judged_report.json --output case_a_output.json
 ```
 
 ## Industry and occupational breadth
