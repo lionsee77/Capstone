@@ -512,10 +512,13 @@ def _compare_level(
             matched.append((rows, *winner))
 
     judge_report: dict[str, Any] = {}
+    # The verdict _ask_judge records on each entry, so a judged duplicate keeps it once moved out of the list.
+    judge_records: dict[int, dict[str, Any]] = {}
     if p.get("judge") and level in p["judge"][1]["levels"] and semantic_matcher:
         before = sum(entry["recommended_action"] == REVIEW_AMBIGUOUS for entry in ambiguous)
         judged, judge_counts = _ask_judge(level, unmatched, pool, parents, level_p, semantic_matcher)
         judged_ids = {id(rows) for rows, *_ in judged}
+        judge_records = {id(rows): entry["judge"] for rows, _, entry in unmatched if "judge" in entry}
         ambiguous = [entry for rows, _, entry in unmatched if id(rows) not in judged_ids]
         matched.extend(judged)
         judge_report = {"review_ambiguous_before_judge": before, "judge_counts": judge_counts}
@@ -530,7 +533,7 @@ def _compare_level(
         semantic_score = evidence.semantic[2] if evidence.semantic else None
         extra: dict[str, Any] = {"match_type": match_type}
         if match_type == "judged":
-            extra.update(judge_probability=score, semantic_score=semantic_score, judge_model=p["judge"][0].model)
+            extra.update(judge_probability=score, semantic_score=semantic_score, judge=judge_records[id(rows)])
         elif match_type == "semantic":
             extra.update(
                 semantic_score=score,

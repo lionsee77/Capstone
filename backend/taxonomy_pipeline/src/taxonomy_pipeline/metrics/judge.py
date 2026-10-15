@@ -163,7 +163,7 @@ class DecisionsJudge:
     """
 
     def __init__(self, model: str, *, workers: int = 8, cache_path: str | Path | None = None,
-                 max_retries: int = 3, client: Any = None):
+                 max_retries: int = 3, client: Any = None) -> None:
         self.model = model
         self.workers = workers
         self.cache_path = Path(cache_path) if cache_path else None
@@ -180,8 +180,11 @@ class DecisionsJudge:
 
     def _save_cache(self) -> None:
         if self.cache_path:
+            # Write beside the cache, then swap it in, so an interrupted write never truncates paid answers.
             self.cache_path.parent.mkdir(parents=True, exist_ok=True)
-            self.cache_path.write_text(json.dumps(self._cache, indent=1, sort_keys=True), encoding="utf-8")
+            partial = self.cache_path.with_name(self.cache_path.name + ".tmp")
+            partial.write_text(json.dumps(self._cache, indent=1, sort_keys=True), encoding="utf-8")
+            os.replace(partial, self.cache_path)
 
     @staticmethod
     def _key(request: dict[str, Any]) -> str:
@@ -207,15 +210,25 @@ class DecisionsJudge:
         keys = [self._key(request) for request in requests]
         todo = [index for index, key in enumerate(keys) if key not in self._cache]
         fresh: dict[int, JudgeVerdict] = {}
+        rejected: JudgeError | None = None
         try:
             with ThreadPoolExecutor(max_workers=max(1, self.workers)) as pool:
-                for index, verdict in zip(todo, pool.map(lambda i: self._ask(requests[i]), todo), strict=True):
+                futures = {index: pool.submit(self._ask, requests[index]) for index in todo}
+                # Collect every answer before raising a rejection, so requests that did succeed are cached.
+                for index, future in futures.items():
+                    try:
+                        verdict = future.result()
+                    except JudgeError as exc:
+                        rejected = rejected or exc
+                        continue
                     fresh[index] = verdict
                     if verdict.error is None:
                         self._cache[keys[index]] = asdict(verdict)
         finally:
-            # Keep whatever was paid for, even if a rejected request stopped the run.
+            # Keep whatever was paid for, even if a rejected request stops the run.
             if fresh:
                 self._save_cache()
+        if rejected:
+            raise rejected
         return [fresh[index] if index in fresh else JudgeVerdict(**self._cache[keys[index]])
                 for index in range(len(questions))]

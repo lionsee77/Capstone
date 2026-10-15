@@ -730,6 +730,8 @@ def test_judge_settles_ambiguous_tags_and_reports_both_counts(monkeypatch):
     assert (duplicate["incoming_name"], duplicate["baseline_name"]) == ("Prompt Engineering", "prompt")
     assert duplicate["match_type"] == "judged" and duplicate["recommended_action"] == "SKIP_SEMANTIC_DUPLICATE"
     assert duplicate["judge_probability"] == 0.93 and duplicate["semantic_score"] == 0.68
+    assert duplicate["judge"] == {"model": "fake-judge", "choice": "1", "probability": 0.93,
+                                  "candidates": ["prompt", "Trade Marketing"]}
     assert "Prompt Engineering" not in {entry["incoming_name"] for entry in tags["ambiguous_concepts"]}
 
     new = _ambiguous(tags, "Render Management")
