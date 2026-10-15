@@ -744,7 +744,8 @@ def test_judge_settles_ambiguous_tags_and_reports_both_counts(monkeypatch):
     point = result.details["curve"][-1]
     assert point["review_ambiguous_before_judge"] == 5  # 4 tags + 1 speciality the judge didn't look at
     assert point["review_ambiguous"] == 3
-    assert "Judge (gpt-6-luna) settled 2 of 5 ambiguous concepts" in result.summary
+    # Out of the 4 tags it was asked about, not the 5 ambiguous concepts across every level.
+    assert "Judge (gpt-6-luna) settled 2 of 4 ambiguous concepts it was asked about (tags)" in result.summary
     assert result.details["judge"]["model"] == "gpt-6-luna"
 
 

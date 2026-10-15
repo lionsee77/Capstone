@@ -788,7 +788,8 @@ class SaturationMetric(Metric):
             counts = last["judge_counts"]
             summary += (
                 f" Judge ({judge_cfg['model']}) settled {counts['judged_duplicate'] + counts['judged_new']} of "
-                f"{last['review_ambiguous_before_judge']} ambiguous concepts: {counts['judged_duplicate']} duplicates, "
+                f"{counts['asked']} ambiguous concepts it was asked about ({', '.join(judge_cfg['levels'])}): "
+                f"{counts['judged_duplicate']} duplicates, "
                 f"{counts['judged_new']} new, {counts['unsure']} unsure, {counts['failed']} failed."
             )
         if len(curve) > 1:
