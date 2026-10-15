@@ -91,3 +91,15 @@ metrics:
       # skills vs original specialities); the parent check still applies.
       # false = strict level-by-level comparison.
       cross_level: true
+      # Optional LLM judge for REVIEW_AMBIGUOUS concepts (OpenAI Decisions API,
+      # public beta). Off unless uncommented; needs OPENAI_API_KEY in backend/.env
+      # and the llm extra. It changes the reported ambiguous count, so baseline
+      # and enriched runs must use the same judge settings to be comparable.
+      # judge:
+      #   model: gpt-6-luna
+      #   candidates: 5            # closest known concepts (by meaning) offered per concept
+      #   same_at_or_above: 0.8    # probability needed to call it a duplicate
+      #   new_at_or_above: 0.8     # probability of "none" needed to call it new
+      #   levels: [tags]
+      #   cache: judge_cache.json  # reruns reuse verdicts instead of paying again
+      #   workers: 8

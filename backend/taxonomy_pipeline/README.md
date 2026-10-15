@@ -36,6 +36,7 @@ taxonomy_pipeline/
 │   │   ├── depth.py                  #   branching factor
 │   │   ├── breadth.py                #   coverage vs. a reference dataset
 │   │   ├── saturation.py             #   new-items curve across ordered incoming sources
+│   │   ├── judge.py                  #   optional LLM judge (OpenAI Decisions API) for saturation's ambiguous concepts
 │   │   ├── category_adaptation.py    #   Case A: place new tags by content, else via their source category (see below)
 │   │   └── registry.py               #   METRICS dict - register new metrics here
 │   ├── classification/               # Case A/B producers and the merge stages (see "Classification workflow")
@@ -394,7 +395,8 @@ services of its own, so its sectors (categories) are `NO_PARENT`.
 and describe the last source; `details.steps` holds the same block for every
 source and `details.curve` lists `{step, source, reviewed, add_candidates,
 review_ambiguous, new_rate_min, new_rate_max, new_placements,
-new_placement_rate, review_other_level, cumulative_known_concepts}`.
+new_placement_rate, review_other_level, cumulative_known_concepts}`, plus
+`review_ambiguous_before_judge` and `judge_counts` when the judge is on.
 Matches also report `matched_source` and `baseline_status`; matches to
 inactive (`status='0'`) rows are counted in `matched_inactive`.
 
@@ -415,6 +417,60 @@ Defaults come from `SaturationMetric.default_params`
 | `add_candidate_lexical_threshold` | 60 | `ADD_CANDIDATE` needs the best spelling score at every level below this | 60 |
 | `add_candidate_semantic_threshold` | 0.50 | ...and (with a model) the best meaning score below this; otherwise `REVIEW_AMBIGUOUS` | 0.50 |
 | `cross_level` | true | Also search the other levels of the known taxonomy | true |
+| `judge` | none (off) | Optional LLM judge for `REVIEW_AMBIGUOUS` concepts; see [Decisions API judge](#decisions-api-judge) | off (commented block) |
+
+### Decisions API judge
+
+The spelling and meaning scores can't tell "the same skill, worded differently"
+from "a different skill in the same field", so most SkillsFuture tags land in
+the `REVIEW_AMBIGUOUS` band. With `judge` set, saturation sends each
+`REVIEW_AMBIGUOUS` concept to OpenAI's Decisions API (`POST /v1/decisions`,
+public beta) with its closest known concepts by meaning, each with up to three
+parents as context, and asks one `choice` question: the same concept as
+candidate N, or none?
+
+- Probability of candidate N >= `same_at_or_above` -> duplicate:
+  `SKIP_SEMANTIC_DUPLICATE` with `match_type: "judged"`, listed in
+  `judged_match_details` (parent check as for any match).
+- Probability of "none" >= `new_at_or_above` -> `ADD_CANDIDATE`, `reason: judged_new`.
+- Otherwise it stays `REVIEW_AMBIGUOUS` with `reason: judge_unsure`, or
+  `judge_failed` when the request failed after the SDK's retries.
+
+Every judged entry carries `judge: {model, choice, probability, candidates}`.
+`ADD_CANDIDATE` and duplicates are never sent.
+
+| `judge` key | Default | Meaning |
+|---|---|---|
+| `model` | `gpt-6-luna` | Decisions API model |
+| `candidates` | 5 | Closest known concepts (by meaning) offered per concept |
+| `same_at_or_above` | 0.8 | Probability needed to call it a duplicate |
+| `new_at_or_above` | 0.8 | Probability of "none" needed to call it new |
+| `levels` | `[tags]` | Levels the judge runs on |
+| `cache` | none | JSON file of verdicts keyed by request; reruns reuse them instead of paying again (git-ignored as `judge_cache.json`) |
+| `workers` | 8 | Parallel requests |
+
+Setup: `pip install -e ".[llm]"`, `OPENAI_API_KEY` in `backend/.env` (the same
+key Case B uses), and `semantic_model` set (it picks the candidates). Uncomment
+the `judge:` block in `configs/original_vs_skillsfuture.yaml`. One request per
+ambiguous concept: about 1,410 for SkillsFuture tags, roughly $0.04 at
+$0.10/1M input tokens, and free on a cached rerun. A request the API rejects
+outright (bad key, unknown model or endpoint) stops the run with a `judge:`
+error; other failures only mark that concept `judge_failed`.
+
+Things to keep in mind:
+
+- **It changes the metric.** The ambiguous count, new-rate range and curve
+  move when the judge is on. Levels it ran on also report
+  `review_ambiguous_before_judge` and `judge_counts` (`asked`,
+  `judged_duplicate`, `judged_new`, `unsure`, `failed`), and each curve point
+  `review_ambiguous_before_judge`, so the pre-judge figure is never lost.
+  Compare baseline and enriched runs only with identical judge settings.
+- **Reproducibility comes from the cache.** The model is in public beta and
+  can change; keep the cache file with a report you want to reproduce.
+- **Downstream:** judged duplicates are not routed to Case A/B; judged-new tags
+  are routed as `ADD_CANDIDATE`, so they reach merge-preview without a review
+  flag; only unsure or failed tags keep it. Case A's own matching
+  (`category_adaptation`) never uses the judge.
 
 ### Reading the saturation report
 
@@ -426,14 +482,14 @@ Each incoming concept appears in exactly one list:
 | Verdict (`recommended_action`) | List | What to do |
 |---|---|---|
 | `SKIP_DUPLICATE` | `exact_match_details`, `fuzzy_match_details` | Nothing - already in the taxonomy |
-| `SKIP_SEMANTIC_DUPLICATE` | `semantic_match_details` | Nothing (spot-check meaning matches if in doubt) |
+| `SKIP_SEMANTIC_DUPLICATE` | `semantic_match_details`, `judged_match_details` (judge only) | Nothing (spot-check meaning and judge matches if in doubt) |
 | `REVIEW_NEW_PLACEMENT` | `new_placement_details` | Known concept, new parent: decide whether to add it under `unmatched_incoming_parents` |
 | `REVIEW_OTHER_LEVEL` | `other_level_match_details` | Similar concept at another level: confirm it really is the same concept |
 | `ADD_CANDIDATE` | `ambiguous_concepts` | New: decide where to place it, using `parents` |
 | `REVIEW_AMBIGUOUS` | `ambiguous_concepts` | Partly similar: check against `closest_baseline_name` / `closest_semantic_baseline_name` |
 
-`reason` values: `no_close_match` (ADD), `partial_similarity` and
-`close_spelling_unconfirmed` (REVIEW_AMBIGUOUS), `parent_differs` and
+`reason` values: `no_close_match` and `judged_new` (ADD), `partial_similarity`,
+`close_spelling_unconfirmed`, `judge_unsure` and `judge_failed` (REVIEW_AMBIGUOUS), `parent_differs` and
 `existing_has_no_parent` (NEW_PLACEMENT), `parent_not_comparable`
 (OTHER_LEVEL). Skipped duplicates carry `parent_check`: `same_parent`,
 `no_incoming_parent` or `not_checked_for_tags`.

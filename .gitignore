@@ -96,3 +96,4 @@ case_b_output.csv
 .case_b_output.checkpoint.json
 merge_runs/
 integrations/
+judge_cache.json
