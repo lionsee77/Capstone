@@ -7,7 +7,6 @@ import json
 from pathlib import Path
 
 from jsonschema import Draft202012Validator
-
 from validate_skillsfuture_taxonomy import load_rows, parse_value_tuple
 
 ROOT = Path(__file__).parent
@@ -19,9 +18,22 @@ def normalise(value: str) -> str:
     return " ".join(str(value or "").casefold().split())
 
 
-def original_hierarchy(sql_dir: Path) -> tuple[set[str], set[tuple[str, str]]]:
-    categories: dict[str, str] = {}
-    specialities: set[tuple[str, str]] = set()
+def original_hierarchy(sql_dir: Path) -> tuple[set[tuple[str, str]], set[tuple[str, str, str]]]:
+    services: dict[str, str] = {}
+    categories: dict[str, tuple[str, str]] = {}
+    specialities: set[tuple[str, str, str]] = set()
+    services_path = sql_dir / "services.sql"
+    current = False
+    for line in services_path.read_text(encoding="utf-8").splitlines():
+        if line.startswith("INSERT INTO") and "`services`" in line:
+            current = True
+            continue
+        if current:
+            values = parse_value_tuple(line)
+            if values and len(values) > 1:
+                services[values[0]] = values[1]
+            if line.strip().endswith(";"):
+                current = False
     for table, path in (("categories", sql_dir / "categories.sql"), ("specialities", sql_dir / "specialities.sql")):
         current = False
         for line in path.read_text(encoding="utf-8").splitlines():
@@ -33,12 +45,14 @@ def original_hierarchy(sql_dir: Path) -> tuple[set[str], set[tuple[str, str]]]:
             values = parse_value_tuple(line)
             if values:
                 if table == "categories" and len(values) > 9:
-                    categories[values[0]] = values[1]
+                    categories[values[0]] = (services.get(values[9], values[9]), values[1])
                 elif table == "specialities" and len(values) > 8:
-                    specialities.add((categories.get(values[8], values[8]), normalise(values[1])))
+                    service, category = categories.get(values[8], (values[8], values[8]))
+                    specialities.add((normalise(service), normalise(category), normalise(values[1])))
             if line.strip().endswith(";"):
                 current = False
-    return {normalise(name) for name in categories.values()}, {(normalise(category), name) for category, name in specialities}
+    category_paths = {(normalise(service), normalise(category)) for service, category in categories.values()}
+    return category_paths, specialities
 
 
 def main() -> int:
@@ -61,7 +75,7 @@ def main() -> int:
         return 1
 
     data = load_rows(args.sql)
-    category_names, speciality_pairs = original_hierarchy(args.target_sql_dir)
+    category_paths, speciality_paths = original_hierarchy(args.target_sql_dir)
     tags = {row[0]: row[1] for row in data["sf_tags"]}
     seen: set[str] = set(); checked = []
     for record in records:
@@ -81,17 +95,23 @@ def main() -> int:
             if action == "assign_existing":
                 errors.append("assign_existing cannot have an unresolved classification path")
         else:
-            category_exists = normalise(category) in category_names
-            speciality_exists = (normalise(category), normalise(speciality)) in speciality_pairs
+            category_exists = (normalise(service), normalise(category)) in category_paths
+            speciality_exists = (normalise(service), normalise(category), normalise(speciality)) in speciality_paths
             if action == "assign_existing":
                 if not category_exists: errors.append("assign_existing category does not exist in Ankit's taxonomy")
                 elif not speciality_exists: errors.append("assign_existing speciality does not exist under this category")
             elif action == "propose_new_speciality":
                 if not category_exists: errors.append("new speciality must use an existing Ankit category")
                 elif speciality_exists: errors.append("proposed speciality already exists under this category")
-            elif action == "propose_new_category":
-                if category_exists: errors.append("proposed new category already exists in Ankit's taxonomy")
-        checked.append({**record, "review_status": "needs_review" if errors else "pending", "validation_errors": errors, "validation_warnings": warnings})
+            elif action == "propose_new_category" and category_exists:
+                errors.append("proposed new category already exists in Ankit's taxonomy")
+        needs_review = bool(errors) or bool(record.get("needs_review", False))
+        checked.append({
+            **record,
+            "review_status": "needs_review" if needs_review else "pending",
+            "validation_errors": errors,
+            "validation_warnings": warnings,
+        })
 
     args.output.write_text(json.dumps(checked, indent=2, ensure_ascii=False), encoding="utf-8")
     csv_path = args.output.with_suffix(".csv")
@@ -104,8 +124,10 @@ def main() -> int:
         writer = csv.DictWriter(stream, fieldnames=fields, extrasaction="ignore")
         writer.writeheader()
         for row in checked: writer.writerow({**row, "validation_errors": "; ".join(row["validation_errors"]), "validation_warnings": "; ".join(row["validation_warnings"])})
-    invalid = sum(row["review_status"] == "needs_review" for row in checked); warning_count = sum(bool(row["validation_warnings"]) for row in checked)
-    print(f"Validated {len(checked)} classifications; pending={len(checked)-invalid}, needs_review={invalid}, warnings={warning_count}")
+    invalid = sum(bool(row["validation_errors"]) for row in checked)
+    review_count = sum(row["review_status"] == "needs_review" for row in checked)
+    warning_count = sum(bool(row["validation_warnings"]) for row in checked)
+    print(f"Validated {len(checked)} classifications; pending={len(checked)-review_count}, needs_review={review_count}, warnings={warning_count}")
     print(f"Wrote {args.output} and {csv_path}")
     return 1 if invalid else 0
 
