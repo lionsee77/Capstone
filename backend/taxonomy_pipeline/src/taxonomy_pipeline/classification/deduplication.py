@@ -2,17 +2,17 @@
 
 Repeated hierarchy paths are consolidated within their parents. Tag comparison
 uses the saturation engine's name keys and lexical scorer; its SemanticMatcher
-can be supplied through the small interface below. No comparison report is needed.
+can be supplied through the shared matching protocol. No comparison report is needed.
 """
 from __future__ import annotations
 
 import math
 from collections import Counter, defaultdict
-from typing import Protocol
 
 import numpy as np
 from rapidfuzz import fuzz, process
 
+from ..matching import SimilarityMatcher as SimilarityMatcher
 from ..metrics.integrity import normalize
 from ..metrics.saturation import match_key
 from .models import (
@@ -25,13 +25,6 @@ from .models import (
     SourceTagRef,
     TagProposal,
 )
-
-
-class SimilarityMatcher(Protocol):
-    """The matrix interface already implemented by saturation.SemanticMatcher."""
-
-    # Score each query against every choice without collapsing equal names or source IDs.
-    def similarity(self, queries: list[str], choices: list[str]) -> np.ndarray: ...
 
 
 # Sort and deduplicate evidence locations so input iteration order cannot change the report.

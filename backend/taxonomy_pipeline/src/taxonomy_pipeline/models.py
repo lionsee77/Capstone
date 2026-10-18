@@ -4,10 +4,40 @@ persisted to SQLite, and what the FastAPI API returns - one shape everywhere.
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 from uuid import uuid4
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints
+
+NonBlankText = Annotated[str, StringConstraints(pattern=r"\S")]
+TaxonomyId = Annotated[int, Field(gt=0)]
+
+
+class InputLocation(BaseModel):
+    """Locate original evidence even after repeated placements are collapsed."""
+
+    input_name: str
+    row_index: int
+
+
+class SourceTagRef(BaseModel):
+    """Keep equal tag IDs from different datasets distinct."""
+
+    model_config = ConfigDict(strict=True, extra="forbid")
+
+    source_dataset: NonBlankText
+    tag_id: NonBlankText
+
+
+class HierarchyGroup(BaseModel):
+    """Share parent-scoped evidence between classification and proposal screening."""
+
+    level: Literal["category", "speciality"]
+    path: list[str]
+    variants: list[list[str]]
+    existing_id: TaxonomyId | None
+    members: list[SourceTagRef]
+    origins: list[InputLocation]
 
 
 def utcnow() -> datetime:

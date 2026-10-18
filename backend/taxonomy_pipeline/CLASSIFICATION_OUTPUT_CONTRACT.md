@@ -268,7 +268,9 @@ intake as well as eligible paths; it does not make held source tags eligible.
 Unambiguous exact spelling variants within the same parent reuse existing IDs.
 Near matches require review before automatic acceptance. An exact match at
 another parent or level, or an ambiguous exact match, blocks new-node creation;
-a tag decision cannot override that hierarchy hold. Such sources stay pending.
+a tag decision cannot override that hierarchy hold. Safe approved paths still
+proceed; blocked paths are retained in `unapproved_paths` and flagged in the
+preview. Sources stay pending when all their decision's approved paths are blocked.
 See [hierarchy screening](README.md#hierarchy-proposal-screening) for the matching
 rules and report fields. This adds internal evidence, not producer JSON fields.
 

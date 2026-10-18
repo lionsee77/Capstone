@@ -1,11 +1,44 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
+import pytest
 import yaml
 
 from taxonomy_pipeline.cli import main
 from tests.conftest import FIXTURES
+
+
+@pytest.mark.parametrize(("lexical", "pending"), [(0.9, 1), (1.0, 0)])
+# CLI thresholds must reach screening, change review outcomes and survive saved report replay.
+def test_merge_preview_exposes_and_persists_screening_thresholds(
+    tmp_path: Path, lexical: float, pending: int,
+) -> None:
+    config = _write_stage_config(tmp_path)
+    producer = tmp_path / "producer.json"
+    producer.write_text(json.dumps([{
+        "source_dataset": "skillsfuture", "tag_id": "9001", "tag": "Campaign planning",
+        "original_classification": "classified", "service": "Industry", "category": "Marketing",
+        "speciality": "Brand Strateg", "confidence": 0.8, "reason": "Proposed placement",
+    }]), encoding="utf-8")
+    output = tmp_path / "merge"
+    assert main(["merge-preview", "--config", str(config), "--input", str(producer),
+                 "--out-dir", str(output), "--screening-lexical", str(lexical), "--screening-semantic", "0.85"]) == 0
+    resolution = json.loads((output / "resolution.json").read_text(encoding="utf-8"))
+    assert resolution["screening"]["settings"] == {"lexical_threshold": lexical, "semantic_threshold": 0.85}
+    assert resolution["counts"]["pending_sources"] == pending
+
+
+@pytest.mark.parametrize(("flag", "value"), [("--screening-lexical", "1.1"), ("--screening-semantic", "nan")])
+# Invalid CLI thresholds must fail before reading inputs or creating reports.
+def test_merge_preview_rejects_invalid_screening_thresholds(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], flag: str, value: str,
+) -> None:
+    output = tmp_path / "merge"
+    assert main(["merge-preview", "--input", "unused.json", "--out-dir", str(output), flag, value]) == 1
+    assert "threshold" in capsys.readouterr().err
+    assert not output.exists()
 
 
 def _write_config(tmp_path, metrics):

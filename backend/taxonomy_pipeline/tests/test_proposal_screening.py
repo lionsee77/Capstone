@@ -365,6 +365,64 @@ def test_saved_screening_rejects_a_changed_baseline(baseline: TaxonomyDataset) -
         build_preview(result, baseline)
 
 
+# A service label that identifies multiple baseline IDs must fail explicitly rather than imply a cross-parent match.
+def test_duplicate_normalised_services_raise_a_clear_error(baseline: TaxonomyDataset) -> None:
+    report = proposal_report(baseline)
+    baseline.services.append({"id": 13, "name": " SUBJECT "})
+    with pytest.raises(ValueError, match=r"Ambiguous baseline service name 'subject': IDs \[11, 13\]"):
+        resolve_outputs(report, baseline)
+
+
+# Indexed replay must retain duplicate malformed baseline rows even when their only match is semantic.
+def test_semantic_replay_preserves_identical_baseline_candidates(baseline: TaxonomyDataset) -> None:
+    baseline.specialities.append(dict(baseline.specialities[0]))
+    report = proposal_report(baseline, speciality="Decision support")
+    result = resolve_outputs(report, baseline, semantic_matcher=SemanticScores())
+    assert len(screened(result).matches) == 2
+    loaded = ResolutionReport.model_validate_json(result.model_dump_json())
+    assert resolve_outputs(loaded.evidence, baseline, screening=loaded.screening) == loaded
+
+
+@pytest.mark.parametrize("action", ["create", "reuse"])
+# A blocked branch must not discard a safe approved placement from the same review decision.
+def test_mixed_path_decisions_accept_safe_paths_and_flag_blocked_paths(
+    baseline: TaxonomyDataset, action: str,
+) -> None:
+    safe = proposal_report(baseline).tags[0].placements[0].model_dump()
+    blocked = dict(safe, service="Industry", speciality="Orbital navigation", needs_review=True)
+    report = deduplicate_outputs(validate_outputs({"producer.json": json.dumps([safe, blocked])}, baseline))
+    result = resolve_outputs(report, baseline, [review(report, action)])
+    disposition = result.dispositions[0]
+    assert disposition.status == "accepted"
+    assert disposition.unapproved_paths == [TaxonomyPath(
+        service="Industry", category="Computing", speciality="Orbital navigation",
+    )]
+    assert "Hierarchy screening blocked approved paths: Industry > computing > orbital navigation" in disposition.reason
+    assert "Producer requested review" in disposition.reason
+    assert len(result.links) == 1 and result.links[0].speciality_id == 93
+    loaded = ResolutionReport.model_validate_json(result.model_dump_json())
+    preview = build_preview(loaded, baseline)
+    assert not preview.blocked and preview.counts.pending_sources == 0
+    assert preview.counts.unapproved_placements == 1
+    assert preview.counts.added_categories == preview.counts.added_specialities == 0
+    assert preview.counts.added_tags == (1 if action == "create" else 0)
+    assert {row.service: row.status for row in preview.rows if row.row_type == "placement"} == {
+        "Subject": "proposed", "Industry": "unapproved",
+    }
+
+
+# Review output must retain all independent holds and the producer's original placement explanation.
+def test_review_reasons_keep_producer_baseline_and_hierarchy_context(baseline: TaxonomyDataset) -> None:
+    row = proposal_report(baseline).tags[0].placements[0].model_dump()
+    row.update(tag="Existing skill", service="Industry", needs_review=True, reason="Pick a candidate branch")
+    report = deduplicate_outputs(validate_outputs({"producer.json": json.dumps([row])}, baseline))
+    preview = build_preview(resolve_outputs(report, baseline), baseline)
+    placement = next(item for item in preview.rows if item.row_type == "placement")
+    assert placement.status == "pending" and placement.reason == "Pick a candidate branch"
+    for reason in ("Hierarchy screening:", "Potential duplicate:", "Producer requested review:"):
+        assert reason in placement.review_reason
+
+
 @pytest.mark.parametrize("mutation", ["missing_matches", "wrong_branch", "wrong_score", "false_reuse"])
 # Replay must recompute exact and lexical evidence instead of trusting edited IDs, paths or classifications.
 def test_saved_screening_rejects_inconsistent_evidence(baseline: TaxonomyDataset, mutation: str) -> None:

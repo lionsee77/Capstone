@@ -53,7 +53,8 @@ taxonomy_pipeline/
 │   │   ├── bulk_decisions.py         #   `bulk-decide`: draft decisions for ambiguous tags by similarity
 │   │   └── integrate.py              #   reviewed merge run -> enriched snapshot (real IDs, additions.sql)
 │   ├── config.py                     # YAML/JSON pipeline config (datasets + metrics)
-│   ├── models.py                     # MetricResult / RunReport - one report shape everywhere
+│   ├── models.py                     # shared reports, hierarchy groups and source/evidence references
+│   ├── matching.py                   # shared optional similarity protocol for merge and screening
 │   ├── pipeline.py                   # run_pipeline(config) -> RunReport
 │   ├── db.py                         # SQLite run history
 │   ├── api/app.py                    # FastAPI: /metrics, /runs
@@ -223,8 +224,15 @@ ID, original label variants, proposed path, source tags, input locations and all
 qualifying baseline matches. Each match retains its existing ID, level, full
 branch, match types, lexical score (0-1) and optional cosine score (-1 to 1).
 Thresholds default to 0.9 lexical and 0.7 semantic; scores are review evidence,
-not probabilities or confirmation of equivalence. The Python `resolve_outputs`
-entry point accepts `screening_settings=ScreeningSettings(...)` to override them.
+not probabilities or confirmation of equivalence. Override them with
+`merge-preview --screening-lexical 0.95 --screening-semantic 0.8` (finite values
+from 0 to 1). Semantic screening also requires `--semantic-model`. These thresholds
+are **uncalibrated (#47)** and independent of saturation, Case A and tag
+deduplication thresholds: those stages serve different purposes and can disagree.
+Settings are saved in `resolution.json` and reused by preview and integration.
+The Python runner and resolver accept `screening_settings=ScreeningSettings(...)`.
+Duplicate normalised service names in the baseline cause a clear error for an
+affected proposal; fix the ambiguous service identities before rerunning.
 
 | Screening status | Effect |
 |---|---|
@@ -233,8 +241,11 @@ entry point accepts `screening_settings=ScreeningSettings(...)` to override them
 | `review` | Near matches hold automatic acceptance. Exact matches at another parent/level, ambiguous exact matches and broken exact targets block creating another concept. |
 
 A tag's `create` or `reuse` decision cannot override `blocks_creation` on its
-approved category or speciality. Such sources remain pending, with the reason
-shown in `preview.csv`. Near matches can still be accepted through explicit
+approved category or speciality. When a decision includes safe and blocked paths,
+safe paths proceed while blocked paths stay in `unapproved_paths` and appear as
+`unapproved` in `preview.csv`. If every approved path is blocked, the sources stay
+pending. Review reasons retain producer, baseline-tag and hierarchy context.
+Near matches can still be accepted through explicit
 placement decisions. Hierarchy merge/relocation decisions belong to issue #57;
 until then, correct the producer placement to the intended existing branch or
 exclude/defer the affected source. No existing nodes are moved automatically.
@@ -243,8 +254,12 @@ exclude/defer the affected source. No existing nodes are moved automatically.
 tag deduplication. Disabled checks are labelled `disabled`; a failed requested
 semantic check holds new concepts until rerun. Preview and integration recheck
 the baseline and replay saved screening evidence without loading the model.
-Saved reports predating screening may need a fresh `merge-preview` run when the
-new checks find conflicts. `deduplication.json` also retains `screening_hierarchy`,
+**Migration:** saved runs from before this PR have no screening evidence and are
+screened again during preview/integration. A previously reviewed run can therefore
+fail to integrate when new holds appear. Rerun `merge-preview` with the original
+inputs and decisions, review new holds, then integrate the regenerated run. Reports
+with screening evidence from an older screening algorithm may also need regeneration.
+`deduplication.json` also retains `screening_hierarchy`,
 including complete proposals that intake held outside eligible tag resolution.
 
 ```text
@@ -256,6 +271,8 @@ src/taxonomy_pipeline/proposals/
 
 The producer contract and JSON Schema are unchanged. Synonym relationships,
 hierarchy reviewer decisions and a dedicated review API/UI are later PB06 issues.
+See the [screening benchmark](docs/proposal-screening-benchmark.md) for full saved
+Case A/B input counts, before/after timings and semantic-run measurements.
 
 ### Bulk decisions for ambiguous tags
 
@@ -276,8 +293,8 @@ taxonomy-pipeline bulk-decide --merge-run merge_runs/<timestamp> --report report
 
 - It only touches pending tags that saturation marked `REVIEW_AMBIGUOUS` and
   that are held for nothing else. Tags in a duplicate candidate pair, tags
-  matching a baseline tag by name, Case A's review candidates for new tags, and
-  tags already in `--decisions` are left as they are.
+  matching a baseline tag by name, hierarchy screening holds, Case A's review
+  candidates for new tags, and tags already in `--decisions` are left as they are.
 - The output is a draft: every decision carries a `Bulk: ...` reason with the
   score and threshold, and goes through `merge-preview --decisions` like a
   hand-written one, so it appears in `preview.csv` and can be edited or removed.
@@ -286,10 +303,12 @@ taxonomy-pipeline bulk-decide --merge-run merge_runs/<timestamp> --report report
   inputs). It also refuses a baseline that changed since the merge run, and
   thresholds outside 0-1. `--output` is never overwritten unless it is also the
   `--decisions` file being extended.
-- On a lexical-only SkillsFuture run (every ambiguous score is 0.60 or more
+- Historical result **before hierarchy screening**: on a lexical-only SkillsFuture
+  run (every ambiguous score is 0.60 or more
   there, since lower spellings are `ADD_CANDIDATE`), `--create-below 0.7`
-  drafts 737 creates and leaves 625 ambiguous tags for review; pending sources
-  drop from 1,749 to 1,012. No ambiguous tag scored 0.9 against a baseline tag,
+  drafted 737 creates and left 625 ambiguous tags for review; pending sources
+  dropped from 1,749 to 1,012. These counts do not describe the current screening flow.
+  No ambiguous tag scored 0.9 against a baseline tag,
   so no reuses. Thresholds are uncalibrated (#47): spot-check a sample of the
   drafted creates before applying them.
 
@@ -882,17 +901,17 @@ Ruff linting and the test suite run in CI (see the root
 ## Known gaps
 
 - **Ambiguous tags make a large review queue:** routing every
-  `REVIEW_AMBIGUOUS` tag holds each one for a decision. A lexical-only
-  SkillsFuture run gives 1,749 pending sources and 5,769 flagged Case A
-  records (up to 48 for one tag: 16 partly matched sectors x 3 candidates).
-  `bulk-decide` settles the clear-cut ones (1,749 -> 1,012 pending at
+  `REVIEW_AMBIGUOUS` tag holds each one for a decision. A historical lexical-only
+  SkillsFuture run before hierarchy screening gave 1,749 pending sources and 5,769
+  flagged Case A records (up to 48 for one tag: 16 partly matched sectors x 3 candidates).
+  `bulk-decide` settled the clear-cut ones (1,749 -> 1,012 pending at
   `--create-below 0.7`), but its thresholds are uncalibrated; calibrating
   saturation's thresholds (#47) so clearly new tags become `ADD_CANDIDATE` is
   what shrinks the queue properly.
 - **Every created ambiguous tag becomes its own speciality:** Case A proposes a
   skill with no matching speciality as a new speciality named after itself, so
-  the 737 bulk creates above add about as many specialities, many close to an
-  existing one (e.g. created at 0.69 spelling similarity to 'Performance
+  the historical 737 bulk creates above added about as many specialities, many
+  close to an existing one (e.g. created at 0.69 spelling similarity to 'Performance
   Management'). Whether a loosely similar skill should instead be linked under
   the speciality it resembles is a team decision.
 - **Case A matches tags by name only:** the content step compares the tag

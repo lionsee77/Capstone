@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
@@ -119,6 +120,22 @@ def test_leaves_tags_held_for_a_duplicate_pair_to_a_person(tmp_path, baseline, s
 
     assert draft.drafted == []
     assert draft.counts["held_for_another_reason"] == 2
+
+
+# Screening holds must prevent bulk approval even when combined review context begins with the producer prefix.
+def test_bulk_decisions_skip_hierarchy_holds_with_combined_reasons(
+    tmp_path: Path, baseline: TaxonomyDataset, saturation_report: Callable,
+) -> None:
+    report = load_saturation(saturation_report([_concept(11, 0.2, "Zoology", "specialities")]), "skillsfuture")
+    rows = mark_ambiguous([_record("11", "Fire Prevention", "Data analytics", "Zoology", 0.7)], report)
+    producer = tmp_path / "producer.json"
+    producer.write_text(json.dumps(rows), encoding="utf-8")
+    resolution = run_merge_preview([producer], baseline, out_dir=tmp_path / "merge").preview.resolution
+    assert "Hierarchy screening:" in resolution.dispositions[0].reason
+    assert "Producer requested review:" in resolution.dispositions[0].reason
+    resolution.dispositions[0].reason = "Producer requested review: " + resolution.dispositions[0].reason
+    draft = draft_decisions(resolution, report, baseline, create_below=0.5)
+    assert draft.drafted == [] and draft.counts["held_for_another_reason"] == 1
 
 
 def test_a_strong_spelling_match_keeps_a_tag_for_review_despite_a_weak_meaning_match(

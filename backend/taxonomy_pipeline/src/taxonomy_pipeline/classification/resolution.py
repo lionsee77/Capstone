@@ -13,10 +13,10 @@ from collections.abc import Sequence
 from typing import Any
 
 from ..datasets.base import TaxonomyDataset
+from ..matching import SimilarityMatcher
 from ..metrics.integrity import normalize
 from ..proposals.models import ProposalScreeningReport, ScreeningSettings
 from ..proposals.screening import screen_proposals
-from .deduplication import SimilarityMatcher
 from .models import (
     CanonicalMapping,
     CanonicalTag,
@@ -188,6 +188,23 @@ def _producer_review_reasons(tags: dict[SourceKey, TagProposal]) -> dict[SourceK
     return reasons
 
 
+# Retain every hierarchy, baseline and producer reason instead of overwriting earlier review context.
+def _combined_review_reasons(
+    tags: dict[SourceKey, TagProposal], taxonomy: TaxonomyDataset, screening: ProposalScreeningReport,
+) -> dict[SourceKey, str]:
+    reasons: dict[SourceKey, list[str]] = {}
+    for proposal in screening.proposals:
+        if proposal.status == "review":
+            reason = (f"Hierarchy screening: {' > '.join(proposal.path)}: {proposal.reason}. "
+                      "See resolution.screening for candidates and scores.")
+            for source in proposal.source_tags:
+                reasons.setdefault(source, []).append(reason)
+    for additional in (_baseline_match_reasons(tags, taxonomy), _producer_review_reasons(tags)):
+        for source, reason in additional.items():
+            reasons.setdefault(source, []).append(reason)
+    return {source: " ".join(dict.fromkeys(items)) for source, items in reasons.items()}
+
+
 # Accept supplied placements only when nothing flags the source: no incoming duplicate candidate, no
 # baseline name match, and no placement its producer marked for review.
 def _default_decisions(
@@ -291,13 +308,8 @@ def resolve_outputs(
     )
     nodes = _resolve_hierarchy(report, taxonomy, tags, screening)
     prepared = _prepare_decisions(decisions, tags)
-    hierarchy_reasons = {
-        source: f"Hierarchy screening: {proposal.reason}. See resolution.screening for candidates and scores."
-        for proposal in screening.proposals if proposal.status == "review" for source in proposal.source_tags
-    }
     blocked_paths = {tuple(proposal.path) for proposal in screening.proposals if proposal.blocks_creation}
-    # Hierarchy holds take precedence so bulk tag decisions cannot bypass placement review.
-    flagged_reasons = _producer_review_reasons(tags) | _baseline_match_reasons(tags, taxonomy) | hierarchy_reasons
+    flagged_reasons = _combined_review_reasons(tags, taxonomy, screening)
     defaults = _default_decisions(report, tags, prepared, flagged_reasons)
     canonical: dict[int | str, CanonicalTag] = {}
     mappings: list[CanonicalMapping] = []
@@ -311,14 +323,18 @@ def resolve_outputs(
     for decision in prepared + defaults:
         accepted = decision.action in {"reuse", "create"}
         approved = _approved_paths(decision, tags, nodes)
-        if accepted and any(path in blocked_paths or path[:2] in blocked_paths for path in approved):
-            # A tag decision cannot approve a duplicate or unresolved hierarchy concept.
+        blocked = {
+            path for path in approved if path in blocked_paths or path[:2] in blocked_paths
+        } if accepted else set()
+        if blocked:
+            # Keep safe approved paths while retaining blocked placements for review.
+            approved -= blocked
+            reason = "Hierarchy screening blocked approved paths: " + "; ".join(" > ".join(p) for p in sorted(blocked))
             for member in decision.members:
-                flagged_reasons[_source_key(member)] = (
-                    "Hierarchy screening blocks this placement: resolve the exact match, parent or failed check "
-                    "before creating a concept. See resolution.screening."
-                )
-            continue
+                key = _source_key(member)
+                flagged_reasons[key] = " ".join(filter(None, (flagged_reasons.get(key), reason)))
+            if not approved:
+                continue
         if accepted:
             tag = _canonical_tag(decision, tags, taxonomy)
             if tag.id in canonical:
@@ -336,7 +352,7 @@ def resolve_outputs(
             dispositions[key] = SourceDisposition(
                 source=source,
                 status="accepted" if accepted else "excluded" if decision.action == "exclude" else "deferred",
-                reason=decision.reason,
+                reason=f"{decision.reason} {flagged_reasons[key]}" if blocked else decision.reason,
                 unapproved_paths=[paths[path] for path in sorted(paths.keys() - approved)],
             )
     for key in sorted(tags.keys() - dispositions.keys()):

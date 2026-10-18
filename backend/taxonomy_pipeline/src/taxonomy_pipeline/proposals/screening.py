@@ -15,11 +15,11 @@ from typing import Any
 
 import numpy as np
 
-from ..classification.deduplication import SimilarityMatcher
-from ..classification.models import HierarchyGroup
 from ..datasets.base import TaxonomyDataset
+from ..matching import SimilarityMatcher
 from ..metrics.integrity import normalize
 from ..metrics.saturation import lexical_scores, match_key
+from ..models import HierarchyGroup
 from .intake import collect_proposals
 from .models import (
     ConceptMatch,
@@ -79,19 +79,16 @@ def _existing_concepts(taxonomy: TaxonomyDataset) -> list[ExistingConcept]:
 
 # Run optional rectangular semantic scoring once and make failed requested checks explicit.
 def _semantic_scores(
-    proposals: list[ScreenedProposal], concepts: list[ExistingConcept], matcher: SimilarityMatcher | None,
+    names: list[str], existing_names: list[str], matcher: SimilarityMatcher | None,
 ) -> tuple[np.ndarray | None, str, dict[str, str]]:
     if matcher is None:
-        skipped = {"semantic": "No semantic matcher supplied; name and lexical screening ran"} if proposals else {}
+        skipped = {"semantic": "No semantic matcher supplied; name and lexical screening ran"} if names else {}
         return None, "disabled", skipped
-    if not proposals or not concepts:
-        return np.zeros((len(proposals), len(concepts))), "complete", {}
+    if not names or not existing_names:
+        return np.zeros((len(names), len(existing_names))), "complete", {}
     try:
-        scores = np.asarray(matcher.similarity(
-            [normalize(proposal.name) for proposal in proposals],
-            [normalize(concept.name) for concept in concepts],
-        ), dtype=float)
-        if scores.shape != (len(proposals), len(concepts)) or not np.isfinite(scores).all():
+        scores = np.asarray(matcher.similarity(names, existing_names), dtype=float)
+        if scores.shape != (len(names), len(existing_names)) or not np.isfinite(scores).all():
             raise ValueError("Expected a finite proposal-by-baseline similarity matrix")
         if np.any(scores < -1.000001) or np.any(scores > 1.000001):
             raise ValueError("Cosine similarities must be between -1 and 1")
@@ -172,38 +169,64 @@ def screen_proposals(
         settings = replay.settings
     settings = ScreeningSettings.model_validate_json((settings or ScreeningSettings()).model_dump_json())
     proposals, concepts = collect_proposals(groups), _existing_concepts(taxonomy)
+    names, existing_names = [normalize(item.name) for item in proposals], [normalize(item.name) for item in concepts]
     keys, existing_keys = [match_key(item.name) for item in proposals], [match_key(item.name) for item in concepts]
+    exact_columns: dict[str, set[int]] = defaultdict(set)
+    key_columns: dict[str, set[int]] = defaultdict(set)
+    for column, (name, key) in enumerate(zip(existing_names, existing_keys, strict=True)):
+        exact_columns[name].add(column)
+        if key:
+            key_columns[key].add(column)
+    services_by_name: dict[str, list[int]] = defaultdict(list)
+    for identifier, row in _index(taxonomy.services).items():
+        services_by_name[normalize(row["name"])].append(identifier)
+    for name in sorted({normalize(proposal.path[0]) for proposal in proposals}):
+        if len(services_by_name[name]) > 1:
+            raise ValueError(f"Ambiguous baseline service name {name!r}: IDs {sorted(services_by_name[name])}")
     lexical = lexical_scores(keys, existing_keys)
+    valid_keys = np.array([bool(key) for key in existing_keys], dtype=bool)
     if replay is None:
-        semantic, semantic_status, skipped = _semantic_scores(proposals, concepts, semantic_matcher)
+        semantic, semantic_status, skipped = _semantic_scores(names, existing_names, semantic_matcher)
         saved_scores = {}
     else:
         semantic, semantic_status, skipped = None, replay.semantic_status, replay.skipped_checks
+        references: dict[str, list[int]] = defaultdict(list)
+        for column, concept in enumerate(concepts):
+            references[concept.reference].append(column)
         saved_scores = {
-            (proposal.proposal_id, match.concept.reference): match.semantic_score
-            for proposal in replay.proposals for match in proposal.matches
+            proposal.proposal_id: {column: match.semantic_score for match in proposal.matches
+                                   for column in references[match.concept.reference]}
+            for proposal in replay.proposals
         }
-    services = _index(taxonomy.services)
     existing_ids = {tuple(group.path): group.existing_id for group in groups}
     by_path: dict[tuple[str, ...], ScreenedProposal] = {}
     for index, proposal in enumerate(proposals):
         parent = by_path.get(tuple(proposal.path[:2])) if proposal.level == "speciality" else None
-        service_ids = [identifier for identifier, row in services.items()
-                       if normalize(row["name"]) == normalize(proposal.path[0])]
+        service_ids = services_by_name[normalize(proposal.path[0])]
         parent_id = parent.existing_id if parent else service_ids[0] if len(service_ids) == 1 else None
-        for column, concept in enumerate(concepts):
+        exact = exact_columns.get(names[index], set())
+        key_matches = key_columns.get(keys[index], set())
+        lexical_matches = set(np.flatnonzero(
+            (lexical[index] / 100 >= settings.lexical_threshold) & valid_keys,
+        )) if keys[index] else set()
+        saved = saved_scores.get(proposal.proposal_id, {})
+        semantic_matches = set(np.flatnonzero(
+            semantic[index] >= settings.semantic_threshold,
+        )) if semantic is not None else {
+            column for column, score in saved.items() if score is not None and score >= settings.semantic_threshold
+        }
+        for column in sorted(exact | key_matches | lexical_matches | semantic_matches):
+            concept = concepts[column]
             score = float(lexical[index, column]) / 100
-            meaning = float(semantic[index, column]) if semantic is not None else saved_scores.get(
-                (proposal.proposal_id, concept.reference),
-            )
+            meaning = float(semantic[index, column]) if semantic is not None else saved.get(column)
             kinds = []
-            if normalize(proposal.name) == normalize(concept.name):
+            if column in exact:
                 kinds.append("normalized_name")
-            elif keys[index] and keys[index] == existing_keys[column]:
+            elif column in key_matches:
                 kinds.append("match_key")
-            if keys[index] and existing_keys[column] and score >= settings.lexical_threshold:
+            if column in lexical_matches:
                 kinds.append("lexical")
-            if meaning is not None and meaning >= settings.semantic_threshold:
+            if column in semantic_matches:
                 kinds.append("semantic")
             if kinds:
                 proposal.matches.append(ConceptMatch(
