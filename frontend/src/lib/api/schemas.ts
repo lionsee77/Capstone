@@ -20,6 +20,10 @@ export const metricResultSchema = z.object({
   summary: z.string(),
   // Metric-specific; each metric module documents its own shape.
   details: z.record(z.string(), z.unknown()),
+  // Which config entry produced the result (position, and params resolved over
+  // the metric's defaults). Null or absent on reports saved before they existed.
+  index: z.number().int().nullish(),
+  params: z.record(z.string(), z.unknown()).nullish(),
 });
 export type MetricResult = z.infer<typeof metricResultSchema>;
 

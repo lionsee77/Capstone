@@ -871,11 +871,20 @@ the CLI's stdout, `GET /runs/{run_id}`, or the SQLite `report_json` column:
       "metric_id": "integrity",
       "status": "ok",         // "ok" | "error" (bad params/dataset)
       "summary": "...",        // one-line, human-readable
-      "details": {...}         // metric-specific structured data - see that metric's module for its shape
+      "details": {...},        // metric-specific structured data - see that metric's module for its shape
+      "index": 0,              // position of the producing entry in the config's `metrics` list
+      "params": {"dataset": "original", "fuzzy_threshold": 85}  // that entry's params over the metric's defaults
     }
   ]
 }
 ```
+
+`index` and `params` say which config entry produced a result, since one
+config can run the same metric more than once (integrity once per dataset).
+They are `null` on reports saved before they existed. The CLI summary and the
+dashboard's run page label a repeated metric by the params that differ between
+its runs, e.g. `[OK] integrity (dataset=skillsfuture): ...`
+(`pipeline.result_labels`, mirrored by the dashboard's `metricLabels`).
 
 A check inside a metric that can't run on a given dataset is reported as
 `null`, not as an empty "all clean" result, and named with a reason in that

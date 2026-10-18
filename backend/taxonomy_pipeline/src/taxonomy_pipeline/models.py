@@ -27,6 +27,14 @@ class MetricResult(BaseModel):
     status: Literal["ok", "skipped", "error"] = "ok"
     summary: str
     details: dict[str, Any] = Field(default_factory=dict)
+    # Which config entry produced this result. A config can run the same metric
+    # more than once (e.g. integrity once per dataset), so `metric_id` alone
+    # doesn't identify a result. Set by `pipeline.run_pipeline`; None on reports
+    # saved before these fields existed, and on results built outside a run.
+    index: int | None = Field(default=None, description="Position of the entry in the config's `metrics` list")
+    params: dict[str, Any] | None = Field(
+        default=None, description="The entry's params resolved over the metric's defaults",
+    )
 
 
 class DatasetSummary(BaseModel):

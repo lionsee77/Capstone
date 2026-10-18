@@ -5,6 +5,7 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useRun } from "@/lib/api/queries";
+import { metricLabels } from "@/lib/metric-labels";
 
 export function RunDetail({ runId }: { runId: string }) {
   const { data: run, isPending, error } = useRun(runId);
@@ -12,6 +13,7 @@ export function RunDetail({ runId }: { runId: string }) {
   if (isPending) return <Skeleton className="h-64 w-full max-w-5xl" />;
   if (error) return <p className="text-sm text-destructive">Could not load run: {error.message}</p>;
 
+  const labels = metricLabels(run.results);
   return (
     <div className="flex max-w-5xl flex-col gap-6">
       <header className="flex items-center gap-3">
@@ -20,11 +22,12 @@ export function RunDetail({ runId }: { runId: string }) {
       </header>
       {run.error && <p className="text-sm text-destructive">{run.error}</p>}
       {run.results.map((result, index) => (
-        // The same metric id can run more than once per config, so key on position too.
+        // The same metric id can run more than once per config, so key on position
+        // too, and label repeats by the params that differ.
         <Card key={`${result.metric_id}-${index}`}>
           <CardHeader>
             <CardTitle className="flex items-center gap-2 font-mono">
-              {result.metric_id}
+              {labels[index]}
               <Badge variant={result.status === "error" ? "destructive" : "outline"}>{result.status}</Badge>
             </CardTitle>
             <CardDescription>{result.summary}</CardDescription>

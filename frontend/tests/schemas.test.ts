@@ -16,6 +16,13 @@ describe("runReportSchema", () => {
     expect(runReportSchema.parse(doneRunReport).results[0].metric_id).toBe("integrity");
   });
 
+  it("reads which config entry produced each result, and accepts reports saved without it", () => {
+    const [first] = doneRunReport.results;
+    const labelled = { ...doneRunReport, results: [{ ...first, index: 0, params: { dataset: "original" } }] };
+    expect(runReportSchema.parse(labelled).results[0]).toMatchObject({ index: 0, params: { dataset: "original" } });
+    expect(runReportSchema.parse(doneRunReport).results[0].index).toBeUndefined();
+  });
+
   it("rejects a status the backend does not emit", () => {
     expect(runReportSchema.safeParse({ ...doneRunReport, status: "cancelled" }).success).toBe(false);
   });
