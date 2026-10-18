@@ -238,7 +238,8 @@ Incoming categories and specialities also share a review hold when distinct
 normalised names have the same `match_key` under the same parent and would create
 new nodes. Their screening reasons list the proposal IDs in the cluster. Children
 of a held category remain held too; tag approvals cannot bypass these holds.
-Correct the producer paths to one agreed label and rerun screening. Variants that
+Reject competing proposals before approving the retained label, or correct the
+producer paths to one agreed label and rerun screening. Variants that
 already resolve to an existing node continue to reuse it.
 
 Each proposal in `resolution.json` under `screening.proposals` contains a stable
@@ -267,10 +268,9 @@ approved category or speciality. When a decision includes safe and blocked paths
 safe paths proceed while blocked paths stay in `unapproved_paths` and appear as
 `unapproved` in `preview.csv`. If every approved path is blocked, the sources stay
 pending. Review reasons retain producer, baseline-tag and hierarchy context.
-Near matches can still be accepted through explicit
-placement decisions. Hierarchy merge/relocation decisions belong to issue #57;
-until then, correct the producer placement to the intended existing branch or
-exclude/defer the affected source. No existing nodes are moved automatically.
+Near matches can still be accepted through explicit placement decisions. Issue
+#57 also supports explicit hierarchy decisions using the same `ReviewDecision`
+model and `--decisions` file as tag decisions; see below. No existing nodes move.
 
 `--semantic-model` enables hierarchy screening with the same matcher used for
 tag deduplication. Disabled checks are labelled `disabled`; a failed requested
@@ -291,10 +291,80 @@ src/taxonomy_pipeline/proposals/
   screening.py  # baseline candidates, parent-aware reuse and creation holds
 ```
 
-The producer contract and JSON Schema are unchanged. Synonym relationships,
-hierarchy reviewer decisions and a dedicated review API/UI are later PB06 issues.
+The producer contract and JSON Schema are unchanged. Synonym relationships (#56,
+after PB07) and a dedicated review API/CLI view (#58) remain later PB06 work.
 See the [screening benchmark](docs/proposal-screening-benchmark.md) for full saved
 Case A/B input counts, before/after timings and semantic-run measurements.
+
+### Review category and speciality proposals (#57)
+
+Every screened proposal exposes `suggested_action`: `new` suggests `create`,
+`reuse` suggests `reuse`, and `review` suggests `defer`. These are suggestions;
+the original screening evidence stays separate from the recorded decisions.
+Reviewer labels map to the existing actions: approve = `create`, reject =
+`exclude`, merge = `reuse`, requires review = `defer`.
+
+Use the existing `ReviewDecision` format in `decisions.json`. A tag decision
+still targets `members` and uses `existing_tag_id`. A hierarchy decision targets
+one `proposal_id` from `resolution.json`'s `screening.proposals`, and uses
+`existing_concept_id` only for `reuse`. Both require a nonblank `reason`.
+Do not mix tag fields and hierarchy fields in one record. For example:
+
+```json
+[
+  {
+    "proposal_id": "<copy the proposal_id from screening.proposals>",
+    "action": "reuse",
+    "existing_concept_id": 42,
+    "reason": "Reviewed the definitions: this is the existing speciality"
+  }
+]
+```
+
+Submit tag and hierarchy decisions together using the existing command:
+
+```bash
+taxonomy-pipeline merge-preview --input case_a_output.json --input case_b_output.json \
+    --decisions decisions.json --out-dir merge_runs/reviewed
+```
+
+- A merge target must be a valid existing category or speciality at the proposal's
+  level. The target row and its canonical name are reused; no replacement row is
+  created. A category may reuse an existing category in another service. Its
+  children are rechecked against that category, without moving any baseline row.
+  A speciality in another category requires a matching parent-category decision.
+- `create` rejects exact/name-key equivalents, unresolved incoming variants,
+  blocked parents and failed requested semantic checks. A near match alone is
+  evidence for review; a reviewer may approve it as distinct. Approved synonyms
+  will supply additional equivalence evidence when #56/PB07 is connected.
+- `exclude` and `defer` block dependent placements, even if a tag decision approves
+  them. They do not reject the source tag itself; use a tag decision to exclude
+  that source, or keep another proposed path. Hierarchy approval does not clear
+  independent producer or tag-duplicate holds.
+- Intake omissions (invalid rows, inconsistent source identities and ambiguous
+  paths omitted before deduplication) remain omissions. A hierarchy decision does
+  not restore missing tag evidence; correct those inputs and rerun intake.
+- Saved reports retain the original screening and the unified `decisions` list.
+  Preview and integration replay both. CSV notes show hierarchy decisions and
+  the resolved branch when it differs from the producer's supplied path.
+- Each validated, submitted decision appends an event to
+  `merge_runs/reviewed/change_log.jsonl`, with a UTC timestamp, event/submission IDs,
+  baseline fingerprint and the full decision including its reason. Reusing an
+  output directory preserves earlier events. Resubmitting creates another event;
+  pure preview/integration replay does not. Automatic defaults are not recorded
+  as human decisions. Invalid submissions fail before reports or events are written.
+
+The JSONL file is a **local PB09 handoff**, not the shared PB09 database integration
+or a log of applied taxonomy changes. Keep it with the run artifacts. Shared
+storage and reviewer authentication/identity remain PB09 integration work. This
+command generates a preview and does not write to the taxonomy database.
+
+```text
+src/taxonomy_pipeline/classification/
+  models.py      # shared ReviewDecision and ReviewDecisionEvent shapes
+  review.py      # validate hierarchy decisions and derive effective placements
+  change_log.py  # append submitted decisions to the run's local audit log
+```
 
 ### Bulk decisions for ambiguous tags
 

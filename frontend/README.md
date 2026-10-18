@@ -106,6 +106,13 @@ frontend/
 
 ## Conventions
 
+Proposal screening includes a `suggested_action` (optional for older saved
+reports). The shared `reviewDecisionSchema` mirrors backend tag and hierarchy
+decisions: tag groups use `members`, hierarchy proposals use `proposal_id`, and
+both use `create` / `exclude` / `reuse` / `defer`. `reviewDecisionEventSchema`
+mirrors the local decision-log event. These schemas support the forthcoming
+review view (#58); they do not add dashboard approval controls yet.
+
 - **Server state goes through TanStack Query, client state goes in zustand.**
   Components call the hooks in `lib/api/queries.ts`. They never call `fetch`
   directly. Zustand holds only UI state that doesn't exist on the server yet,

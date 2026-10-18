@@ -21,6 +21,7 @@ from pydantic import TypeAdapter
 from ..datasets.base import TaxonomyDataset
 from ..matching import SimilarityMatcher
 from ..proposals.models import ScreeningSettings
+from .change_log import append_review_decisions
 from .deduplication import deduplicate_outputs
 from .export import export_preview_csv
 from .models import BatchValidationReport, MergePreview, ReviewDecision
@@ -152,4 +153,7 @@ def run_merge_preview(
         "pending_sources": preview.counts.pending_sources,
     }
     (out_dir / "run.json").write_text(json.dumps(run_info, indent=2), encoding="utf-8")
+    append_review_decisions(
+        out_dir / "change_log.jsonl", resolution.decisions, baseline_snapshot_id=resolution.baseline_snapshot_id,
+    )
     return MergeRun(out_dir=out_dir, validation=validation, preview=preview, warnings=warnings)

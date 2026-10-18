@@ -5,12 +5,37 @@ import {
   isRunFinished,
   isTaxonomyDataset,
   pipelineConfigSchema,
+  reviewDecisionSchema,
+  reviewDecisionEventSchema,
   runReportSchema,
   taxonomyConceptDetailSchema,
   taxonomyConceptSummarySchema,
 } from "@/lib/api/schemas";
 
 import { doneRunReport } from "./fixtures/reports";
+
+describe("reviewDecisionSchema", () => {
+  it("accepts tag and hierarchy decisions using the same action names", () => {
+    const tag = { members: [{ source_dataset: "feed", tag_id: "1" }], action: "create", reason: "Reviewed" };
+    expect(reviewDecisionSchema.parse(tag).proposal_id).toBeNull();
+    for (const action of ["create", "exclude", "reuse", "defer"]) {
+      const hierarchy = { proposal_id: "proposal", action, reason: "Reviewed",
+        existing_concept_id: action === "reuse" ? 20 : null };
+      expect(reviewDecisionSchema.parse(hierarchy).members).toEqual([]);
+      expect(reviewDecisionEventSchema.parse({ event_id: "event", submission_id: "submission",
+        recorded_at: "2026-10-18T00:00:00Z", baseline_snapshot_id: "snapshot", decision: hierarchy,
+      }).decision.action).toBe(action);
+    }
+  });
+
+  it("rejects mixed targets, missing merge IDs and blank review reasons", () => {
+    const choice = { proposal_id: "proposal", action: "create", reason: "Reviewed" };
+    for (const changes of [
+      { members: [{ source_dataset: "feed", tag_id: "1" }] }, { existing_tag_id: 30 },
+      { action: "reuse" }, { existing_concept_id: 20 }, { reason: " " },
+    ]) expect(reviewDecisionSchema.safeParse({ ...choice, ...changes }).success).toBe(false);
+  });
+});
 
 describe("proposal and taxonomy concept schemas", () => {
   it("keeps singular proposal levels and nullable IDs separate from taxonomy search results", () => {

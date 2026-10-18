@@ -30,6 +30,7 @@ from .models import (
     TagProposal,
     TaxonomyPath,
 )
+from .review import apply_hierarchy_decisions, prepare_hierarchy_decisions
 from .validation import resolve_placement_path
 
 SourceKey = tuple[str, str]
@@ -114,10 +115,15 @@ def _resolve_hierarchy(
         existing_id = screened[key].existing_id
         parent_id = target.service_id if size == 2 else nodes[key[:2]].id
         # Parent spelling variants that reuse one category must share any new child node as well.
-        identity = key if size == 2 else (key[0], normalize(nodes[key[:2]].name), key[2])
+        identity = key if size == 2 else (
+            next(row["name"] for row in taxonomy.services if row["id"] == nodes[key[:2]].parent_id),
+            normalize(nodes[key[:2]].name), key[2],
+        )
         if existing_id is not None:
             rows = taxonomy.categories if size == 2 else taxonomy.specialities
-            label = next(row["name"] for row in rows if row["id"] == existing_id)
+            existing = next(row for row in rows if row["id"] == existing_id)
+            label = existing["name"]
+            parent_id = existing["service_id" if size == 2 else "category_id"]
         nodes[key] = ResolvedHierarchyNode(
             level=group.level, id=existing_id or f"new:{group.level}:{_digest(identity)}",
             parent_id=parent_id, name=label, path=list(key), existing=existing_id is not None,
@@ -132,6 +138,8 @@ def _prepare_decisions(
     unique = {}
     for original in decisions:
         decision = ReviewDecision.model_validate_json(original.model_dump_json())
+        if decision.proposal_id is not None:
+            continue
         members = {_source_key(member): member for member in decision.members}
         if set(members) - set(tags):
             raise ValueError(f"Decision refers to unknown source tags: {sorted(set(members) - set(tags))}")
@@ -306,10 +314,12 @@ def resolve_outputs(
         taxonomy, baseline_snapshot_id=snapshot_id,
         settings=screening_settings, semantic_matcher=semantic_matcher, replay=screening,
     )
-    nodes = _resolve_hierarchy(report, taxonomy, tags, screening)
     prepared = _prepare_decisions(decisions, tags)
-    blocked_paths = {tuple(proposal.path) for proposal in screening.proposals if proposal.blocks_creation}
-    flagged_reasons = _combined_review_reasons(tags, taxonomy, screening)
+    hierarchy_decisions = prepare_hierarchy_decisions(decisions, screening)
+    effective = apply_hierarchy_decisions(screening, taxonomy, hierarchy_decisions)
+    nodes = _resolve_hierarchy(report, taxonomy, tags, effective)
+    blocked_paths = {tuple(proposal.path) for proposal in effective.proposals if proposal.blocks_creation}
+    flagged_reasons = _combined_review_reasons(tags, taxonomy, effective)
     defaults = _default_decisions(report, tags, prepared, flagged_reasons)
     canonical: dict[int | str, CanonicalTag] = {}
     mappings: list[CanonicalMapping] = []
@@ -385,7 +395,8 @@ def resolve_outputs(
         })
         counts[f"reused_{level}_nodes"] = len({node.id for node in hierarchy if node.level == level and node.existing})
     return ResolutionReport(
-        baseline_snapshot_id=snapshot_id, evidence=report.model_copy(deep=True), decisions=prepared,
+        baseline_snapshot_id=snapshot_id, evidence=report.model_copy(deep=True),
+        decisions=prepared + hierarchy_decisions,
         screening=screening,
         hierarchy=hierarchy, tags=resolved_tags,
         mappings=sorted(mappings, key=lambda mapping: _source_key(mapping.source)), links=resolved_links,

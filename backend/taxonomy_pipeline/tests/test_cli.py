@@ -30,6 +30,43 @@ def test_merge_preview_exposes_and_persists_screening_thresholds(
     assert resolution["counts"]["pending_sources"] == pending
 
 
+# Submit hierarchy choices through the existing CLI, persist the audit trail and reject invalid approvals.
+def test_merge_preview_applies_and_logs_hierarchy_decisions(tmp_path: Path) -> None:
+    config = _write_stage_config(tmp_path)
+    producer = tmp_path / "producer.json"
+    producer.write_text(json.dumps([{
+        "source_dataset": "skillsfuture", "tag_id": "9001", "tag": "Campaign planning",
+        "original_classification": "classified", "service": "Industry", "category": "Marketing",
+        "speciality": "Brand Strateg", "confidence": 0.8, "reason": "Proposed placement",
+    }]), encoding="utf-8")
+    output = tmp_path / "merge"
+    command = ["merge-preview", "--config", str(config), "--input", str(producer), "--out-dir", str(output)]
+    assert main(command) == 0
+    initial = json.loads((output / "resolution.json").read_text(encoding="utf-8"))
+    proposal = next(item for item in initial["screening"]["proposals"] if item["level"] == "speciality")
+    target = next(match["concept"]["id"] for match in proposal["matches"] if match["same_parent"])
+    assert proposal["suggested_action"] == "defer"
+    choice = {"proposal_id": proposal["proposal_id"], "action": "reuse", "existing_concept_id": target,
+              "reason": "Reviewed: same speciality"}
+    decisions = tmp_path / "decisions.json"
+    decisions.write_text(json.dumps([choice]), encoding="utf-8")
+    assert main([*command, "--decisions", str(decisions)]) == 0
+    resolution = json.loads((output / "resolution.json").read_text(encoding="utf-8"))
+    assert resolution["counts"]["pending_sources"] == 0
+    assert resolution["counts"]["added_speciality_nodes"] == 0
+    log_path = output / "change_log.jsonl"
+    events = [json.loads(line) for line in log_path.read_text(encoding="utf-8").splitlines()]
+    assert len(events) == 1  # Internal preview replay did not log the submission again.
+    assert events[0]["decision"]["reason"] == choice["reason"]
+    assert events[0]["decision"]["existing_concept_id"] == target
+    category = next(item for item in initial["screening"]["proposals"] if item["level"] == "category")
+    decisions.write_text(json.dumps([{"proposal_id": category["proposal_id"], "action": "create",
+                                      "reason": "Invalid duplicate approval"}]), encoding="utf-8")
+    before = log_path.read_bytes(), (output / "resolution.json").read_bytes()
+    assert main([*command, "--decisions", str(decisions)]) == 1
+    assert before == (log_path.read_bytes(), (output / "resolution.json").read_bytes())
+
+
 @pytest.mark.parametrize(("flag", "value"), [("--screening-lexical", "1.1"), ("--screening-semantic", "nan")])
 # Invalid CLI thresholds must fail before reading inputs or creating reports.
 def test_merge_preview_rejects_invalid_screening_thresholds(

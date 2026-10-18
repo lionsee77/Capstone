@@ -286,7 +286,7 @@ def build_parser() -> argparse.ArgumentParser:
                        help="old seven-field Case B file and its source dataset name")
     merge.add_argument("--skip-case-a-handoffs", action="store_true",
                        help="skip legacy Case A rows that only route a tag to Case B")
-    merge.add_argument("--decisions", help="JSON list of review decisions from an earlier run")
+    merge.add_argument("--decisions", help="JSON list of tag and hierarchy ReviewDecision records from an earlier run")
     merge.add_argument("--semantic-model", help="sentence model for semantic duplicate candidates")
     screening_defaults = ScreeningSettings()
     merge.add_argument("--screening-lexical", type=float, default=screening_defaults.lexical_threshold,

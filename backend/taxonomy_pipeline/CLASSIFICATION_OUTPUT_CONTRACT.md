@@ -285,7 +285,41 @@ Explicit decisions override this default, including exclusion, deferral, reuse, 
 restricting approved paths. Automatically accepted tags get an explanatory source
 disposition; `decisions` contains only supplied reviews, not fabricated human decisions.
 
-`ReviewDecision` is an internal review format:
+`ReviewDecision` is the single internal review format for tag groups and hierarchy
+proposals. The fields below describe tag decisions; their existing format remains
+valid. For a category or speciality, supply `proposal_id` instead of `members`,
+and `existing_concept_id` instead of `existing_tag_id` for `reuse`. Do not include
+tag link approvals or `canonical_name` in a hierarchy decision.
+
+| Hierarchy field | Rule |
+|---|---|
+| `proposal_id` | One stable ID from `resolution.screening.proposals` |
+| `action` | `create` (approve), `exclude` (reject), `reuse` (merge), `defer` (requires review) |
+| `reason` | Required nonblank reviewer explanation |
+| `existing_concept_id` | Required positive baseline ID for `reuse`; absent/null otherwise |
+
+Every screened proposal has a derived `suggested_action`; suggestions do not
+replace reviewer decisions. Category decisions run before speciality decisions.
+Merge validates the target's level and full parent chain, reuses its existing row,
+and never moves it. A speciality merge must agree with the resolved category.
+Creating an exact/name-key equivalent raises `ValueError`. Near matches may be
+approved as distinct, but failed semantic checks and unresolved incoming variant
+clusters cannot be bypassed. Excluding a competing variant allows the retained
+proposal to be considered again. Synonym evidence depends on #56/PB07.
+
+Hierarchy rejection/deferral blocks its placements; it does not implicitly reject
+the source tag. Tag decisions remain separate entries in the **same list**.
+Intake omissions are not restored by hierarchy decisions. The original screening
+evidence is retained and the decisions are reapplied during preview/integration.
+
+`merge-preview --decisions decisions.json` accepts both kinds of entry. The runner
+appends validated submissions to `change_log.jsonl` using `ReviewDecisionEvent`
+(event/submission IDs, UTC timestamp, baseline fingerprint and the same decision).
+This local log is the PB09 handoff until shared audit storage is available;
+automatic defaults and pure replay do not create reviewer events. See the
+[review workflow](README.md#review-category-and-speciality-proposals-57).
+
+Tag decision fields:
 
 | Field                     | Meaning                                                                                              |
 | ------------------------- | ---------------------------------------------------------------------------------------------------- |

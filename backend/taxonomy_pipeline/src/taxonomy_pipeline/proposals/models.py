@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, computed_field
 
 Level = Literal["category", "speciality"]
 Score = Annotated[float, Field(ge=0, le=1, allow_inf_nan=False)]
@@ -51,6 +51,12 @@ class ScreenedProposal(BaseModel):
     existing_id: int | None = None
     blocks_creation: bool = False
     reason: str
+
+    @computed_field
+    @property
+    # Suggest an existing review action without turning screening evidence into reviewer approval.
+    def suggested_action(self) -> Literal["create", "reuse", "defer"]:
+        return {"new": "create", "reuse": "reuse", "review": "defer"}[self.status]
 
 
 class ScreeningSettings(BaseModel):

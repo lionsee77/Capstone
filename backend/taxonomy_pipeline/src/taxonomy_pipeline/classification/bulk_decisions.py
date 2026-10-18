@@ -31,6 +31,7 @@ from ..datasets.base import TaxonomyDataset
 from ..metrics.integrity import normalize
 from .models import ClassificationOutput, ResolutionReport, ReviewDecision, SourceTagRef, TaxonomyPath
 from .resolution import taxonomy_snapshot_id
+from .review import apply_hierarchy_decisions
 from .routing import SaturationReport
 
 # The pending reason resolution gives a tag held only because its producer flagged it.
@@ -115,8 +116,12 @@ def draft_decisions(
               for ref in (pair.left, pair.right)}
     placements = {(tag.source.source_dataset, tag.source.tag_id): tag.placements for tag in resolution.evidence.tags}
     ambiguous = saturation.ambiguous_matches()
-    hierarchy_held = {source for proposal in resolution.screening.proposals if proposal.status == "review"
-                      for source in proposal.source_tags} if resolution.screening else set()
+    effective = (
+        apply_hierarchy_decisions(resolution.screening, baseline, resolution.decisions)
+        if resolution.screening else None
+    )
+    hierarchy_held = {source for proposal in effective.proposals if proposal.status == "review"
+                      for source in proposal.source_tags} if effective else set()
 
     draft = BulkDraft(decisions=existing, drafted=[])
     for disposition in resolution.dispositions:

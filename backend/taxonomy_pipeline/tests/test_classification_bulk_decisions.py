@@ -67,6 +67,28 @@ def merge(tmp_path, baseline, saturation_report):
     return report, run
 
 
+# Once the hierarchy hold is reviewed, bulk drafting can address the independent producer tag hold.
+def test_hierarchy_decisions_are_preserved_and_resolved_holds_do_not_block_bulk_drafts(
+    tmp_path: Path, baseline: TaxonomyDataset, saturation_report: Callable,
+) -> None:
+    saturation = load_saturation(saturation_report(CONCEPTS), "skillsfuture")
+    path = tmp_path / "producer.json"
+    path.write_text(json.dumps(mark_ambiguous([
+        _record("11", "Fire Prevention", "Data analytics", "Data presentatio", 0.8),
+    ], saturation)), encoding="utf-8")
+    first = run_merge_preview([path], baseline, out_dir=tmp_path / "first").preview.resolution
+    proposal = next(item for item in first.screening.proposals if item.level == "speciality")
+    assert proposal.status == "review"
+    target = next(match.concept.id for match in proposal.matches if match.same_parent)
+    choice = ReviewDecision(proposal_id=proposal.proposal_id, action="reuse", existing_concept_id=target,
+                            reason="Confirmed the hierarchy match")
+    reviewed = run_merge_preview([path], baseline, out_dir=tmp_path / "reviewed", decisions=[choice]).preview.resolution
+    assert reviewed.counts["pending_sources"] == 1  # Producer review still applies to the tag.
+    draft = draft_decisions(reviewed, saturation, baseline, create_below=0.5, existing=[choice])
+    assert choice in draft.decisions
+    assert len(draft.drafted) == 1 and draft.drafted[0].members[0].tag_id == "11"
+
+
 def test_creates_loose_matches_and_reuses_near_certain_tags(baseline, merge):
     report, run = merge
     draft = draft_decisions(run().preview.resolution, report, baseline, create_below=0.5, reuse_at_or_above=0.9)
