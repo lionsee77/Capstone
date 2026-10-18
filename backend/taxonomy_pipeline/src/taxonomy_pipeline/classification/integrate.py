@@ -425,48 +425,59 @@ def _manifest(
     }
 
 
-def _scoring_metrics(config: PipelineConfig, baseline: str) -> tuple[list[dict[str, Any]], list[DatasetConfig]]:
-    """The config's metric entries that score `baseline`, re-pointed at the enriched dataset, plus the
-    other datasets they read (reference workbooks, incoming sources).
+def _scoring_metrics(
+    config: PipelineConfig, baseline: str,
+) -> tuple[str, list[dict[str, Any]], list[DatasetConfig]]:
+    """The snapshot's dataset name, the config's metric entries that score `baseline` re-pointed at it,
+    and the other datasets those entries read (reference workbooks, incoming sources).
 
     An entry scores the baseline when its metric's `subject_param` resolves to the baseline's name;
     everything else in the entry (thresholds, models, references) is kept, so the baseline and the
-    snapshot are measured the same way. Entries scoring other datasets are left out.
+    snapshot are measured the same way. Entries scoring other datasets are left out. Dependencies
+    are read from the entries as written, and the snapshot is named so it can't collide with any of
+    them (`enriched`, else `enriched_2`, ...): two datasets sharing a name would make one silently
+    replace the other when the config loads.
     """
     by_name = {dataset.name: dataset for dataset in config.datasets}
-    metrics: list[dict[str, Any]] = []
+    selected: list[tuple[str, dict[str, Any], str]] = []
     referenced: set[str] = set()
     for entry in config.metrics:
         metric = METRICS.get(entry.id)
         param = metric.subject_param if metric else None
         if param is None or metric.resolve_params(entry.params).get(param) != baseline:
             continue
-        params = {**entry.params, param: ENRICHED_DATASET}
-        metrics.append({"id": entry.id, "params": params})
-        for value in metric.resolve_params(params).values():
+        selected.append((entry.id, entry.params, param))
+        for key, value in metric.resolve_params(entry.params).items():
             for name in value if isinstance(value, list) else [value]:
-                if isinstance(name, str) and name in by_name and name != baseline:
+                if key != param and isinstance(name, str) and name in by_name and name != baseline:
                     referenced.add(name)
-    return metrics, [dataset for name, dataset in by_name.items() if name in referenced]  # config order
+    snapshot, suffix = ENRICHED_DATASET, 1
+    while snapshot in referenced:
+        suffix += 1
+        snapshot = f"{ENRICHED_DATASET}_{suffix}"
+    metrics = [{"id": metric_id, "params": {**params, param: snapshot}} for metric_id, params, param in selected]
+    return snapshot, metrics, [dataset for name, dataset in by_name.items() if name in referenced]  # config order
 
 
 def _config_yaml(
     copies: list[Path], staging: Path, table_map: dict[str, str], baseline: str,
     scoring_config: PipelineConfig | None,
 ) -> str:
+    snapshot, metrics, referenced = (
+        _scoring_metrics(scoring_config, baseline) if scoring_config else (ENRICHED_DATASET, [], [])
+    )
     dataset: dict[str, Any] = {
-        "name": ENRICHED_DATASET,
+        "name": snapshot,
         "type": "sql_dump",
         "paths": [str(copy.relative_to(staging)) for copy in copies] + ["additions.sql"],
     }
     custom = {concept: table for concept, table in table_map.items() if concept != table}
     if custom:
         dataset["table_map"] = custom
-    metrics, referenced = _scoring_metrics(scoring_config, baseline) if scoring_config else ([], [])
     # Integrity and depth always run: they are what `integrate` itself checks.
     for metric_id in ("depth", "integrity"):
         if not any(entry["id"] == metric_id for entry in metrics):
-            metrics.insert(0, {"id": metric_id, "params": {"dataset": ENRICHED_DATASET}})
+            metrics.insert(0, {"id": metric_id, "params": {"dataset": snapshot}})
     config = {
         "datasets": [dataset] + [other.model_dump(mode="json", exclude_defaults=True) for other in referenced],
         "metrics": metrics,

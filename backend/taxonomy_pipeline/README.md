@@ -303,7 +303,9 @@ integrations/<timestamp>/
   `taxonomy-pipeline run --config integrations/<timestamp>/enriched.yaml` from
   any directory gives the full scorecard (#72 compares it with the baseline's).
   Entries scoring other datasets are left out, and integrity and depth are added
-  with defaults if `--config` has none. Saturation's judge `cache` path stays
+  with defaults if `--config` has none. The snapshot is named `enriched`, or
+  `enriched_2`, ... if a dataset those entries read already has that name (e.g.
+  an earlier snapshot used as an incoming source). Saturation's judge `cache` path stays
   relative to the working directory, so run it from `backend/taxonomy_pipeline/`
   to reuse cached verdicts. The config used is recorded as `scoring_config` in
   the manifest's `merge_run` provenance.

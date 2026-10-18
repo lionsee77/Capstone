@@ -273,3 +273,20 @@ def test_enriched_config_falls_back_to_integrity_and_depth_without_scoring_metri
         ("integrity", {"dataset": "enriched"}), ("depth", {"dataset": "enriched"}),
     ]
     assert [d.name for d in config.datasets] == ["enriched"]
+
+
+def test_the_snapshot_never_shares_a_name_with_a_dataset_its_metrics_read(tmp_path, baseline):
+    # The round compares against an earlier snapshot that is itself called "enriched".
+    earlier = DatasetConfig(name="enriched", paths=baseline.paths)
+    scoring = PipelineConfig(datasets=[baseline, earlier], metrics=[
+        MetricConfig(id="saturation", params={"baseline": baseline.name, "incoming": ["enriched"]}),
+    ])
+    integrate(_resolution(tmp_path, baseline), baseline, out_dir=tmp_path / "out", scoring_config=scoring)
+
+    config = load_config(tmp_path / "out" / "enriched.yaml")
+    assert [d.name for d in config.datasets] == ["enriched_2", "enriched"]
+    assert [(m.id, m.params) for m in config.metrics] == [
+        ("integrity", {"dataset": "enriched_2"}), ("depth", {"dataset": "enriched_2"}),
+        ("saturation", {"baseline": "enriched_2", "incoming": ["enriched"]}),
+    ]
+    assert config.datasets[0].paths[-1].endswith("additions.sql")  # the snapshot, not the earlier one
