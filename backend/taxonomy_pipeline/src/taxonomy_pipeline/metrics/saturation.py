@@ -19,6 +19,11 @@ Close spelling alone never counts: "evaluation" is not "valuation".
     (e.g. "Machine Learning" under Finance vs under Healthcare)
 - Nothing similar -> ADD_CANDIDATE when nothing at any level is even
   moderately close, otherwise REVIEW_AMBIGUOUS.
+- Optional judge (`judge` param, off by default; see `judge.py`): each
+  REVIEW_AMBIGUOUS concept and its closest known concepts by meaning go to an
+  LLM. A confident "same as candidate N" becomes a duplicate (`match_type:
+  judged`), a confident "none" an ADD_CANDIDATE, anything else stays
+  REVIEW_AMBIGUOUS. Both counts are reported (`review_ambiguous_before_judge`).
 
 New placements and other-level matches are reported separately and do not
 count toward the new-items rate. Every recommendation is a review aid, not a database
@@ -40,6 +45,7 @@ from ..datasets.base import LoadedDataset, TaxonomyDataset
 from ..models import MetricResult
 from .base import Metric
 from .integrity import normalize
+from .judge import NONE_CHOICE, DecisionsJudge, JudgeCandidate, JudgeError, JudgeQuestion
 
 CONCEPT_LEVELS = ("categories", "specialities", "tags")
 SKIP_DUPLICATE = "SKIP_DUPLICATE"
@@ -51,6 +57,8 @@ REVIEW_AMBIGUOUS = "REVIEW_AMBIGUOUS"
 HAS_PARENT = "HAS_PARENT"
 NO_PARENT = "NO_PARENT"
 PARENT_LEVEL = {"categories": "services", "specialities": "categories", "tags": "specialities"}
+# Parents shown to the judge per concept: enough for context, few enough to keep requests small.
+JUDGE_CONTEXT = 3
 
 # Copied from (not imported from) `backend/audit/taxonomy_audit.py`, which
 # depends on mysql.connector - the same reason integrity.normalize is copied.
@@ -111,6 +119,16 @@ class SemanticMatcher:
         scores = self.similarity(queries, choices)
         best_indexes = np.argmax(scores, axis=1)
         return [(choices[index], round(float(scores[row, index]), 4)) for row, index in enumerate(best_indexes)]
+
+    def top_matches(self, queries: list[str], choices: list[str], k: int) -> list[list[tuple[str, float]]]:
+        """The k closest choices per query, closest first (ties keep choice order)."""
+        if not queries or not choices:
+            return [[] for _ in queries]
+        scores = self.similarity(queries, choices)
+        return [
+            [(choices[index], round(float(row[index]), 4)) for index in np.argsort(-row, kind="stable")[:k]]
+            for row in scores
+        ]
 
 
 def _group_concepts(rows: Iterable[dict[str, Any]]) -> tuple[dict[str, list[dict[str, Any]]], list[dict[str, Any]]]:
@@ -368,6 +386,87 @@ def _winning_match(
     return None
 
 
+def _judge_candidates(
+    level: str, pool: _KnownPool, cross_level: bool,
+) -> dict[str, tuple[str, dict[str, Any]]]:
+    """Known concepts the judge may pick from, by normalized name: this level first, then the others."""
+    found: dict[str, tuple[str, dict[str, Any]]] = {}
+    sets = [pool.candidates(level, other_levels=False)]
+    if cross_level:
+        sets.append(pool.candidates(level, other_levels=True))
+    for candidates in sets:
+        for known_level, entry in candidates.values():
+            found.setdefault(entry["normalized"], (known_level, entry))
+    return found
+
+
+def _ask_judge(
+    level: str,
+    items: list[tuple[list[dict[str, Any]], _Evidence, dict[str, Any]]],
+    pool: _KnownPool,
+    parents: _Parents,
+    p: dict[str, Any],
+    semantic_matcher: SemanticMatcher,
+) -> tuple[list[tuple[list[dict[str, Any]], str, tuple[str, dict[str, Any], float], _Evidence]], dict[str, int]]:
+    """Ask the judge about each REVIEW_AMBIGUOUS concept in `items` (rows, evidence, ambiguous entry).
+
+    Entries are updated in place: judged new -> ADD_CANDIDATE, unsure or failed ->
+    still REVIEW_AMBIGUOUS with the reason saying so, each with the verdict
+    attached. Judged duplicates are returned as matches for the caller to move
+    out of the ambiguous list, with the judge's probability as their score.
+    """
+    judge, cfg = p["judge"]
+    counts = {"asked": 0, "judged_duplicate": 0, "judged_new": 0, "unsure": 0, "failed": 0}
+    candidates = _judge_candidates(level, pool, p["cross_level"])
+    review = [item for item in items if item[2]["recommended_action"] == REVIEW_AMBIGUOUS]
+    if not review or not candidates:
+        return [], counts
+    names = list(candidates)
+    tops = semantic_matcher.top_matches(
+        [normalize(str(rows[0]["name"])) for rows, _, _ in review], names, cfg["candidates"]
+    )
+    questions = []
+    for (rows, _, _), top in zip(review, tops, strict=True):
+        questions.append(JudgeQuestion(
+            name=str(rows[0]["name"]), level=level,
+            parents=tuple(parent["name"] for parent in parents.classify(level, rows)["parents"][:JUDGE_CONTEXT]),
+            candidates=tuple(
+                JudgeCandidate(
+                    name=str(candidates[name][1]["name"]), level=candidates[name][0],
+                    parents=tuple(entry["name"] for entry in candidates[name][1]["parents"].values())[:JUDGE_CONTEXT],
+                )
+                for name, _ in top
+            ),
+        ))
+    verdicts = judge.judge(questions)
+
+    matches = []
+    for (rows, evidence, entry), top, verdict in zip(review, tops, verdicts, strict=True):
+        counts["asked"] += 1
+        entry["judge"] = {
+            "model": judge.model, "choice": verdict.choice, "probability": verdict.probability,
+            "candidates": [candidates[name][1]["name"] for name, _ in top],
+            **({"error": verdict.error} if verdict.error else {}),
+        }
+        index = verdict.candidate_index
+        if verdict.error:
+            counts["failed"] += 1
+            entry["reason"] = "judge_failed"
+        elif index is not None and index < len(top) and (verdict.probability or 0) >= cfg["same_at_or_above"]:
+            counts["judged_duplicate"] += 1
+            name, semantic_score = top[index]
+            known_level, known_entry = candidates[name]
+            evidence.semantic = (known_level, known_entry, semantic_score)
+            matches.append((rows, "judged", (known_level, known_entry, float(verdict.probability)), evidence))
+        elif verdict.choice == NONE_CHOICE and (verdict.probability or 0) >= cfg["new_at_or_above"]:
+            counts["judged_new"] += 1
+            entry["recommended_action"], entry["reason"] = ADD_CANDIDATE, "judged_new"
+        else:
+            counts["unsure"] += 1
+            entry["reason"] = "judge_unsure"
+    return matches, counts
+
+
 def _compare_level(
     level: str,
     incoming_rows: list[dict[str, Any]],
@@ -405,22 +504,42 @@ def _compare_level(
     same_evidence = _gather_evidence(remaining, pool.candidates(level, other_levels=False), semantic_matcher)
     other_candidates = pool.candidates(level, other_levels=True) if p["cross_level"] else {}
     other_evidence = _gather_evidence(remaining, other_candidates, semantic_matcher)
+    unmatched: list[tuple[list[dict[str, Any]], _Evidence, dict[str, Any]]] = []
     for (_, rows), same, other in zip(remaining, same_evidence, other_evidence, strict=True):
         winner = _winning_match(same, other, level_p)
         if winner is None:
-            ambiguous.append(_ambiguous_entry(
+            entry = _ambiguous_entry(
                 rows[0], [r.get("id") for r in rows], same, other, parents.classify(level, rows), level_p
-            ))
+            )
+            ambiguous.append(entry)
+            unmatched.append((rows, same, entry))
         else:
             matched.append((rows, *winner))
 
-    skips_by_type = {"exact": exact_matches, "close_spelling": fuzzy_matches, "semantic": semantic_matches}
+    judge_report: dict[str, Any] = {}
+    # The verdict _ask_judge records on each entry, so a judged duplicate keeps it once moved out of the list.
+    judge_records: dict[int, dict[str, Any]] = {}
+    if p.get("judge") and level in p["judge"][1]["levels"] and semantic_matcher:
+        before = sum(entry["recommended_action"] == REVIEW_AMBIGUOUS for entry in ambiguous)
+        judged, judge_counts = _ask_judge(level, unmatched, pool, parents, level_p, semantic_matcher)
+        judged_ids = {id(rows) for rows, *_ in judged}
+        judge_records = {id(rows): entry["judge"] for rows, _, entry in unmatched if "judge" in entry}
+        ambiguous = [entry for rows, _, entry in unmatched if id(rows) not in judged_ids]
+        matched.extend(judged)
+        judge_report = {"review_ambiguous_before_judge": before, "judge_counts": judge_counts}
+
+    judged_matches: list[dict[str, Any]] = []
+    skips_by_type = {
+        "exact": exact_matches, "close_spelling": fuzzy_matches, "semantic": semantic_matches, "judged": judged_matches,
+    }
     for rows, match_type, (known_level, known_entry, score), evidence in matched:
         row = rows[0]
         parent_info = parents.classify(level, rows)
         semantic_score = evidence.semantic[2] if evidence.semantic else None
         extra: dict[str, Any] = {"match_type": match_type}
-        if match_type == "semantic":
+        if match_type == "judged":
+            extra.update(judge_probability=score, semantic_score=semantic_score, judge=judge_records[id(rows)])
+        elif match_type == "semantic":
             extra.update(
                 semantic_score=score,
                 closest_lexical_baseline_name=evidence.lexical[1]["name"] if evidence.lexical else None,
@@ -460,7 +579,7 @@ def _compare_level(
                 continue
             parent_check = "same_parent"
 
-        action = SKIP_SEMANTIC_DUPLICATE if match_type == "semantic" else SKIP_DUPLICATE
+        action = SKIP_SEMANTIC_DUPLICATE if match_type in {"semantic", "judged"} else SKIP_DUPLICATE
         skips_by_type[match_type].append(
             {
                 **_match_entry(row, known_level, known_entry, action, **extra, parent_check=parent_check),
@@ -473,7 +592,9 @@ def _compare_level(
     add_count = sum(item["recommended_action"] == ADD_CANDIDATE for item in ambiguous)
     review_count = len(ambiguous) - add_count
     flagged = ambiguous + new_placements + other_level_matches
-    matches = exact_matches + fuzzy_matches + semantic_matches + new_placements + other_level_matches
+    matches = (
+        exact_matches + fuzzy_matches + semantic_matches + judged_matches + new_placements + other_level_matches
+    )
     return {
         "relevant_concepts_reviewed": reviewed,
         "exact_matches": len(exact_matches),
@@ -492,7 +613,7 @@ def _compare_level(
         "repeated_in_source_other_level": repeated,
         "recommended_action_counts": {
             SKIP_DUPLICATE: len(exact_matches) + len(fuzzy_matches),
-            SKIP_SEMANTIC_DUPLICATE: len(semantic_matches),
+            SKIP_SEMANTIC_DUPLICATE: len(semantic_matches) + len(judged_matches),
             REVIEW_NEW_PLACEMENT: len(new_placements),
             REVIEW_OTHER_LEVEL: len(other_level_matches),
             ADD_CANDIDATE: add_count,
@@ -506,6 +627,9 @@ def _compare_level(
         "new_placement_details": new_placements,
         "other_level_match_details": other_level_matches,
         "ambiguous_concepts": ambiguous,
+        # Only when a judge ran on this level, so reports without one are unchanged.
+        **({**judge_report, "judged_candidate_matches": len(judged_matches), "judged_match_details": judged_matches}
+           if judge_report else {}),
     }
 
 
@@ -527,6 +651,40 @@ def _level_thresholds(value: Any) -> dict[str, float]:
     }
 
 
+JUDGE_DEFAULTS = {
+    "model": "gpt-6-luna", "candidates": 5, "same_at_or_above": 0.8, "new_at_or_above": 0.8,
+    "levels": ["tags"], "cache": None, "workers": 8,
+}
+
+
+def _judge_settings(value: Any) -> dict[str, Any] | None:
+    """Validated `judge` params (None leaves the judge off), defaults filled in."""
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        raise ValueError("judge must be a mapping of settings, or omitted to leave the judge off")
+    unknown = sorted(set(value) - set(JUDGE_DEFAULTS))
+    if unknown:
+        raise ValueError(f"judge has unknown settings {unknown}; expected {sorted(JUDGE_DEFAULTS)}")
+    cfg = {**JUDGE_DEFAULTS, **value}
+    if not isinstance(cfg["model"], str) or not cfg["model"].strip():
+        raise ValueError("judge.model must be a model name")
+    for name, low in (("candidates", 1), ("workers", 1)):
+        if isinstance(cfg[name], bool) or not isinstance(cfg[name], int) or cfg[name] < low:
+            raise ValueError(f"judge.{name} must be a whole number of at least {low}")
+    for name in ("same_at_or_above", "new_at_or_above"):
+        try:
+            cfg[name] = _validated_float(cfg, name, 0, 1)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"judge.{exc}") from exc
+    levels = cfg["levels"]
+    if not isinstance(levels, list) or not levels or not set(levels) <= set(CONCEPT_LEVELS):
+        raise ValueError(f"judge.levels must be a non-empty list drawn from {list(CONCEPT_LEVELS)}")
+    if cfg["cache"] is not None and not (isinstance(cfg["cache"], str) and cfg["cache"].strip()):
+        raise ValueError("judge.cache must be a file path, or omitted for no cache")
+    return cfg
+
+
 def _incoming_names(value: Any, baseline: Any) -> list[str]:
     names = [value] if isinstance(value, str) else value
     if not isinstance(names, list) or not names or not all(isinstance(n, str) and n for n in names):
@@ -540,6 +698,7 @@ def _incoming_names(value: Any, baseline: Any) -> list[str]:
 
 class SaturationMetric(Metric):
     id = "saturation"
+    subject_param = "baseline"
     description = (
         "New-concept rate of each incoming source, in order, against the baseline plus earlier sources, "
         "matching at every level. Known concepts under a different parent are flagged as new placements; "
@@ -555,6 +714,8 @@ class SaturationMetric(Metric):
         "add_candidate_semantic_threshold": 0.5,
         "cross_level": True,
         "semantic_threshold_by_level": {},
+        # Off unless set; see JUDGE_DEFAULTS and metrics/judge.py.
+        "judge": None,
     }
 
     def run(self, datasets: dict[str, LoadedDataset], params: dict[str, Any]) -> MetricResult:
@@ -582,8 +743,13 @@ class SaturationMetric(Metric):
         settings["cross_level"] = p["cross_level"]
         try:
             settings["semantic_threshold_by_level"] = _level_thresholds(p["semantic_threshold_by_level"])
+            judge_cfg = _judge_settings(p["judge"])
         except (TypeError, ValueError) as exc:
             return MetricResult(metric_id=self.id, status="error", summary=str(exc))
+        if judge_cfg and not p["semantic_model"]:
+            return MetricResult(metric_id=self.id, status="error", summary=(
+                "judge needs semantic_model: the meaning model picks the candidates the judge chooses from"
+            ))
 
         baseline = resolved["baseline"]
         incoming = [resolved[f"incoming[{i}]"] for i in range(len(incoming_names))]
@@ -607,7 +773,70 @@ class SaturationMetric(Metric):
             semantic_matcher = SemanticMatcher(str(p["semantic_model"])) if p["semantic_model"] else None
         except ValueError as exc:
             return MetricResult(metric_id=self.id, status="error", summary=str(exc))
+        if judge_cfg:
+            try:
+                judge = DecisionsJudge(judge_cfg["model"], workers=judge_cfg["workers"], cache_path=judge_cfg["cache"])
+            except JudgeError as exc:
+                return MetricResult(metric_id=self.id, status="error", summary=f"judge: {exc}")
+            settings["judge"] = (judge, judge_cfg)
 
+        try:
+            steps, curve, pool = self._compare_sources(baseline, incoming_names, incoming, settings, semantic_matcher)
+        except JudgeError as exc:
+            return MetricResult(metric_id=self.id, status="error", summary=f"judge: {exc}")
+        last = curve[-1]
+        summary = (
+            f"{last['source']} against {baseline.name}"
+            f"{' + earlier sources' if len(curve) > 1 else ''}: new-items rate "
+            f"{last['new_rate_min']:.1%}-{last['new_rate_max']:.1%} of {last['reviewed']} concepts "
+            f"({last['add_candidates']} add candidates, {last['review_ambiguous']} need review); "
+            f"{last['new_placements']} known concepts in a new placement, "
+            f"{last['review_other_level']} known at another level."
+        )
+        if judge_cfg:
+            counts = last["judge_counts"]
+            summary += (
+                f" Judge ({judge_cfg['model']}) settled {counts['judged_duplicate'] + counts['judged_new']} of "
+                f"{counts['asked']} ambiguous concepts it was asked about ({', '.join(judge_cfg['levels'])}): "
+                f"{counts['judged_duplicate']} duplicates, "
+                f"{counts['judged_new']} new, {counts['unsure']} unsure, {counts['failed']} failed."
+            )
+        if len(curve) > 1:
+            summary += " Curve: " + ", ".join(
+                f"{point['source']} {point['new_rate_min']:.1%}-{point['new_rate_max']:.1%}" for point in curve
+            ) + "."
+        return MetricResult(
+            metric_id=self.id,
+            summary=summary,
+            details={
+                "baseline": baseline.name,
+                "incoming": incoming_names,
+                "threshold": settings["threshold"],
+                "semantic_model": p["semantic_model"],
+                "semantic_threshold": settings["semantic_threshold"] if semantic_matcher else None,
+                "add_candidate_lexical_threshold": settings["add_candidate_lexical_threshold"],
+                "add_candidate_semantic_threshold": (
+                    settings["add_candidate_semantic_threshold"] if semantic_matcher else None
+                ),
+                "overall": steps[-1]["overall"],
+                "by_concept_level": steps[-1]["by_concept_level"],
+                "cross_level": p["cross_level"],
+                "semantic_threshold_by_level": (
+                    settings["semantic_threshold_by_level"] if semantic_matcher else None
+                ),
+                **({"judge": judge_cfg} if judge_cfg else {}),
+                "curve": curve,
+                "steps": steps,
+            },
+        )
+
+    @staticmethod
+    def _compare_sources(
+        baseline: TaxonomyDataset, incoming_names: list[str], incoming: list[TaxonomyDataset],
+        settings: dict[str, Any], semantic_matcher: SemanticMatcher | None,
+    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], _KnownPool]:
+        """Compare each incoming source in order against everything known before it."""
+        judged = bool(settings.get("judge"))
         pool = _KnownPool()
         pool.add(baseline.name, baseline)
         steps, curve = [], []
@@ -649,40 +878,14 @@ class SaturationMetric(Metric):
                 "review_other_level": other_level,
                 "cumulative_known_concepts": pool.size(),
             })
+            if judged:
+                curve[-1]["review_ambiguous_before_judge"] = sum(
+                    result.get("review_ambiguous_before_judge", result["recommended_action_counts"][REVIEW_AMBIGUOUS])
+                    for result in by_level.values()
+                )
+                curve[-1]["judge_counts"] = {
+                    key: sum(result.get("judge_counts", {}).get(key, 0) for result in by_level.values())
+                    for key in ("asked", "judged_duplicate", "judged_new", "unsure", "failed")
+                }
 
-        last = curve[-1]
-        summary = (
-            f"{last['source']} against {baseline.name}"
-            f"{' + earlier sources' if len(curve) > 1 else ''}: new-items rate "
-            f"{last['new_rate_min']:.1%}-{last['new_rate_max']:.1%} of {last['reviewed']} concepts "
-            f"({last['add_candidates']} add candidates, {last['review_ambiguous']} need review); "
-            f"{last['new_placements']} known concepts in a new placement, "
-            f"{last['review_other_level']} known at another level."
-        )
-        if len(curve) > 1:
-            summary += " Curve: " + ", ".join(
-                f"{point['source']} {point['new_rate_min']:.1%}-{point['new_rate_max']:.1%}" for point in curve
-            ) + "."
-        return MetricResult(
-            metric_id=self.id,
-            summary=summary,
-            details={
-                "baseline": baseline.name,
-                "incoming": incoming_names,
-                "threshold": settings["threshold"],
-                "semantic_model": p["semantic_model"],
-                "semantic_threshold": settings["semantic_threshold"] if semantic_matcher else None,
-                "add_candidate_lexical_threshold": settings["add_candidate_lexical_threshold"],
-                "add_candidate_semantic_threshold": (
-                    settings["add_candidate_semantic_threshold"] if semantic_matcher else None
-                ),
-                "overall": steps[-1]["overall"],
-                "by_concept_level": steps[-1]["by_concept_level"],
-                "cross_level": p["cross_level"],
-                "semantic_threshold_by_level": (
-                    settings["semantic_threshold_by_level"] if semantic_matcher else None
-                ),
-                "curve": curve,
-                "steps": steps,
-            },
-        )
+        return steps, curve, pool

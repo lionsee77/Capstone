@@ -221,10 +221,24 @@ def validate_outputs(
     _flag_conflicts(records)
     _collapse_repeats(records)
     counts = Counter(record.status for record in records)
+    total = len(records)
+    valid = counts["valid"]
+    metrics = {
+        "total_records": total,
+        "valid_records": valid,
+        "review_records": counts["review"],
+        "unresolved_records": counts["unresolved"],
+        "duplicate_records": counts["duplicate"],
+        "invalid_records": counts["invalid"],
+        "skipped_records": counts["skipped"],
+        "valid_rate": valid / total if total else 0.0,
+        "review_rate": counts["review"] / total if total else 0.0,
+    }
     return BatchValidationReport(
         taxonomy=taxonomy.name, complete=not errors, input_errors=errors, records=records,
         counts={"received": len(records), **{
             status: counts[status] for status in ("valid", "duplicate", "unresolved", "review", "invalid", "skipped")
         }},
+        metrics=metrics,
         merged_outputs=[record.output for record in records if record.status == "valid"],
     )

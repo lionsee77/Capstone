@@ -27,6 +27,14 @@ class MetricResult(BaseModel):
     status: Literal["ok", "skipped", "error"] = "ok"
     summary: str
     details: dict[str, Any] = Field(default_factory=dict)
+    # Which config entry produced this result. A config can run the same metric
+    # more than once (e.g. integrity once per dataset), so `metric_id` alone
+    # doesn't identify a result. Set by `pipeline.run_pipeline`; None on reports
+    # saved before these fields existed, and on results built outside a run.
+    index: int | None = Field(default=None, description="Position of the entry in the config's `metrics` list")
+    params: dict[str, Any] | None = Field(
+        default=None, description="The entry's params resolved over the metric's defaults",
+    )
 
 
 class DatasetSummary(BaseModel):
@@ -42,3 +50,53 @@ class RunReport(BaseModel):
     datasets: list[DatasetSummary] = Field(default_factory=list)
     results: list[MetricResult] = Field(default_factory=list)
     error: str | None = None
+
+
+ConceptLevel = Literal["services", "categories", "specialities", "tags"]
+
+
+class TaxonomyConceptRef(BaseModel):
+    """A lightweight pointer to one concept - enough to link to it, not its detail."""
+
+    id: int | str
+    name: str
+
+
+class TaxonomyConceptSummary(TaxonomyConceptRef):
+    """One `GET /taxonomy/search` result row."""
+
+    level: ConceptLevel
+
+
+class TaxonomyPath(BaseModel):
+    """One parent chain from a concept up to its service. Any step can be
+    `None` - an orphan row (e.g. a speciality whose category_id doesn't
+    resolve) still gets a path, just a shorter one, same as `integrity`
+    reports it as an orphan rather than hiding it."""
+
+    service: TaxonomyConceptRef | None = None
+    category: TaxonomyConceptRef | None = None
+    speciality: TaxonomyConceptRef | None = None
+
+
+class TaxonomyConceptDetail(BaseModel):
+    """One concept with where it sits and what's under it.
+
+    `paths` has exactly one entry for every level except `tags`: a tag can be
+    linked to several specialities (each under its own category/service), so
+    it gets one path per linked speciality instead of one path picked
+    arbitrarily. `children` is the next level down the strict hierarchy
+    (services -> categories -> specialities); tags aren't "children" of a
+    speciality in that sense; they're `tags`, which stays empty except for
+    a speciality's own direct tags - a category's tags are reached by
+    following `children` to each speciality instead of flattening them all
+    here.
+    """
+
+    id: int | str
+    name: str
+    level: ConceptLevel
+    dataset: str
+    paths: list[TaxonomyPath] = Field(default_factory=list)
+    children: list[TaxonomyConceptRef] = Field(default_factory=list)
+    tags: list[TaxonomyConceptRef] = Field(default_factory=list)

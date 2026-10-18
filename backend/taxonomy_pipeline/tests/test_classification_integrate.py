@@ -10,7 +10,7 @@ from taxonomy_pipeline.classification import integrate as integrate_module
 from taxonomy_pipeline.classification.integrate import IntegrationError, _additions_sql, integrate
 from taxonomy_pipeline.classification.models import ResolutionReport, ReviewDecision, TaxonomyPath
 from taxonomy_pipeline.classification.runner import load_decisions, run_merge_preview
-from taxonomy_pipeline.config import DatasetConfig, load_config
+from taxonomy_pipeline.config import DatasetConfig, MetricConfig, PipelineConfig, load_config
 from taxonomy_pipeline.datasets.base import CONCEPTS, TaxonomyDataset
 from taxonomy_pipeline.datasets.sql_dump import SqlDumpSource, iter_insert_statements
 from taxonomy_pipeline.pipeline import load_datasets
@@ -259,3 +259,34 @@ def test_a_reviewer_can_map_an_ambiguous_tag_onto_the_existing_tag_it_resembles(
     assert result.counts["tags"] == 0  # no new tag: the skill is SQL
     enriched = load_datasets(load_config(tmp_path / "out" / "enriched.yaml"))["enriched"]
     assert {(link["speciality_id"], link["tag_id"]) for link in enriched.speciality_tags} == {(122, 200), (120, 200)}
+
+
+def test_enriched_config_falls_back_to_integrity_and_depth_without_scoring_metrics(tmp_path, baseline):
+    # A round config that only places tags: nothing in it scores the baseline.
+    scoring = PipelineConfig(datasets=[baseline], metrics=[
+        MetricConfig(id="category_adaptation", params={"baseline": baseline.name, "incoming": "x"}),
+    ])
+    integrate(_resolution(tmp_path, baseline), baseline, out_dir=tmp_path / "out", scoring_config=scoring)
+
+    config = load_config(tmp_path / "out" / "enriched.yaml")
+    assert [(m.id, m.params) for m in config.metrics] == [
+        ("integrity", {"dataset": "enriched"}), ("depth", {"dataset": "enriched"}),
+    ]
+    assert [d.name for d in config.datasets] == ["enriched"]
+
+
+def test_the_snapshot_never_shares_a_name_with_a_dataset_its_metrics_read(tmp_path, baseline):
+    # The round compares against an earlier snapshot that is itself called "enriched".
+    earlier = DatasetConfig(name="enriched", paths=baseline.paths)
+    scoring = PipelineConfig(datasets=[baseline, earlier], metrics=[
+        MetricConfig(id="saturation", params={"baseline": baseline.name, "incoming": ["enriched"]}),
+    ])
+    integrate(_resolution(tmp_path, baseline), baseline, out_dir=tmp_path / "out", scoring_config=scoring)
+
+    config = load_config(tmp_path / "out" / "enriched.yaml")
+    assert [d.name for d in config.datasets] == ["enriched_2", "enriched"]
+    assert [(m.id, m.params) for m in config.metrics] == [
+        ("integrity", {"dataset": "enriched_2"}), ("depth", {"dataset": "enriched_2"}),
+        ("saturation", {"baseline": "enriched_2", "incoming": ["enriched"]}),
+    ]
+    assert config.datasets[0].paths[-1].endswith("additions.sql")  # the snapshot, not the earlier one

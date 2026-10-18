@@ -14,8 +14,9 @@ from fastapi import BackgroundTasks, FastAPI, HTTPException
 from .. import db
 from ..config import PipelineConfig
 from ..metrics.registry import METRICS
-from ..models import RunReport
+from ..models import ConceptLevel, RunReport, TaxonomyConceptDetail, TaxonomyConceptSummary
 from ..pipeline import run_pipeline
+from . import taxonomy as taxonomy_api
 
 app = FastAPI(
     title="Taxonomy Validation Pipeline",
@@ -87,3 +88,27 @@ def get_run(run_id: str) -> RunReport:
     if record is None:
         raise HTTPException(status_code=404, detail="run not found")
     return RunReport.model_validate_json(record.report_json)
+
+
+@app.get("/taxonomy/search")
+def search_taxonomy(
+    run_id: str, dataset: str, q: str | None = None, level: ConceptLevel | None = None, limit: int = 50,
+) -> list[TaxonomyConceptSummary]:
+    """Name search over a dataset loaded by a past run - re-resolved from
+    that run's own config each call; see `api/taxonomy.py` for why."""
+    try:
+        resolved = taxonomy_api.resolve_dataset(run_id, dataset)
+    except taxonomy_api.NotFound as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    limit = max(1, min(limit, taxonomy_api.MAX_SEARCH_LIMIT))
+    return taxonomy_api.search(resolved, q=q, level=level, limit=limit)
+
+
+@app.get("/taxonomy/{level}/{concept_id}")
+def get_taxonomy_concept(level: ConceptLevel, concept_id: str, run_id: str, dataset: str) -> TaxonomyConceptDetail:
+    """One concept's full path(s) up, its children, and its tags."""
+    try:
+        resolved = taxonomy_api.resolve_dataset(run_id, dataset)
+        return taxonomy_api.detail(resolved, level, concept_id)
+    except taxonomy_api.NotFound as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
