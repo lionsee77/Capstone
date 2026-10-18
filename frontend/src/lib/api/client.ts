@@ -9,11 +9,14 @@
 import type { z } from "zod";
 
 import {
+  type ConceptLevel,
   createRunResponseSchema,
   metricCatalogueSchema,
   type PipelineConfig,
   runReportSchema,
   runSummarySchema,
+  taxonomyConceptDetailSchema,
+  taxonomyConceptSummarySchema,
 } from "./schemas";
 
 export const API_BASE = "/api/pipeline";
@@ -61,10 +64,27 @@ async function request<T>(path: string, schema: z.ZodType<T>, init?: RequestInit
   return schema.parse(body);
 }
 
+/** Identifies which loaded dataset to read: a past run, and a dataset name within its config. */
+export type TaxonomySource = { runId: string; dataset: string };
+
 export const api = {
   listMetrics: () => request("/metrics", metricCatalogueSchema),
   listRuns: (limit = 50) => request(`/runs?limit=${limit}`, runSummarySchema.array()),
   getRun: (runId: string) => request(`/runs/${encodeURIComponent(runId)}`, runReportSchema),
   createRun: (config: PipelineConfig) =>
     request("/runs", createRunResponseSchema, { method: "POST", body: JSON.stringify(config) }),
+  searchTaxonomy: (source: TaxonomySource, options: { q?: string; level?: ConceptLevel; limit?: number } = {}) => {
+    const params = new URLSearchParams({ run_id: source.runId, dataset: source.dataset });
+    if (options.q) params.set("q", options.q);
+    if (options.level) params.set("level", options.level);
+    if (options.limit) params.set("limit", String(options.limit));
+    return request(`/taxonomy/search?${params}`, taxonomyConceptSummarySchema.array());
+  },
+  getTaxonomyConcept: (source: TaxonomySource, level: ConceptLevel, conceptId: string) => {
+    const params = new URLSearchParams({ run_id: source.runId, dataset: source.dataset });
+    return request(
+      `/taxonomy/${level}/${encodeURIComponent(conceptId)}?${params}`,
+      taxonomyConceptDetailSchema,
+    );
+  },
 };

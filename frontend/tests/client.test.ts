@@ -55,4 +55,33 @@ describe("api client", () => {
     mockFetch(200, { ...doneRunReport, status: "cancelled" });
     await expect(api.getRun(doneRunReport.run_id)).rejects.toThrow();
   });
+
+  it("builds a taxonomy search request from the source and options given", async () => {
+    const fetchMock = mockFetch(200, []);
+    await api.searchTaxonomy({ runId: "abc", dataset: "original" }, { q: "tax", level: "tags", limit: 10 });
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/pipeline/taxonomy/search?run_id=abc&dataset=original&q=tax&level=tags&limit=10",
+      expect.anything(),
+    );
+  });
+
+  it("omits unset taxonomy search options rather than sending them empty", async () => {
+    const fetchMock = mockFetch(200, []);
+    await api.searchTaxonomy({ runId: "abc", dataset: "original" });
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/pipeline/taxonomy/search?run_id=abc&dataset=original",
+      expect.anything(),
+    );
+  });
+
+  it("encodes a temporary proposal id when fetching concept detail", async () => {
+    const fetchMock = mockFetch(200, {
+      id: "skillsfuture:501", name: "x", level: "categories", dataset: "skillsfuture", paths: [], children: [], tags: [],
+    });
+    await api.getTaxonomyConcept({ runId: "abc", dataset: "skillsfuture" }, "categories", "skillsfuture:501");
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/pipeline/taxonomy/categories/skillsfuture%3A501?run_id=abc&dataset=skillsfuture",
+      expect.anything(),
+    );
+  });
 });

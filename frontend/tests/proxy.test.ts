@@ -24,6 +24,68 @@ describe("pipeline proxy allowlist", () => {
     }
   });
 
+  const runAndDataset = "run_id=3f2a9c0e&dataset=original";
+
+  it("forwards a taxonomy search with the identity it requires", () => {
+    expect(resolve("GET", "taxonomy/search", runAndDataset)).toEqual({
+      ok: true,
+      url: "http://pipeline:8000/taxonomy/search?run_id=3f2a9c0e&dataset=original",
+    });
+  });
+
+  it("forwards optional search filters and drops a malformed limit", () => {
+    expect(resolve("GET", "taxonomy/search", `${runAndDataset}&q=tax&level=tags&limit=10`)).toEqual({
+      ok: true,
+      url: "http://pipeline:8000/taxonomy/search?run_id=3f2a9c0e&dataset=original&q=tax&level=tags&limit=10",
+    });
+    expect(resolve("GET", "taxonomy/search", `${runAndDataset}&limit=not-a-number`)).toEqual({
+      ok: true,
+      url: "http://pipeline:8000/taxonomy/search?run_id=3f2a9c0e&dataset=original",
+    });
+  });
+
+  it("forwards a dataset name with spaces and parentheses, not just word characters", () => {
+    // Dataset names are an unrestricted `name: str` in the pipeline config -
+    // "Original (NUS)" is a real, valid name, not just "original".
+    expect(resolve("GET", "taxonomy/search", "run_id=3f2a9c0e&dataset=Original+%28NUS%29")).toEqual({
+      ok: true,
+      url: "http://pipeline:8000/taxonomy/search?run_id=3f2a9c0e&dataset=Original+%28NUS%29",
+    });
+  });
+
+  it("rejects a taxonomy search missing its required run_id or dataset", () => {
+    expect(resolve("GET", "taxonomy/search", "dataset=original")).toMatchObject({ ok: false, status: 404 });
+    expect(resolve("GET", "taxonomy/search", "run_id=3f2a9c0e")).toMatchObject({ ok: false, status: 404 });
+  });
+
+  it("rejects a taxonomy search with an unknown level", () => {
+    expect(resolve("GET", "taxonomy/search", `${runAndDataset}&level=not-a-level`)).toMatchObject({
+      ok: false,
+      status: 404,
+    });
+  });
+
+  it("forwards a taxonomy concept lookup, including a temporary proposal id", () => {
+    expect(resolve("GET", "taxonomy/categories/1", runAndDataset)).toEqual({
+      ok: true,
+      url: "http://pipeline:8000/taxonomy/categories/1?run_id=3f2a9c0e&dataset=original",
+    });
+    // Next.js decodes dynamic route segments before this function sees them,
+    // so a colon in a temporary proposal id arrives literal, not pre-encoded.
+    expect(resolve("GET", "taxonomy/categories/skillsfuture:501", runAndDataset)).toEqual({
+      ok: true,
+      url: "http://pipeline:8000/taxonomy/categories/skillsfuture%3A501?run_id=3f2a9c0e&dataset=original",
+    });
+  });
+
+  it("rejects a taxonomy concept lookup with an unknown level", () => {
+    expect(resolve("GET", "taxonomy/not-a-level/1", runAndDataset)).toMatchObject({ ok: false, status: 404 });
+  });
+
+  it("rejects a taxonomy concept lookup missing its required run_id or dataset", () => {
+    expect(resolve("GET", "taxonomy/categories/1", "dataset=original")).toMatchObject({ ok: false, status: 404 });
+  });
+
   it("refuses run creation unless it is explicitly enabled", () => {
     expect(resolve("POST", "runs")).toMatchObject({ ok: false, status: 403 });
     expect(resolve("POST", "runs", "", { PIPELINE_ALLOW_RUN_CREATION: "1" })).toMatchObject({ ok: false });
