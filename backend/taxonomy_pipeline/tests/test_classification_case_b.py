@@ -16,12 +16,13 @@ from taxonomy_pipeline.classification.case_b import (
     classify_batch,
     proposal_is_well_formed,
     run_case_b,
+    to_contract_records,
 )
 from taxonomy_pipeline.classification.models import CLASSIFICATION_OUTPUTS
 from taxonomy_pipeline.datasets.base import TaxonomyDataset
 
 PROPOSAL = {
-    "tag": "Skill", "tag_id": "3001", "action": "assign_existing", "category": "Banking",
+    "tag": "Skill", "tag_id": "3001", "action": "assign_existing", "service": "Industry", "category": "Banking",
     "speciality": "Retail Banking", "confidence": 0.8, "reason": "Matches the existing speciality.",
 }
 CONCEPTS = [
@@ -34,6 +35,7 @@ def _datasets() -> dict[str, TaxonomyDataset]:
     return {
         "original": TaxonomyDataset(
             name="original",
+            services=[{"id": 1, "name": "Industry"}, {"id": 3, "name": "Subject"}],
             categories=[{"id": 1, "name": "Banking", "service_id": 1}, {"id": 2, "name": "Arts", "service_id": 3}],
             specialities=[{"id": 1, "name": "Retail Banking", "category_id": 1},
                           {"id": 2, "name": "Orphan", "category_id": 99}],
@@ -84,11 +86,26 @@ def test_proposal_check_rejects_invalid_actions_and_confidence():
     assert not proposal_is_well_formed({key: value for key, value in PROPOSAL.items() if key != "reason"})
 
 
-def test_baseline_hierarchy_names_each_speciality_by_its_category():
-    categories, specialities = baseline_hierarchy(_datasets()["original"])
+def test_contract_preserves_model_selected_service():
+    proposal = {**PROPOSAL, "service": "Subject", "category": "Arts", "speciality": "Stage"}
 
-    assert categories == ["Arts", "Banking"]
-    assert specialities == [{"category": "Banking", "name": "Retail Banking"}, {"category": "99", "name": "Orphan"}]
+    records = to_contract_records([proposal], {"3001": "Skill"}, source_dataset="skillsfuture", run_id=None)
+
+    assert records[0]["service"] == "Subject"
+
+
+def test_baseline_hierarchy_names_each_speciality_by_its_category():
+    services, categories, specialities = baseline_hierarchy(_datasets()["original"])
+
+    assert services == ["Industry", "Subject"]
+    assert categories == [
+        {"service": "Industry", "name": "Banking"},
+        {"service": "Subject", "name": "Arts"},
+    ]
+    assert specialities == [
+        {"service": "Industry", "category": "Banking", "name": "Retail Banking"},
+        {"service": "", "category": "99", "name": "Orphan"},
+    ]
 
 
 def test_classify_batch_retries_until_every_tag_has_a_proposal():
@@ -130,6 +147,7 @@ def test_run_classifies_only_case_b_tags_and_writes_contract_records(tmp_path, w
     # Like the generator, tag IDs are 3000 + position in the sorted skill_ids, so 3001 is SK-B.
     assert '"skill_id": "SK-B"' in client.prompts[0] and "Processes loans" in client.prompts[0]
     assert "Has A Parent" not in client.prompts[0]
+    assert '"Industry"' in client.prompts[0] and "Allowed Ankit services" in client.prompts[0]
 
 
 def _six_tag_datasets() -> dict[str, TaxonomyDataset]:
@@ -219,6 +237,20 @@ def test_refuses_a_checkpoint_in_the_old_list_format(tmp_path, workbook, saturat
 
     with pytest.raises(CaseBError, match="no record of its saturation run"):
         _run(saturation_report(SIX_TAGS), output, StubClient(), workbook=workbook)
+
+
+def test_refuses_a_checkpoint_without_service_before_calling_the_model(tmp_path, workbook, saturation_report):
+    output = tmp_path / "case_b_output.json"
+    checkpoint = output.with_name(".case_b_output.checkpoint.json")
+    checkpoint.write_text(json.dumps({
+        "saturation_run_id": "run-1", "incoming": "skillsfuture", "model": "gpt-4o-mini",
+        "proposals": [{key: value for key, value in PROPOSAL.items() if key != "service"}],
+    }), encoding="utf-8")
+    client = StubClient()
+
+    with pytest.raises(CaseBError, match="incompatible format"):
+        _run(saturation_report(SIX_TAGS), output, client, workbook=workbook)
+    assert client.prompts == []
 
 
 def test_run_rejects_report_tags_missing_from_the_incoming_dataset(tmp_path, workbook, saturation_report):

@@ -93,6 +93,23 @@ def test_current_contract_batches_need_no_adapter(taxonomy: TaxonomyDataset) -> 
     assert report.records[0].target.model_dump() == dict(service_id=1, category_id=10, speciality_id=120)
 
 
+def test_empty_input_reports_zero_counts_and_rates(taxonomy: TaxonomyDataset) -> None:
+    report = validate_outputs({}, taxonomy)
+
+    assert report.counts == dict(received=0, valid=0, duplicate=0, unresolved=0, review=0, invalid=0, skipped=0)
+    assert report.metrics == {
+        "total_records": 0,
+        "valid_records": 0,
+        "review_records": 0,
+        "unresolved_records": 0,
+        "duplicate_records": 0,
+        "invalid_records": 0,
+        "skipped_records": 0,
+        "valid_rate": 0.0,
+        "review_rate": 0.0,
+    }
+
+
 # An explicit adapter is required so old files cannot silently masquerade as the latest contract.
 def test_legacy_files_without_adapter_are_invalid(taxonomy: TaxonomyDataset) -> None:
     report = validate_outputs({"a": json.dumps(load_rows("legacy_case_a.json"))}, taxonomy)

@@ -145,13 +145,14 @@ class IntakeRecord(BaseModel):
 
 
 class BatchValidationReport(BaseModel):
-    """Combined intake report; only unique, valid placements enter merged_outputs."""
+    """Combined intake report with status counts and reviewer-friendly summary metrics."""
 
     taxonomy: str
     complete: bool
     input_errors: dict[str, str]
     records: list[IntakeRecord]
     counts: dict[str, int]
+    metrics: dict[str, int | float]
     merged_outputs: list[ClassificationOutput]
 
 

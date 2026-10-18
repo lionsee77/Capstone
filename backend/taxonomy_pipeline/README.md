@@ -182,8 +182,10 @@ to it). Completed batches are checkpointed to a hidden file next to the output,
 so an interrupted run resumes without paying for finished tags, even with a
 different `--batch-size`; a successful run removes it. The checkpoint records
 the saturation run, source and model it was written for: rerunning against a
-different saturation report or `--model` stops with an error rather than reusing
-old proposals, so delete the checkpoint if you mean to start over. Each record also carries an `action`:
+different `report.json` or `--model` stops with an error rather than reusing
+old proposals. Checkpoints from older proposal formats that lack required fields
+such as `service` are also rejected before any model call; delete the checkpoint
+to reclassify those tags. Each record also carries an `action`:
 `assign_existing`, `propose_new_speciality` or `propose_new_category`.
 
 ### Merge preview
@@ -193,6 +195,9 @@ old proposals, so delete the checkpoint if you mean to start over. Each record a
 `deduplication.json`, `resolution.json`, `preview.csv` and `run.json` (the
 saturation run ID, inputs and review state, which `integrate` records as the
 snapshot's provenance).
+The `validation.json` file includes per-status `counts` and derived `metrics`,
+including total, valid, review, unresolved, duplicate, invalid and skipped
+records, plus `valid_rate` and `review_rate`.
 
 - Tags with no duplicate candidates are accepted with their proposed
   placements; tags named in a candidate pair, and tags with a `needs_review`
@@ -958,11 +963,11 @@ Ruff linting and the test suite run in CI (see the root
   with its natural home (e.g. a functional skill used in one sector) falls
   back to its sector's industry category. Case B reads the skill description;
   embedding it here too is a possible follow-up.
-- **Case B service:** every resolved Case B placement is written with
-  `service="Industry"`, although most baseline categories sit under Function,
-  Subject or Others. A correct pick such as "Data analytics" (under Subject)
-  therefore reaches the merge preview as a proposed *new* category under
-  Industry. Tracked in #52; treat Case B rows in `preview.csv` accordingly.
+- **Case B service selection:** the model now selects a service from the
+  baseline's allowed services and receives each speciality's service context in
+  its prompt. The output conversion preserves that selection, so categories
+  are no longer implicitly moved under `Industry`. The merge stages still
+  validate the complete service/category/speciality path.
 - **No promotion step:** `integrate` writes and checks an enriched snapshot,
   and `enriched.yaml` scores it, but comparing it against the baseline and
   promoting it to the next baseline is still the incremental flow in #49 (and
