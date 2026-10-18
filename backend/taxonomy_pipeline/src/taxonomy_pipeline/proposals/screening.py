@@ -3,12 +3,13 @@
 Exact spelling variants can reuse one node under the same parent. Other matches
 remain evidence for review; neither a score nor a cross-level name match permits
 moving a node. Saved semantic evidence can be replayed without loading a model.
+Incoming spelling variants under the same parent are held before creating nodes.
 """
 from __future__ import annotations
 
 import hashlib
 import json
-from collections import Counter
+from collections import Counter, defaultdict
 from collections.abc import Sequence
 from typing import Any
 
@@ -126,6 +127,39 @@ def _classify(
         proposal.reason = "No exact or near-duplicate candidates found by the enabled checks"
 
 
+# Hold incoming spelling variants within one parent before any dependent placements can proceed.
+def _hold_incoming_variants(proposals: list[ScreenedProposal]) -> None:
+    by_path = {tuple(proposal.path): proposal for proposal in proposals}
+    for level in ("category", "speciality"):
+        clusters: dict[tuple[str, str], list[ScreenedProposal]] = defaultdict(list)
+        for proposal in proposals:
+            if proposal.level != level:
+                continue
+            parent = by_path.get(tuple(proposal.path[:2])) if level == "speciality" else None
+            if parent is not None and parent.blocks_creation:
+                proposal.status, proposal.blocks_creation = "review", True
+                proposal.reason = "Resolve the proposed parent before adding a child concept"
+            if proposal.existing_id is not None:
+                continue
+            parent_identity = (
+                ["category_id", parent.existing_id] if parent is not None and parent.existing_id is not None
+                else proposal.path[:-1]
+            )
+            key = match_key(proposal.name)
+            if key:
+                clusters[(_encoded(parent_identity), key)].append(proposal)
+        for cluster in clusters.values():
+            if len({normalize(proposal.name) for proposal in cluster}) < 2:
+                continue
+            identifiers = ", ".join(sorted(proposal.proposal_id for proposal in cluster))
+            for proposal in cluster:
+                proposal.status, proposal.blocks_creation = "review", True
+                proposal.reason = (
+                    "Incoming proposals share a match_key within the same parent; "
+                    f"resolve the spelling variants before creating a concept. Proposal IDs: {identifiers}"
+                )
+
+
 # Screen every hierarchy path, retaining duplicate IDs and cross-branch evidence without collapsing them.
 def screen_proposals(
     groups: Sequence[HierarchyGroup], taxonomy: TaxonomyDataset, *, baseline_snapshot_id: str,
@@ -180,6 +214,7 @@ def screen_proposals(
         _classify(proposal, existing_ids[tuple(proposal.path)], bool(parent and parent.blocks_creation),
                   semantic_status == "failed")
         by_path[tuple(proposal.path)] = proposal
+    _hold_incoming_variants(proposals)
     report = ProposalScreeningReport(
         baseline_snapshot_id=baseline_snapshot_id, settings=settings, semantic_status=semantic_status,
         skipped_checks=skipped, proposals=proposals,

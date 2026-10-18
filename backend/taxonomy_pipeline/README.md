@@ -211,6 +211,13 @@ whitespace, Unicode dash variants, trailing punctuation, `&`/`and`,
 `-isation`/`-ization`, and the matcher's trailing-plural rule. It does not remove
 all internal punctuation or apply a general spelling dictionary.
 
+Incoming categories and specialities also share a review hold when distinct
+normalised names have the same `match_key` under the same parent and would create
+new nodes. Their screening reasons list the proposal IDs in the cluster. Children
+of a held category remain held too; tag approvals cannot bypass these holds.
+Correct the producer paths to one agreed label and rerun screening. Variants that
+already resolve to an existing node continue to reuse it.
+
 Each proposal in `resolution.json` under `screening.proposals` contains a stable
 ID, original label variants, proposed path, source tags, input locations and all
 qualifying baseline matches. Each match retains its existing ID, level, full

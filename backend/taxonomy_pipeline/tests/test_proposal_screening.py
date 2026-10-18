@@ -152,6 +152,82 @@ def test_ambiguous_exact_variants_block_additions_even_with_a_tag_decision(
     assert preview.counts.pending_sources == 1
 
 
+@pytest.mark.parametrize("level", ["category", "speciality"])
+@pytest.mark.parametrize(("left", "right"), [
+    ("Research & Development", "Research and Development"),
+    ("Task organisation", "Task organization"),
+    ("Database", "Databases"),
+])
+# Hold new variants from both producers, including children and explicit approvals, through saved preview replay.
+def test_new_incoming_variants_hold_both_proposals_for_review(
+    baseline: TaxonomyDataset, level: str, left: str, right: str,
+) -> None:
+    template = proposal_report(baseline).tags[0].placements[0].model_dump()
+    if level == "speciality":
+        baseline.categories[0]["name"] = "Sales and Marketing"
+    rows = []
+    for index, name in enumerate((left, right)):
+        row = dict(template)
+        row.update(
+            source_dataset=f"case-{index}", tag_id=str(index),
+            tag="Navigation skill" if index == 0 else "Payroll handling",
+            original_classification="classified" if index == 0 else "unclassified",
+            category="Sales & Marketing" if index == 0 else "Sales and Marketing",
+            speciality="Orbital navigation" if index == 0 else "Payroll administration",
+        )
+        row[level] = name
+        rows.append(row)
+    inputs = {f"case-{index}.json": json.dumps([row]) for index, row in enumerate(rows)}
+    report = deduplicate_outputs(validate_outputs(inputs, baseline))
+    assert len(report.tags) == 2 and report.candidates == []
+    result = resolve_outputs(report, baseline)
+    cluster = [proposal for proposal in result.screening.proposals if proposal.level == level]
+    assert len(cluster) == 2
+    for proposal in cluster:
+        assert proposal.status == "review" and proposal.blocks_creation and proposal.existing_id is None
+        assert proposal.matches == []
+        assert "share a match_key" in proposal.reason
+        assert all(member.proposal_id in proposal.reason for member in cluster)
+    if level == "category":
+        assert all(proposal.blocks_creation for proposal in result.screening.proposals)
+    else:
+        assert all(proposal.existing_id == 37 for proposal in result.screening.proposals
+                   if proposal.level == "category")
+    decisions = [ReviewDecision(
+        members=[tag.source], action="create", reason="Approve proposed placement",
+        approved_paths=[TaxonomyPath(service=row.service, category=row.category, speciality=row.speciality)
+                        for row in tag.placements],
+    ) for tag in report.tags]
+    approved = resolve_outputs(report, baseline, decisions, screening=result.screening)
+    assert result.counts["pending_sources"] == approved.counts["pending_sources"] == 2
+    assert approved.tags == approved.hierarchy == approved.links == []
+    loaded = ResolutionReport.model_validate_json(approved.model_dump_json())
+    assert build_preview(loaded, baseline).taxonomy == baseline
+    reversed_report = deduplicate_outputs(validate_outputs(dict(reversed(list(inputs.items()))), baseline))
+    assert resolve_outputs(reversed_report, baseline).screening == result.screening
+
+
+# Identical match keys under genuinely different parents must not be treated as one incoming cluster.
+def test_new_incoming_variants_under_different_parents_can_proceed(baseline: TaxonomyDataset) -> None:
+    rows = []
+    for index, (service, name) in enumerate([
+        ("Subject", "Research & Development"), ("Industry", "Research and Development"),
+    ]):
+        row = proposal_report(baseline).tags[0].placements[0].model_dump()
+        row.update(
+            tag_id=str(index), tag="Navigation skill" if index == 0 else "Payroll handling",
+            service=service, category=name,
+            speciality="Orbital navigation" if index == 0 else "Payroll administration",
+        )
+        rows.append(row)
+    report = deduplicate_outputs(validate_outputs({"producers.json": json.dumps(rows)}, baseline))
+    result = resolve_outputs(report, baseline)
+    assert all(proposal.status == "new" and not proposal.blocks_creation for proposal in result.screening.proposals)
+    preview = build_preview(result, baseline)
+    assert preview.counts.pending_sources == 0
+    assert preview.counts.added_categories == preview.counts.added_specialities == preview.counts.added_tags == 2
+
+
 # Complete placements omitted by intake for ambiguous exact names must still receive screening evidence.
 def test_intake_held_ambiguous_paths_are_screened_without_becoming_eligible(baseline: TaxonomyDataset) -> None:
     baseline.specialities.append(dict(baseline.specialities[0], id=94))
