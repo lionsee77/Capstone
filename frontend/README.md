@@ -113,6 +113,9 @@ frontend/
 - **`schemas.ts` mirrors the Pydantic models.** If you change
   `models.py` or `config.py` in the pipeline, update the matching zod schema in
   the same PR. `client.ts` parses every response, so drift fails loudly.
+  Proposal screening uses singular levels (`category`, `speciality`) and can
+  retain null IDs as evidence. Taxonomy API concepts use plural levels and require
+  non-null IDs; keep their schema helpers separate.
 - **shadcn components:** add with `bunx --bun shadcn@latest add <component>`.
   They land in `src/components/ui/`. Treat them as generated, and wrap them
   rather than editing them heavily.

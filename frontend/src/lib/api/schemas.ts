@@ -100,16 +100,16 @@ export const createRunResponseSchema = z.object({
 });
 
 /** Mirrors proposals/models.py; persisted as resolution.json's optional `screening` field. */
-const conceptLevelSchema = z.enum(["category", "speciality"]);
-const conceptIdSchema = z.union([z.number().int(), z.string()]).nullable();
+const proposalConceptLevelSchema = z.enum(["category", "speciality"]);
+const proposalConceptIdSchema = z.union([z.number().int(), z.string()]).nullable();
 
 export const existingConceptSchema = z.object({
   reference: z.string(),
-  level: conceptLevelSchema,
-  id: conceptIdSchema,
+  level: proposalConceptLevelSchema,
+  id: proposalConceptIdSchema,
   name: z.string(),
   path: z.array(z.string().nullable()),
-  path_ids: z.array(conceptIdSchema),
+  path_ids: z.array(proposalConceptIdSchema),
   reusable: z.boolean(),
 });
 
@@ -123,7 +123,7 @@ export const conceptMatchSchema = z.object({
 
 export const screenedProposalSchema = z.object({
   proposal_id: z.string(),
-  level: conceptLevelSchema,
+  level: proposalConceptLevelSchema,
   name: z.string(),
   path: z.array(z.string()),
   variants: z.array(z.array(z.string())),

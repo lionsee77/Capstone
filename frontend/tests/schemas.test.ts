@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  existingConceptSchema,
   isRunFinished,
   isTaxonomyDataset,
   pipelineConfigSchema,
@@ -10,6 +11,23 @@ import {
 } from "@/lib/api/schemas";
 
 import { doneRunReport } from "./fixtures/reports";
+
+describe("proposal and taxonomy concept schemas", () => {
+  it("keeps singular proposal levels and nullable IDs separate from taxonomy search results", () => {
+    for (const level of ["category", "speciality"]) {
+      const concept = {
+        reference: "baseline-row", level, id: null, name: "Unresolved concept",
+        path: [null, "Unresolved concept"], path_ids: [null, null], reusable: false,
+      };
+      expect(existingConceptSchema.parse(concept).id).toBeNull();
+      expect(taxonomyConceptSummarySchema.safeParse({ id: 1, name: concept.name, level }).success).toBe(false);
+    }
+    for (const level of ["services", "categories", "specialities", "tags"]) {
+      expect(taxonomyConceptSummarySchema.safeParse({ id: 1, name: "Concept", level }).success).toBe(true);
+      expect(taxonomyConceptSummarySchema.safeParse({ id: null, name: "Concept", level }).success).toBe(false);
+    }
+  });
+});
 
 describe("runReportSchema", () => {
   it("accepts a finished report from the API", () => {
@@ -85,6 +103,12 @@ describe("taxonomyConceptDetailSchema", () => {
 
   it("accepts a full concept detail", () => {
     expect(taxonomyConceptDetailSchema.parse(detail).tags[0].name).toBe("tax");
+  });
+
+  it("requires IDs on concepts and present path steps", () => {
+    expect(taxonomyConceptDetailSchema.safeParse({ ...detail, id: null }).success).toBe(false);
+    const path = { ...detail.paths[0], service: { id: null, name: "Industry" } };
+    expect(taxonomyConceptDetailSchema.safeParse({ ...detail, paths: [path] }).success).toBe(false);
   });
 
   it("accepts a null path step, for an orphan row", () => {
