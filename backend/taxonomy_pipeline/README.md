@@ -57,7 +57,9 @@ taxonomy_pipeline/
 │   ├── models.py                     # MetricResult / RunReport - one report shape everywhere
 │   ├── pipeline.py                   # run_pipeline(config) -> RunReport
 │   ├── db.py                         # SQLite run history
-│   ├── api/app.py                    # FastAPI: /metrics, /runs
+│   ├── api/
+│   │   ├── app.py                    #   FastAPI: /metrics, /runs, /taxonomy
+│   │   └── taxonomy.py               #   dataset resolution + search/detail queries behind /taxonomy
 │   └── cli.py                        # `taxonomy-pipeline run|serve|case-a|case-b|merge-preview|integrate`
 ├── schemas/
 │   └── classification_output.schema.json # JSON Schema for the producer contract
@@ -776,6 +778,25 @@ taxonomy-pipeline serve --reload
   `"running"` -> `"done"` or `"failed"`; once finished, the full report is
   in the response.
 - `GET /runs` - recent run history.
+- `GET /taxonomy/search?run_id=&dataset=&q=&level=&limit=` - name search
+  (case/punctuation-insensitive, via the same `normalize` `integrity` uses)
+  over a dataset loaded by a past run, optionally filtered by `level`
+  (`services`/`categories`/`specialities`/`tags`). `q` omitted lists
+  concepts unfiltered, up to `limit` (default 50, max 200) - a browse, not
+  a search.
+- `GET /taxonomy/{level}/{concept_id}?run_id=&dataset=` - one concept's
+  parent path(s) up to its service, its direct children one level down, and
+  (for a speciality) its linked tags. A tag gets one path per speciality
+  it's linked to, since it can be linked to more than one; an orphan row
+  (e.g. a speciality whose category doesn't resolve) gets a shorter path
+  rather than an error, the same row `integrity` would report as an orphan.
+
+Both `/taxonomy` endpoints re-read the dataset from disk on every call, using
+the file paths saved in that run's own config - nothing is kept loaded
+between requests, and no snapshot of what the run originally loaded is kept
+either. So a result reflects the source files' *current* contents, not
+necessarily what that run saw: editing a dataset file changes what the same
+`run_id` returns immediately, with no new run needed.
 
 Every run (CLI or API) is persisted to `taxonomy_pipeline.sqlite3` next to
 this README, so a future dashboard has run history to list and diff without
