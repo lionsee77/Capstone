@@ -27,6 +27,7 @@ export const datasetSummarySchema = z.object({
   name: z.string(),
   counts: z.record(z.string(), z.number()),
 });
+export type DatasetSummary = z.infer<typeof datasetSummarySchema>;
 
 export const runReportSchema = z.object({
   run_id: z.string(),
@@ -96,6 +97,15 @@ export const createRunResponseSchema = z.object({
 
 export function isRunFinished(status: RunStatus): boolean {
   return status === "done" || status === "failed";
+}
+
+/** The concept tables a taxonomy dataset always reports counts for - absent
+ * on a classification reference (ssic/ssoc), which counts its own levels
+ * instead. Used to tell `/taxonomy`-searchable datasets apart from ones
+ * that aren't. */
+const TAXONOMY_CONCEPT_KEYS = ["services", "categories", "specialities", "tags"] as const;
+export function isTaxonomyDataset(dataset: DatasetSummary): boolean {
+  return TAXONOMY_CONCEPT_KEYS.every((key) => key in dataset.counts);
 }
 
 /** Matches `datasets/base.py`'s CONCEPTS, minus `speciality_tags` (a join table, not a level). */

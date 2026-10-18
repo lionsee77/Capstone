@@ -28,7 +28,11 @@ export type WriteRequestHeaders = Pick<Headers, "get">;
 const DEFAULT_API_URL = "http://localhost:8000";
 const RUN_ID = /^[A-Za-z0-9_-]{1,64}$/;
 const LIMIT = /^\d{1,4}$/;
-const DATASET_NAME = /^[\w.-]{1,128}$/;
+// Dataset names come straight from the pipeline config (`name: str`, no
+// charset restriction - e.g. "Original (NUS)" is valid), so this only bounds
+// length and excludes control characters. It's forwarded as a query value
+// via `URLSearchParams`, which percent-encodes it, not placed in the path.
+const DATASET_NAME = /^[^\x00-\x1f\x7f]{1,128}$/;
 const CONCEPT_LEVEL = /^(services|categories|specialities|tags)$/;
 // Concept ids are usually a plain integer, but a proposed-but-not-yet-integrated
 // concept can carry a temporary id like "skillsfuture:501" or "new:category:<hash>".

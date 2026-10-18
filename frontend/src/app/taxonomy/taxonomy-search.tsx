@@ -1,29 +1,46 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import type { TaxonomySource } from "@/lib/api/client";
-import { useRun, useRuns, useTaxonomySearch } from "@/lib/api/queries";
-import type { ConceptLevel } from "@/lib/api/schemas";
+import { hasOlderRuns, RUNS_PAGE_SIZE, useLoadOlderRuns, useRun, useRuns, useTaxonomySearch } from "@/lib/api/queries";
+import { type ConceptLevel, isTaxonomyDataset } from "@/lib/api/schemas";
 
 const LEVELS: ConceptLevel[] = ["services", "categories", "specialities", "tags"];
 const ALL_LEVELS = "all" as const;
+const SEARCH_DEBOUNCE_MS = 300;
+
+/** Delays reacting to a fast-changing value (typing) until it's been still
+ * for `delayMs` - avoids firing a new search, and a new backend dataset
+ * reload, on every keystroke. */
+function useDebouncedValue<T>(value: T, delayMs: number): T {
+  const [debounced, setDebounced] = useState(value);
+  useEffect(() => {
+    const timer = setTimeout(() => setDebounced(value), delayMs);
+    return () => clearTimeout(timer);
+  }, [value, delayMs]);
+  return debounced;
+}
 
 /** Picks a finished run and a dataset within it - the (run_id, dataset) pair
  * every /taxonomy endpoint needs, since nothing keeps a dataset loaded
  * between requests. */
 function useSourcePicker() {
-  const { data: runs } = useRuns();
+  const [limit, setLimit] = useState(RUNS_PAGE_SIZE);
+  const { data: runs } = useRuns(limit);
+  const loadOlder = useLoadOlderRuns(setLimit);
   const doneRuns = useMemo(() => (runs ?? []).filter((run) => run.status === "done"), [runs]);
   const [runId, setRunId] = useState<string>("");
   const { data: run } = useRun(runId);
+  const taxonomyDatasets = useMemo(() => (run?.datasets ?? []).filter(isTaxonomyDataset), [run]);
   const [dataset, setDataset] = useState<string>("");
 
   function selectRun(id: string | null) {
@@ -32,12 +49,27 @@ function useSourcePicker() {
   }
 
   const source: TaxonomySource | null = runId && dataset ? { runId, dataset } : null;
-  return { doneRuns, runId, selectRun, run, dataset, setDataset, source };
+  return {
+    doneRuns,
+    hasOlderRuns: hasOlderRuns(runs?.length ?? 0, limit),
+    loadOlder: () => loadOlder.mutate(limit + RUNS_PAGE_SIZE),
+    loadingOlder: loadOlder.isPending,
+    runId,
+    selectRun,
+    taxonomyDatasets,
+    dataset,
+    setDataset,
+    source,
+  };
 }
 
 export function TaxonomySearch() {
-  const { doneRuns, runId, selectRun, run, dataset, setDataset, source } = useSourcePicker();
-  const [q, setQ] = useState("");
+  const {
+    doneRuns, hasOlderRuns: canLoadOlder, loadOlder, loadingOlder,
+    runId, selectRun, taxonomyDatasets, dataset, setDataset, source,
+  } = useSourcePicker();
+  const [qInput, setQInput] = useState("");
+  const q = useDebouncedValue(qInput, SEARCH_DEBOUNCE_MS);
   const [level, setLevel] = useState<ConceptLevel | "">("");
   const { data: results, isPending, error } = useTaxonomySearch(source, q, level);
 
@@ -58,15 +90,22 @@ export function TaxonomySearch() {
               ))}
             </SelectContent>
           </Select>
+          {/* Outside the listbox, not a SelectItem - the dropdown only offers
+           * the newest page of runs, older ones need a page fetched first. */}
+          {canLoadOlder && (
+            <Button variant="ghost" size="sm" className="h-auto px-0 justify-start" disabled={loadingOlder} onClick={loadOlder}>
+              {loadingOlder ? "Loading…" : "Load older runs"}
+            </Button>
+          )}
         </div>
         <div className="flex flex-col gap-1.5">
           <Label htmlFor="taxonomy-dataset">Dataset</Label>
-          <Select value={dataset} onValueChange={(value) => setDataset(value ?? "")} disabled={!run}>
+          <Select value={dataset} onValueChange={(value) => setDataset(value ?? "")} disabled={!runId}>
             <SelectTrigger id="taxonomy-dataset" className="w-48">
               <SelectValue placeholder="Pick a dataset" />
             </SelectTrigger>
             <SelectContent>
-              {(run?.datasets ?? []).map((d) => (
+              {taxonomyDatasets.map((d) => (
                 <SelectItem key={d.name} value={d.name}>
                   {d.name}
                 </SelectItem>
@@ -80,8 +119,8 @@ export function TaxonomySearch() {
             id="taxonomy-q"
             className="w-56"
             placeholder="Search by name..."
-            value={q}
-            onChange={(e) => setQ(e.target.value)}
+            value={qInput}
+            onChange={(e) => setQInput(e.target.value)}
             disabled={!source}
           />
         </div>

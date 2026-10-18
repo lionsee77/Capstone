@@ -29,7 +29,7 @@ def _run_id(client: TestClient) -> str:
     return run_id
 
 
-def test_search_matches_by_name_case_and_punctuation_insensitively(isolated_db):
+def test_search_matches_by_name_case_and_punctuation_insensitively(isolated_db) -> None:
     client = TestClient(app)
     run_id = _run_id(client)
 
@@ -40,7 +40,7 @@ def test_search_matches_by_name_case_and_punctuation_insensitively(isolated_db):
     assert {(r["level"], r["name"]) for r in results} == {("specialities", "Tax Advisory"), ("tags", "tax")}
 
 
-def test_search_filters_by_level(isolated_db):
+def test_search_filters_by_level(isolated_db) -> None:
     client = TestClient(app)
     run_id = _run_id(client)
 
@@ -54,7 +54,7 @@ def test_search_filters_by_level(isolated_db):
     assert {r["name"] for r in results} == {"Accounting", "accounting", "Marketing"}
 
 
-def test_search_with_no_query_browses_up_to_the_limit(isolated_db):
+def test_search_with_no_query_browses_up_to_the_limit(isolated_db) -> None:
     client = TestClient(app)
     run_id = _run_id(client)
 
@@ -66,7 +66,7 @@ def test_search_with_no_query_browses_up_to_the_limit(isolated_db):
     assert len(response.json()) == 2
 
 
-def test_search_rejects_an_unknown_level(isolated_db):
+def test_search_rejects_an_unknown_level(isolated_db) -> None:
     client = TestClient(app)
     run_id = _run_id(client)
 
@@ -77,7 +77,7 @@ def test_search_rejects_an_unknown_level(isolated_db):
     assert response.status_code == 422
 
 
-def test_search_against_an_unknown_run_is_404(isolated_db):
+def test_search_against_an_unknown_run_is_404(isolated_db) -> None:
     client = TestClient(app)
 
     response = client.get("/taxonomy/search", params={"run_id": "does-not-exist", "dataset": "original"})
@@ -85,7 +85,7 @@ def test_search_against_an_unknown_run_is_404(isolated_db):
     assert response.status_code == 404
 
 
-def test_search_against_an_unknown_dataset_name_is_404(isolated_db):
+def test_search_against_an_unknown_dataset_name_is_404(isolated_db) -> None:
     client = TestClient(app)
     run_id = _run_id(client)
 
@@ -94,7 +94,7 @@ def test_search_against_an_unknown_dataset_name_is_404(isolated_db):
     assert response.status_code == 404
 
 
-def test_concept_detail_resolves_the_full_path_and_tags_for_a_speciality(isolated_db):
+def test_concept_detail_resolves_the_full_path_and_tags_for_a_speciality(isolated_db) -> None:
     client = TestClient(app)
     run_id = _run_id(client)
 
@@ -105,13 +105,14 @@ def test_concept_detail_resolves_the_full_path_and_tags_for_a_speciality(isolate
     assert body["name"] == "Tax Advisory"
     assert len(body["paths"]) == 1
     path = body["paths"][0]
+    assert path["service"] == {"id": 1, "name": "Professional Services"}
     assert path["category"] == {"id": 1, "name": "Accounting"}
     assert path["speciality"] == {"id": 10, "name": "Tax Advisory"}
-    assert {t["name"] for t in body["tags"]} == {"tax", "gst"}
+    assert {t["name"] for t in body["tags"]} == {"tax", "gst", "advisory"}
     assert body["children"] == []
 
 
-def test_concept_detail_for_a_category_lists_its_specialities_as_children(isolated_db):
+def test_concept_detail_for_a_category_lists_its_specialities_as_children(isolated_db) -> None:
     client = TestClient(app)
     run_id = _run_id(client)
 
@@ -119,12 +120,34 @@ def test_concept_detail_for_a_category_lists_its_specialities_as_children(isolat
 
     assert response.status_code == 200
     body = response.json()
-    assert body["paths"] == [{"service": None, "category": {"id": 1, "name": "Accounting"}, "speciality": None}]
+    assert body["paths"] == [
+        {
+            "service": {"id": 1, "name": "Professional Services"},
+            "category": {"id": 1, "name": "Accounting"},
+            "speciality": None,
+        }
+    ]
     assert {c["name"] for c in body["children"]} == {"Tax Advisory"}
     assert body["tags"] == []
 
 
-def test_concept_detail_for_a_tag_lists_one_path_per_linked_speciality_and_skips_dangling_links(isolated_db):
+def test_concept_detail_for_a_service_lists_its_categories_as_children(isolated_db) -> None:
+    client = TestClient(app)
+    run_id = _run_id(client)
+
+    response = client.get("/taxonomy/services/1", params={"run_id": run_id, "dataset": "original"})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["name"] == "Professional Services"
+    assert body["paths"] == [
+        {"service": {"id": 1, "name": "Professional Services"}, "category": None, "speciality": None}
+    ]
+    assert {c["name"] for c in body["children"]} == {"Accounting", "accounting", "Marketing"}
+    assert body["tags"] == []
+
+
+def test_concept_detail_for_a_tag_lists_one_path_per_linked_speciality_and_skips_dangling_links(isolated_db) -> None:
     # Tag 100 is linked to speciality 10 (real) and speciality 999 (dangling,
     # no such speciality) - only the real link should produce a path.
     client = TestClient(app)
@@ -139,7 +162,27 @@ def test_concept_detail_for_a_tag_lists_one_path_per_linked_speciality_and_skips
     assert body["paths"][0]["speciality"] == {"id": 10, "name": "Tax Advisory"}
 
 
-def test_concept_detail_for_an_orphan_speciality_has_a_short_path_not_an_error(isolated_db):
+def test_concept_detail_for_a_tag_linked_to_two_real_specialities_lists_both_full_paths(isolated_db) -> None:
+    # Tag 103 is linked to speciality 10 (under category 1/Accounting) and
+    # speciality 11 (under category 3/Marketing) - both real, so both should
+    # come back as complete, independent paths.
+    client = TestClient(app)
+    run_id = _run_id(client)
+
+    response = client.get("/taxonomy/tags/103", params={"run_id": run_id, "dataset": "original"})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["name"] == "advisory"
+    assert len(body["paths"]) == 2
+    specialities = {p["speciality"]["name"]: p for p in body["paths"]}
+    assert specialities.keys() == {"Tax Advisory", "Brand Strategy"}
+    assert specialities["Tax Advisory"]["category"] == {"id": 1, "name": "Accounting"}
+    assert specialities["Brand Strategy"]["category"] == {"id": 3, "name": "Marketing"}
+    assert all(p["service"] == {"id": 1, "name": "Professional Services"} for p in body["paths"])
+
+
+def test_concept_detail_for_an_orphan_speciality_has_a_short_path_not_an_error(isolated_db) -> None:
     # Speciality 12's category_id (999) doesn't resolve - same row
     # integrity.py reports as an orphan speciality.
     client = TestClient(app)
@@ -152,7 +195,7 @@ def test_concept_detail_for_an_orphan_speciality_has_a_short_path_not_an_error(i
     assert body["paths"] == [{"service": None, "category": None, "speciality": {"id": 12, "name": "Orphan Speciality"}}]
 
 
-def test_concept_detail_for_an_unknown_id_is_404(isolated_db):
+def test_concept_detail_for_an_unknown_id_is_404(isolated_db) -> None:
     client = TestClient(app)
     run_id = _run_id(client)
 

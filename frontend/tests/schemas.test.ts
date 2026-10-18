@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   isRunFinished,
+  isTaxonomyDataset,
   pipelineConfigSchema,
   runReportSchema,
   taxonomyConceptDetailSchema,
@@ -91,6 +92,18 @@ describe("taxonomyConceptDetailSchema", () => {
       paths: [detail.paths[0], { ...detail.paths[0], speciality: { id: 11, name: "Brand Strategy" } }],
     };
     expect(taxonomyConceptDetailSchema.parse(tag).paths).toHaveLength(2);
+  });
+});
+
+describe("isTaxonomyDataset", () => {
+  it("accepts a dataset with every taxonomy concept count", () => {
+    const original = { name: "original", counts: { services: 1, categories: 3, specialities: 3, tags: 4 } };
+    expect(isTaxonomyDataset(original)).toBe(true);
+  });
+
+  it("rejects a classification reference counting its own levels instead", () => {
+    const ssic = { name: "ssic", counts: { section: 1, division: 2, group: 3, class: 4, subclass: 5 } };
+    expect(isTaxonomyDataset(ssic)).toBe(false);
   });
 });
 

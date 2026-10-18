@@ -133,9 +133,11 @@ CI runs all four. See the `frontend` job in `.github/workflows/ci.yml`.
 ## Known gaps
 
 - **Taxonomy search:** no persistent "current taxonomy" exists yet - every
-  search is scoped to one past run's loaded dataset (picked via a run +
-  dataset selector), not a live view of the source files. A later edit to
-  those files isn't reflected until a new run loads them.
+  search is scoped to one past run's dataset (picked via a run + dataset
+  selector), re-read from its source files on every request rather than
+  from a snapshot. So it's a live view of those files, not of that run: an
+  edit to a dataset file changes results for the same run immediately,
+  with no new run needed - the run is only how you pick which files.
 - **New data source flow:** the store, schema, and `useCreateRun` mutation are
   ready, but the form isn't built yet. Dataset paths must be absolute
   *server-side* paths, so uploading a file from the browser would need a new

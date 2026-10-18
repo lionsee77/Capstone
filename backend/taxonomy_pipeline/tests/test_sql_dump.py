@@ -39,11 +39,11 @@ def test_sql_dump_source_loads_all_tables_from_one_file():
     source = SqlDumpSource(name="original", paths=[FIXTURES / "mini_original.sql"])
     dataset = source.load()
     assert dataset.counts() == {
-        "services": 0,
+        "services": 1,
         "categories": 3,
         "specialities": 3,
-        "tags": 3,
-        "speciality_tags": 3,
+        "tags": 4,
+        "speciality_tags": 5,
     }
 
 

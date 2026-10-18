@@ -1,10 +1,12 @@
-"""Read-only taxonomy search and concept detail, over a dataset from a past
-run. Nothing here keeps a dataset loaded between requests - no such cache
-exists anywhere in this service yet - so both endpoints resolve `dataset`
-fresh each call, via the same `config_json` already saved for that run by
-`db.save_run`, reusing `pipeline.load_datasets` rather than adding a second
-way to load one. A result is only as current as the run it's read from; a
-later edit to the source files isn't reflected until a new run loads them.
+"""Read-only taxonomy search and concept detail, over a dataset a past run
+loaded. Nothing here keeps a dataset loaded between requests - no such cache
+exists anywhere in this service yet - so both endpoints re-read `dataset`
+from disk fresh on each call, via the same `config_json` already saved for
+that run by `db.save_run`, reusing `pipeline.load_dataset` rather than adding
+a second way to load one. A result reflects the source files' current
+contents, not a snapshot of what the run originally saw: editing a dataset
+file changes what the same `run_id` returns immediately, with no new run
+needed - the run is only how `dataset` is resolved to a set of file paths.
 """
 from __future__ import annotations
 
@@ -12,10 +14,10 @@ from typing import Any
 
 from .. import db
 from ..config import PipelineConfig
+from ..datasets import load_dataset
 from ..datasets.base import TaxonomyDataset
 from ..metrics.integrity import normalize
 from ..models import ConceptLevel, TaxonomyConceptDetail, TaxonomyConceptRef, TaxonomyConceptSummary, TaxonomyPath
-from ..pipeline import load_datasets
 
 LEVELS: tuple[ConceptLevel, ...] = ("services", "categories", "specialities", "tags")
 DEFAULT_SEARCH_LIMIT = 50
@@ -33,10 +35,13 @@ def resolve_dataset(run_id: str, dataset_name: str) -> TaxonomyDataset:
     if record is None:
         raise NotFound(f"run not found: {run_id}")
     config = PipelineConfig.model_validate_json(record.config_json)
-    datasets = load_datasets(config)
-    dataset = datasets.get(dataset_name)
-    if dataset is None:
+    ds_config = next((d for d in config.datasets if d.name == dataset_name), None)
+    if ds_config is None:
         raise NotFound(f"dataset {dataset_name!r} not loaded by run {run_id}")
+    # Load only the requested dataset - the run's config may list several
+    # (e.g. both taxonomies plus ssic/ssoc reference workbooks), and this
+    # lookup has no reason to read, parse, or depend on the rest of them.
+    dataset = load_dataset(ds_config)
     if not isinstance(dataset, TaxonomyDataset):
         # A classification reference (ssic/ssoc) - not something this
         # endpoint can search; same "wrong type" idea as

@@ -791,9 +791,12 @@ taxonomy-pipeline serve --reload
   (e.g. a speciality whose category doesn't resolve) gets a shorter path
   rather than an error, the same row `integrity` would report as an orphan.
 
-Both `/taxonomy` endpoints re-resolve the dataset from that run's own saved
-config on every call - nothing is kept loaded between requests - so a result
-reflects whatever that run loaded, not a live view of the source files.
+Both `/taxonomy` endpoints re-read the dataset from disk on every call, using
+the file paths saved in that run's own config - nothing is kept loaded
+between requests, and no snapshot of what the run originally loaded is kept
+either. So a result reflects the source files' *current* contents, not
+necessarily what that run saw: editing a dataset file changes what the same
+`run_id` returns immediately, with no new run needed.
 
 Every run (CLI or API) is persisted to `taxonomy_pipeline.sqlite3` next to
 this README, so a future dashboard has run history to list and diff without

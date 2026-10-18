@@ -44,6 +44,15 @@ describe("pipeline proxy allowlist", () => {
     });
   });
 
+  it("forwards a dataset name with spaces and parentheses, not just word characters", () => {
+    // Dataset names are an unrestricted `name: str` in the pipeline config -
+    // "Original (NUS)" is a real, valid name, not just "original".
+    expect(resolve("GET", "taxonomy/search", "run_id=3f2a9c0e&dataset=Original+%28NUS%29")).toEqual({
+      ok: true,
+      url: "http://pipeline:8000/taxonomy/search?run_id=3f2a9c0e&dataset=Original+%28NUS%29",
+    });
+  });
+
   it("rejects a taxonomy search missing its required run_id or dataset", () => {
     expect(resolve("GET", "taxonomy/search", "dataset=original")).toMatchObject({ ok: false, status: 404 });
     expect(resolve("GET", "taxonomy/search", "run_id=3f2a9c0e")).toMatchObject({ ok: false, status: 404 });
