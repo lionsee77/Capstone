@@ -693,6 +693,7 @@ def _incoming_names(value: Any, baseline: Any) -> list[str]:
 
 class SaturationMetric(Metric):
     id = "saturation"
+    subject_param = "baseline"
     description = (
         "New-concept rate of each incoming source, in order, against the baseline plus earlier sources, "
         "matching at every level. Known concepts under a different parent are flagged as new placements; "

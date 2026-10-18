@@ -9,7 +9,8 @@ gives every new row a real integer ID, and writes a snapshot directory:
     <out_dir>/
     ├── baseline/<file>.sql   byte-for-byte copies of the baseline dumps
     ├── additions.sql         INSERT-only: the new categories, specialities, tags and links
-    ├── enriched.yaml         pipeline config loading baseline + additions as dataset `enriched`
+    ├── enriched.yaml         pipeline config loading baseline + additions as dataset `enriched`,
+    │                         with the round's metrics re-pointed at it (see `_scoring_metrics`)
     └── manifest.json         provenance, counts, ID ranges, duplicate counts, temporary -> real IDs
 
 Baseline rows are never rewritten, only copied, so "baseline unchanged" holds by
@@ -35,10 +36,11 @@ from typing import Any
 
 import yaml
 
-from ..config import DatasetConfig
+from ..config import DatasetConfig, PipelineConfig
 from ..datasets.base import CONCEPTS, TaxonomyDataset
 from ..datasets.sql_dump import SqlDumpSource
 from ..metrics.integrity import IntegrityMetric
+from ..metrics.registry import METRICS
 from .models import MergePreview, ResolutionReport
 from .preview import build_preview
 from .resolution import taxonomy_snapshot_id
@@ -89,12 +91,16 @@ def integrate(
     *,
     out_dir: str | Path,
     provenance: dict[str, Any] | None = None,
+    scoring_config: PipelineConfig | None = None,
 ) -> Integration:
     """Write the enriched snapshot for a fully reviewed merge run.
 
     `baseline` must be the `sql_dump` dataset the merge run was built against;
     its files are copied, so the snapshot stays loadable if they later change.
     `provenance` (e.g. the merge run's `run.json`) is recorded in the manifest.
+    `scoring_config` is the round's pipeline config: every metric it runs on the
+    baseline is written into `enriched.yaml` for the snapshot instead, so both
+    are scored the same way. Without it, `enriched.yaml` runs integrity and depth.
     """
     if baseline.type != "sql_dump":
         raise IntegrationError(f"Baseline {baseline.name!r} must be a sql_dump dataset, not {baseline.type!r}")
@@ -132,7 +138,9 @@ def integrate(
         )
         manifest["exact_duplicate_rows"] = duplicates
         (staging / "manifest.json").write_text(json.dumps(manifest, indent=2, ensure_ascii=False), encoding="utf-8")
-        (staging / "enriched.yaml").write_text(_config_yaml(copies, staging, source.table_map), encoding="utf-8")
+        (staging / "enriched.yaml").write_text(
+            _config_yaml(copies, staging, source.table_map, baseline.name, scoring_config), encoding="utf-8",
+        )
         os.replace(staging, out_dir)
     except BaseException:
         shutil.rmtree(staging, ignore_errors=True)
@@ -417,7 +425,35 @@ def _manifest(
     }
 
 
-def _config_yaml(copies: list[Path], staging: Path, table_map: dict[str, str]) -> str:
+def _scoring_metrics(config: PipelineConfig, baseline: str) -> tuple[list[dict[str, Any]], list[DatasetConfig]]:
+    """The config's metric entries that score `baseline`, re-pointed at the enriched dataset, plus the
+    other datasets they read (reference workbooks, incoming sources).
+
+    An entry scores the baseline when its metric's `subject_param` resolves to the baseline's name;
+    everything else in the entry (thresholds, models, references) is kept, so the baseline and the
+    snapshot are measured the same way. Entries scoring other datasets are left out.
+    """
+    by_name = {dataset.name: dataset for dataset in config.datasets}
+    metrics: list[dict[str, Any]] = []
+    referenced: set[str] = set()
+    for entry in config.metrics:
+        metric = METRICS.get(entry.id)
+        param = metric.subject_param if metric else None
+        if param is None or metric.resolve_params(entry.params).get(param) != baseline:
+            continue
+        params = {**entry.params, param: ENRICHED_DATASET}
+        metrics.append({"id": entry.id, "params": params})
+        for value in metric.resolve_params(params).values():
+            for name in value if isinstance(value, list) else [value]:
+                if isinstance(name, str) and name in by_name and name != baseline:
+                    referenced.add(name)
+    return metrics, [dataset for name, dataset in by_name.items() if name in referenced]  # config order
+
+
+def _config_yaml(
+    copies: list[Path], staging: Path, table_map: dict[str, str], baseline: str,
+    scoring_config: PipelineConfig | None,
+) -> str:
     dataset: dict[str, Any] = {
         "name": ENRICHED_DATASET,
         "type": "sql_dump",
@@ -426,15 +462,18 @@ def _config_yaml(copies: list[Path], staging: Path, table_map: dict[str, str]) -
     custom = {concept: table for concept, table in table_map.items() if concept != table}
     if custom:
         dataset["table_map"] = custom
+    metrics, referenced = _scoring_metrics(scoring_config, baseline) if scoring_config else ([], [])
+    # Integrity and depth always run: they are what `integrate` itself checks.
+    for metric_id in ("depth", "integrity"):
+        if not any(entry["id"] == metric_id for entry in metrics):
+            metrics.insert(0, {"id": metric_id, "params": {"dataset": ENRICHED_DATASET}})
     config = {
-        "datasets": [dataset],
-        "metrics": [
-            {"id": "integrity", "params": {"dataset": ENRICHED_DATASET}},
-            {"id": "depth", "params": {"dataset": ENRICHED_DATASET}},
-        ],
+        "datasets": [dataset] + [other.model_dump(mode="json", exclude_defaults=True) for other in referenced],
+        "metrics": metrics,
     }
     header = (
-        "# Generated by `taxonomy-pipeline integrate`. Paths are relative to this file.\n"
+        "# Generated by `taxonomy-pipeline integrate`. The snapshot's paths are relative to this file;\n"
+        "# reference and incoming datasets keep the absolute paths of the round's config.\n"
         "# Score it with: taxonomy-pipeline run --config enriched.yaml\n"
     )
     return header + yaml.safe_dump(config, sort_keys=False)
