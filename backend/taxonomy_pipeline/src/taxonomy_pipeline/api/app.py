@@ -17,12 +17,14 @@ from ..metrics.registry import METRICS
 from ..models import ConceptLevel, RunReport, TaxonomyConceptDetail, TaxonomyConceptSummary
 from ..pipeline import run_pipeline
 from . import taxonomy as taxonomy_api
+from .proposals import router as proposals_router
 
 app = FastAPI(
     title="Taxonomy Validation Pipeline",
     version="0.1.0",
     description="Runs integrity/breadth/depth/saturation checks against one or more taxonomy datasets.",
 )
+app.include_router(proposals_router)
 
 
 def _execute_and_save(queued: RunReport, config: PipelineConfig) -> None:

@@ -59,6 +59,30 @@ export function resolveUpstream(
   const notFound = { ok: false, status: 404, reason: "Not an allowed pipeline endpoint" } as const;
   if (rest.length > 0) return notFound;
 
+  if (method === "GET" && resource === "proposals" && b === undefined) {
+    const mergeRun = searchParams.get("merge_run");
+    if (!mergeRun || !/^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/.test(mergeRun)) return notFound;
+    if (a !== undefined && !/^[A-Za-z0-9][A-Za-z0-9:._-]{0,199}$/.test(a)) return notFound;
+    const forwarded = new URLSearchParams({ merge_run: mergeRun });
+    if (a === undefined) {
+      const level = searchParams.get("level");
+      if (level !== null) {
+        if (level !== "category" && level !== "speciality") return notFound;
+        forwarded.set("level", level);
+      }
+      for (const key of ["offset", "limit"]) {
+        const value = searchParams.get(key);
+        if (value !== null) {
+          if (!/^\d+$/.test(value) || !Number.isSafeInteger(Number(value))) return notFound;
+          if (key === "limit" && (Number(value) < 1 || Number(value) > 200)) return notFound;
+          forwarded.set(key, value);
+        }
+      }
+    }
+    const path = a === undefined ? "proposals" : `proposals/${encodeURIComponent(a)}`;
+    return { ok: true, url: `${base}/${path}?${forwarded}` };
+  }
+
   if (method === "GET" && resource === "metrics" && a === undefined) {
     return { ok: true, url: `${base}/metrics` };
   }

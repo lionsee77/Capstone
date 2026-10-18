@@ -5,6 +5,7 @@ import {
   isRunFinished,
   isTaxonomyDataset,
   pipelineConfigSchema,
+  proposalReviewReportSchema,
   reviewDecisionSchema,
   reviewDecisionEventSchema,
   runReportSchema,
@@ -13,6 +14,24 @@ import {
 } from "@/lib/api/schemas";
 
 import { doneRunReport } from "./fixtures/reports";
+import { proposalReview } from "./fixtures/proposal-review";
+
+describe("proposalReviewReportSchema", () => {
+  it("retains branch evidence, scores and a decision separately from the screening suggestion", () => {
+    const item = proposalReviewReportSchema.parse(proposalReview).proposals[0];
+    expect(item.proposed_path).toEqual(["Subject", "Computing", "Data visualizatio"]);
+    expect(item.proposal.matches).toEqual(proposalReview.proposals[0].proposal.matches);
+    expect(item.proposal.suggested_action).toBe("defer");
+    expect(item.decision?.action).toBe("reuse");
+    expect(item.resolved_node?.id).toBe(20);
+  });
+
+  it("rejects invalid match scores instead of silently accepting a drifted API payload", () => {
+    const invalid = structuredClone(proposalReview);
+    invalid.proposals[0].proposal.matches[0].semantic_score = 1.5;
+    expect(proposalReviewReportSchema.safeParse(invalid).success).toBe(false);
+  });
+});
 
 describe("reviewDecisionSchema", () => {
   it("accepts tag and hierarchy decisions using the same action names", () => {

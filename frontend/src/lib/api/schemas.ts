@@ -191,6 +191,36 @@ export const reviewDecisionEventSchema = z.object({
   decision: reviewDecisionSchema,
 }).strict();
 
+export const resolvedHierarchyNodeSchema = z.object({
+  level: proposalConceptLevelSchema,
+  id: z.union([reviewIdSchema, reviewTextSchema]),
+  parent_id: z.union([reviewIdSchema, reviewTextSchema]),
+  name: reviewTextSchema,
+  path: z.array(z.string()),
+  existing: z.boolean(),
+});
+
+export const proposalReviewItemSchema = z.object({
+  proposal: screenedProposalSchema,
+  proposed_path: z.array(z.string()),
+  proposed_parent: z.array(z.string()),
+  decision: reviewDecisionSchema.nullable().default(null),
+  resolved_node: resolvedHierarchyNodeSchema.nullable().default(null),
+});
+
+/** Saved evidence and decisions returned identically by the review CLI and API (#58). */
+export const proposalReviewReportSchema = z.object({
+  baseline_snapshot_id: z.string(),
+  settings: screeningSettingsSchema,
+  semantic_status: z.enum(["disabled", "complete", "failed"]),
+  skipped_checks: z.record(z.string(), z.string()),
+  total: z.number().int().nonnegative(),
+  offset: z.number().int().nonnegative(),
+  limit: z.number().int().min(1).max(200),
+  proposals: z.array(proposalReviewItemSchema),
+});
+export type ProposalReviewReport = z.infer<typeof proposalReviewReportSchema>;
+
 export function isRunFinished(status: RunStatus): boolean {
   return status === "done" || status === "failed";
 }

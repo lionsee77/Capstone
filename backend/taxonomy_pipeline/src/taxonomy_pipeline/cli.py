@@ -1,4 +1,4 @@
-"""`taxonomy-pipeline run|serve|case-a|case-b|merge-preview|bulk-decide|integrate`
+"""`taxonomy-pipeline run|serve|case-a|case-b|merge-preview|review-proposals|bulk-decide|integrate`
 
 Every command is a thin wrapper around one library function, so the CLI never
 holds logic of its own: `run` calls `pipeline.run_pipeline` - the exact same
@@ -154,6 +154,22 @@ def _cmd_merge_preview(args: argparse.Namespace) -> int:
     return 0 if run.ok else 1
 
 
+# Print the shared saved review view without altering decisions, reports or taxonomy data.
+def _cmd_review_proposals(args: argparse.Namespace) -> int:
+    from .classification.review_view import load_review_view
+
+    try:
+        view = load_review_view(
+            args.merge_run, proposal_id=args.proposal_id, level=args.level,
+            offset=args.offset, limit=1 if args.proposal_id else args.limit,
+        )
+    except (OSError, ValueError) as exc:
+        print(f"[FAILED] review-proposals: {exc}", file=sys.stderr)
+        return 1
+    print(view.model_dump_json(indent=2))
+    return 0
+
+
 def _cmd_bulk_decide(args: argparse.Namespace) -> int:
     from .classification.bulk_decisions import draft_decisions
     from .classification.models import ResolutionReport
@@ -295,6 +311,14 @@ def build_parser() -> argparse.ArgumentParser:
                        help="hierarchy semantic review threshold, 0-1 (default: %(default)s; needs --semantic-model)")
     merge.add_argument("--out-dir", help="where to write the reports (default: merge_runs/<timestamp>)")
     merge.set_defaults(func=_cmd_merge_preview)
+
+    review = subparsers.add_parser("review-proposals", help="read saved proposals, branches, matches and decisions")
+    review.add_argument("--merge-run", required=True, help="merge-preview output folder")
+    review.add_argument("--proposal-id", help="show a single screened hierarchy proposal")
+    review.add_argument("--level", choices=["category", "speciality"])
+    review.add_argument("--offset", type=int, default=0, help="skip this many proposals after filtering")
+    review.add_argument("--limit", type=int, default=50, help="page size, 1-200 (default: 50)")
+    review.set_defaults(func=_cmd_review_proposals)
 
     bulk = subparsers.add_parser("bulk-decide", help="draft decisions for ambiguous tags by saturation similarity")
     _add_dataset_args(bulk)

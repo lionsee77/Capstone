@@ -52,7 +52,8 @@ read whatever absolute dataset paths the request names. Until the API has auth:
 - Run the dashboard and the pipeline API only on localhost or a trusted network.
   Don't deploy either one publicly.
 - The proxy forwards only `GET /metrics`, `GET /runs`, `GET /runs/{id}`,
-  `GET /taxonomy/search`, `GET /taxonomy/{level}/{id}` and, when
+  `GET /taxonomy/search`, `GET /taxonomy/{level}/{id}`,
+  `GET /proposals`, `GET /proposals/{id}` and, when
   `PIPELINE_ALLOW_RUN_CREATION=true`, `POST /runs`. The allowlist lives in
   `src/lib/api/proxy.ts`. Add a route there, with a test, when the dashboard
   starts using a new endpoint. The two `/taxonomy` routes also require a
@@ -110,8 +111,21 @@ Proposal screening includes a `suggested_action` (optional for older saved
 reports). The shared `reviewDecisionSchema` mirrors backend tag and hierarchy
 decisions: tag groups use `members`, hierarchy proposals use `proposal_id`, and
 both use `create` / `exclude` / `reuse` / `defer`. `reviewDecisionEventSchema`
-mirrors the local decision-log event. These schemas support the forthcoming
-review view (#58); they do not add dashboard approval controls yet.
+mirrors the local decision-log event.
+
+For #58, `api.listProposals(mergeRun, { level, offset, limit })` and
+`api.getProposal(mergeRun, proposalId)` read saved proposal evidence through the
+allowlisted proxy. `proposalReviewReportSchema` mirrors the shared CLI/API
+response: original proposed branches, all existing matches and scores, screening
+settings and warnings, and the separate saved reviewer decision. The original
+screening suggestion can differ from that decision. A resolved temporary node
+does not establish approval or database insertion.
+
+`mergeRun` is a directory name under the backend's `TAXONOMY_MERGE_ROOT`, not a
+saturation run ID or an arbitrary path. Lists support category/speciality filters
+and pagination (default 50, maximum 200); detail returns the same envelope with
+one item. The proxy permits reads only. No dashboard approval controls or new
+decision-submission flow are introduced; screen layout remains #54 follow-up.
 
 - **Server state goes through TanStack Query, client state goes in zustand.**
   Components call the hooks in `lib/api/queries.ts`. They never call `fetch`

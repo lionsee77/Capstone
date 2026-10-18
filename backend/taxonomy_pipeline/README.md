@@ -292,7 +292,7 @@ src/taxonomy_pipeline/proposals/
 ```
 
 The producer contract and JSON Schema are unchanged. Synonym relationships (#56,
-after PB07) and a dedicated review API/CLI view (#58) remain later PB06 work.
+after PB07) remain later PB06 work. The saved review API/CLI view is described below.
 See the [screening benchmark](docs/proposal-screening-benchmark.md) for full saved
 Case A/B input counts, before/after timings and semantic-run measurements.
 
@@ -364,6 +364,70 @@ src/taxonomy_pipeline/classification/
   models.py      # shared ReviewDecision and ReviewDecisionEvent shapes
   review.py      # validate hierarchy decisions and derive effective placements
   change_log.py  # append submitted decisions to the run's local audit log
+```
+
+### Read the proposal review view (#58)
+
+Read a saved merge run to see each category/speciality proposal beside every
+screening match, with parent branches, concept IDs, match types, lexical and
+optional semantic scores. The CLI and API use the same `ProposalReviewReport`
+model in `classification/models.py` and the same reader in
+`classification/review_view.py`.
+
+```bash
+taxonomy-pipeline review-proposals --merge-run merge_runs/reviewed
+taxonomy-pipeline review-proposals --merge-run merge_runs/reviewed --level speciality --offset 50 --limit 50
+taxonomy-pipeline review-proposals --merge-run merge_runs/reviewed --proposal-id <proposal_id>
+```
+
+The CLI prints JSON to stdout. The API exposes the same response:
+
+```text
+GET /proposals?merge_run=reviewed&level=speciality&offset=0&limit=50
+GET /proposals/{proposal_id}?merge_run=reviewed
+```
+
+`TAXONOMY_MERGE_ROOT` selects the API's server-side merge directory (default:
+`merge_runs` relative to the server's working directory). `merge_run` is one
+directory name beneath that root, not a filesystem path. For custom output
+locations, configure the root to their parent directory. The CLI accepts a
+local `--merge-run` path as usual. This uses existing files and does not choose
+the future governance storage being agreed in #89.
+
+- Each `proposals` item contains `proposed_path` and `proposed_parent` using
+  original labels, the full `proposal` screening evidence, the submitted
+  `decision` (or null), and its saved `resolved_node` allocation (or null).
+  `proposal.path` is the normalized identity; `proposal.variants` retains all
+  original spellings. The displayed path uses the same smallest variant as
+  screening's display name.
+- Every match retains its full existing path and path IDs, including null
+  ancestors for broken baseline paths (`reusable=false`). Matches at different
+  levels or under different parents remain visible.
+- Screening status, `suggested_action`, scores and `same_parent` describe the
+  original screening context, before reviewer remapping. `decision` records the
+  reviewer's choice separately. A temporary node ID is an allocation, not proof
+  of approval, tag readiness or database insertion.
+- The envelope includes the baseline fingerprint, screening settings,
+  `semantic_status`, skipped checks and pagination (`total`, `offset`, `limit`).
+  `total` counts proposals after filtering; pages default to 50, maximum 200.
+  All matches for each returned proposal are included. Detail requests return
+  the same envelope with one item and `limit=1`.
+- Reads do not reload the taxonomy, rerun matching, submit decisions or append
+  audit events. They show the saved run, not the current database. Submit choices
+  through #57's existing `merge-preview --decisions` and then read the new run.
+- Missing runs/proposals return HTTP 404; invalid query parameters return 422.
+  Invalid reports, mismatched fingerprints or older runs without screening
+  return 409 with an instruction to rerun `merge-preview`; they are not silently
+  re-screened. CLI errors return a nonzero exit code.
+
+The dashboard client and proxy accept these read endpoints and share matching
+Zod schemas. Review controls and screen layout remain follow-up UI work in #54.
+
+```text
+src/taxonomy_pipeline/
+  classification/review_view.py # saved evidence -> shared review response
+  classification/models.py      # ProposalReviewItem / ProposalReviewReport
+  api/proposals.py               # read-only list/detail routes under a configured root
 ```
 
 ### Bulk decisions for ambiguous tags
@@ -948,6 +1012,9 @@ taxonomy-pipeline serve --reload
   `"running"` -> `"done"` or `"failed"`; once finished, the full report is
   in the response.
 - `GET /runs` - recent run history.
+- `GET /proposals?merge_run=&level=&offset=&limit=` and
+  `GET /proposals/{proposal_id}?merge_run=` - saved hierarchy proposals with
+  parent branches, matching evidence and decisions (see the #58 review view above).
 - `GET /taxonomy/search?run_id=&dataset=&q=&level=&limit=` - name search
   (case/punctuation-insensitive, via the same `normalize` `integrity` uses)
   over a dataset loaded by a past run, optionally filtered by `level`

@@ -25,7 +25,7 @@ from ..models import MetricResult
 from ..models import NonBlankText as NonBlankText
 from ..models import SourceTagRef as SourceTagRef
 from ..models import TaxonomyId as TaxonomyId
-from ..proposals.models import ProposalScreeningReport
+from ..proposals.models import ProposalScreeningReport, ScreenedProposal, ScreeningSettings
 
 Confidence = Annotated[float, Field(ge=0, le=1, allow_inf_nan=False)]
 CanonicalTagId = TaxonomyId | NonBlankText
@@ -335,6 +335,31 @@ class ResolutionReport(BaseModel):
     counts: dict[str, int]
     partial: bool
     screening: ProposalScreeningReport | None = None
+
+
+class ProposalReviewItem(BaseModel):
+    """Keep original screening evidence separate from the reviewer's saved choice and resolved node."""
+
+    proposal: ScreenedProposal
+    proposed_path: list[str]
+    proposed_parent: list[str]
+    decision: ReviewDecision | None = None
+    resolved_node: ResolvedHierarchyNode | None = Field(
+        default=None, description="Saved node allocation; a temporary ID alone does not mean approval or integration.",
+    )
+
+
+class ProposalReviewReport(BaseModel):
+    """One read-only response for CLI and API, paginated by proposals but never by their matches."""
+
+    baseline_snapshot_id: str
+    settings: ScreeningSettings
+    semantic_status: Literal["disabled", "complete", "failed"]
+    skipped_checks: dict[str, str]
+    total: int = Field(ge=0)
+    offset: int = Field(ge=0)
+    limit: int = Field(ge=1, le=200)
+    proposals: list[ProposalReviewItem]
 
 
 class PreviewCounts(BaseModel):
