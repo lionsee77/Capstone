@@ -260,7 +260,7 @@ overwrites an existing folder):
 integrations/<timestamp>/
 ├── baseline/*.sql   byte-for-byte copies of the baseline dumps
 ├── additions.sql    INSERT-only new categories, specialities, tags and links
-├── enriched.yaml    config loading baseline + additions as dataset `enriched`
+├── enriched.yaml    config loading baseline + additions as dataset `enriched`, with the round's metrics
 └── manifest.json    provenance, counts, ID ranges, duplicate counts, temporary -> real IDs
 ```
 
@@ -293,6 +293,22 @@ integrations/<timestamp>/
 - Records validation set aside before review (invalid, unresolved, flagged)
   are not in the snapshot; their counts are in the manifest and printed as a
   warning.
+- `enriched.yaml` scores the snapshot the way `--config` scores the baseline:
+  every metric entry in `--config` that scores `--baseline` (its metric's
+  `subject_param`: `dataset` for integrity/depth, `target` for breadth,
+  `baseline` for saturation) is copied with that param set to `enriched` and
+  every other param kept - breadth's SSIC/SSOC references and thresholds,
+  saturation's incoming sources, models and judge settings. The datasets those
+  entries read are copied in with their absolute paths, so one
+  `taxonomy-pipeline run --config integrations/<timestamp>/enriched.yaml` from
+  any directory gives the full scorecard (#72 compares it with the baseline's).
+  Entries scoring other datasets are left out, and integrity and depth are added
+  with defaults if `--config` has none. The snapshot is named `enriched`, or
+  `enriched_2`, ... if a dataset those entries read already has that name (e.g.
+  an earlier snapshot used as an incoming source). Saturation's judge `cache` path stays
+  relative to the working directory, so run it from `backend/taxonomy_pipeline/`
+  to reuse cached verdicts. The config used is recorded as `scoring_config` in
+  the manifest's `merge_run` provenance.
 
 ## Setup
 

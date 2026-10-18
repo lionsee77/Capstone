@@ -26,6 +26,7 @@ def _stats(counts: list[int]) -> dict[str, Any]:
 
 class DepthMetric(Metric):
     id = "depth"
+    subject_param = "dataset"
     description = "Category -> speciality and speciality -> tag branching factor."
     default_params = {"dataset": None}
 

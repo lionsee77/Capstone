@@ -98,6 +98,7 @@ def _semantic_coverage(
 
 class BreadthMetric(Metric):
     id = "breadth"
+    subject_param = "target"
     description = "Estimated semantic or lexical industry coverage against SSIC and occupational coverage against SSOC."
     default_params = {
         "target": None, "ssic_reference": "ssic", "ssoc_reference": "ssoc",

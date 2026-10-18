@@ -233,3 +233,47 @@ def test_bulk_decide_refuses_a_merge_run_with_no_saturation_run_recorded(tmp_pat
     assert main(["bulk-decide", "--config", str(config_path), "--merge-run", str(tmp_path / "unstamped-merge"),
                  "--report", str(report), "--create-below", "0.5", "--output", str(tmp_path / "d.json")]) == 1
     assert "records no saturation run" in capsys.readouterr().err
+
+
+def test_enriched_config_scores_the_snapshot_with_the_rounds_metrics(
+    tmp_path, saturation_report, classification_paths, capsys, monkeypatch,
+):
+    config_path = _write_stage_config(tmp_path)
+    config = yaml.safe_load(config_path.read_text())
+    config["datasets"][2:] = [{"name": kind, "type": kind, "paths": [str(path)]}
+                              for kind, path in classification_paths.items()]
+    config["metrics"] = [
+        {"id": "integrity", "params": {"dataset": "original", "fuzzy_threshold": 70}},
+        {"id": "integrity", "params": {"dataset": "skillsfuture"}},  # scores another dataset: left out
+        {"id": "breadth", "params": {"target": "original", "matching_method": "lexical"}},
+        {"id": "saturation", "params": {"baseline": "original", "incoming": ["skillsfuture"]}},
+    ]
+    config_path.write_text(yaml.safe_dump(config))
+    report = saturation_report([
+        {"recommended_action": "ADD_CANDIDATE", "parent_status": "HAS_PARENT", "incoming_ids": [9001]},
+    ])
+    main(["case-a", "--config", str(config_path), "--report", str(report), "--semantic-model", "",
+          "--output", str(tmp_path / "case_a.json")])
+    main(["merge-preview", "--config", str(config_path), "--input", str(tmp_path / "case_a.json"),
+          "--out-dir", str(tmp_path / "merge")])
+    assert main(["integrate", "--config", str(config_path), "--merge-run", str(tmp_path / "merge"),
+                 "--out-dir", str(tmp_path / "enriched")]) == 0
+    capsys.readouterr()
+
+    enriched = yaml.safe_load((tmp_path / "enriched" / "enriched.yaml").read_text())
+    assert [(m["id"], m["params"]) for m in enriched["metrics"]] == [
+        ("depth", {"dataset": "enriched"}),
+        ("integrity", {"dataset": "enriched", "fuzzy_threshold": 70}),
+        ("breadth", {"target": "enriched", "matching_method": "lexical"}),
+        ("saturation", {"baseline": "enriched", "incoming": ["skillsfuture"]}),
+    ]
+    assert [d["name"] for d in enriched["datasets"]] == ["enriched", "skillsfuture", "ssic", "ssoc"]
+
+    # One run from another directory gives the whole scorecard.
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    monkeypatch.chdir(elsewhere)
+    assert main(["run", "--config", str(tmp_path / "enriched" / "enriched.yaml"), "--no-save"]) == 0
+    out = capsys.readouterr()
+    for metric_id in ("integrity", "depth", "breadth", "saturation"):
+        assert f"[OK] {metric_id}" in out.err + out.out
