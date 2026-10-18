@@ -17,6 +17,11 @@ class Metric(ABC):
     id: str
     description: str
     default_params: dict[str, Any] = {}
+    # The param naming the taxonomy this metric scores (e.g. integrity's
+    # "dataset", breadth's "target"), or None for a metric that doesn't score
+    # one taxonomy. `integrate` uses it to point a round's config at the
+    # enriched snapshot, so a new scoring metric only needs to set it.
+    subject_param: str | None = None
 
     def params_schema(self) -> dict[str, Any]:
         """Default parameters, exposed via `GET /metrics` so a caller (e.g. a

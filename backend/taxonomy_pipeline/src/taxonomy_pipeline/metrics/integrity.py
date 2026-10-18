@@ -71,6 +71,7 @@ def _fuzzy_duplicate_pairs(rows: list[dict[str, Any]], threshold: float) -> list
 
 class IntegrityMetric(Metric):
     id = "integrity"
+    subject_param = "dataset"
     description = (
         "Exact/fuzzy duplicate names, orphaned rows, and dead-end nodes across "
         "categories -> specialities -> tags for one dataset."

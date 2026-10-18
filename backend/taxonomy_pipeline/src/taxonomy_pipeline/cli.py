@@ -20,7 +20,7 @@ from pathlib import Path
 from . import db
 from .config import load_config
 from .datasets.base import LoadedDataset, TaxonomyDataset
-from .pipeline import load_datasets, run_pipeline
+from .pipeline import load_datasets, result_labels, run_pipeline
 from .proposals.models import ScreeningSettings
 
 SKILLSFUTURE_WORKBOOK = (
@@ -42,8 +42,8 @@ def _cmd_run(args: argparse.Namespace) -> int:
     else:
         print(output)
 
-    for result in report.results:
-        print(f"[{result.status.upper()}] {result.metric_id}: {result.summary}", file=sys.stderr)
+    for result, label in zip(report.results, result_labels(report.results), strict=True):
+        print(f"[{result.status.upper()}] {label}: {result.summary}", file=sys.stderr)
     if report.error:
         print(f"[FAILED] {report.error}", file=sys.stderr)
 
@@ -207,11 +207,13 @@ def _cmd_integrate(args: argparse.Namespace) -> int:
         resolution = ResolutionReport.model_validate_json((merge_run / "resolution.json").read_text(encoding="utf-8"))
         run_info = merge_run / "run.json"
         provenance = json.loads(run_info.read_text(encoding="utf-8")) if run_info.exists() else {}
-        baseline = next((d for d in load_config(args.config).datasets if d.name == args.baseline), None)
+        config = load_config(args.config)
+        baseline = next((d for d in config.datasets if d.name == args.baseline), None)
         if baseline is None:
             raise IntegrationError(f"{args.config} declares no dataset named {args.baseline!r}")
         result = integrate(
-            resolution, baseline, out_dir=out_dir, provenance={"merge_run": str(merge_run), **provenance},
+            resolution, baseline, out_dir=out_dir, scoring_config=config,
+            provenance={"merge_run": str(merge_run), "scoring_config": str(args.config), **provenance},
         )
     except (OSError, ValueError) as exc:
         print(f"[FAILED] integrate: {exc}", file=sys.stderr)

@@ -20,6 +20,10 @@ export const metricResultSchema = z.object({
   summary: z.string(),
   // Metric-specific; each metric module documents its own shape.
   details: z.record(z.string(), z.unknown()),
+  // Which config entry produced the result (position, and params resolved over
+  // the metric's defaults). Null or absent on reports saved before they existed.
+  index: z.number().int().nullish(),
+  params: z.record(z.string(), z.unknown()).nullish(),
 });
 export type MetricResult = z.infer<typeof metricResultSchema>;
 
@@ -27,6 +31,7 @@ export const datasetSummarySchema = z.object({
   name: z.string(),
   counts: z.record(z.string(), z.number()),
 });
+export type DatasetSummary = z.infer<typeof datasetSummarySchema>;
 
 export const runReportSchema = z.object({
   run_id: z.string(),
@@ -148,3 +153,52 @@ export type ProposalScreeningReport = z.infer<typeof proposalScreeningReportSche
 export function isRunFinished(status: RunStatus): boolean {
   return status === "done" || status === "failed";
 }
+
+/** The concept tables a taxonomy dataset always reports counts for - absent
+ * on a classification reference (ssic/ssoc), which counts its own levels
+ * instead. Used to tell `/taxonomy`-searchable datasets apart from ones
+ * that aren't. */
+const TAXONOMY_CONCEPT_KEYS = ["services", "categories", "specialities", "tags"] as const;
+export function isTaxonomyDataset(dataset: DatasetSummary): boolean {
+  return TAXONOMY_CONCEPT_KEYS.every((key) => key in dataset.counts);
+}
+
+/** Matches `datasets/base.py`'s CONCEPTS, minus `speciality_tags` (a join table, not a level). */
+export const conceptLevelSchema = z.enum(["services", "categories", "specialities", "tags"]);
+export type ConceptLevel = z.infer<typeof conceptLevelSchema>;
+
+/** A concept id is usually an integer, but a proposed-not-yet-integrated
+ * concept can carry a temporary string id (e.g. "skillsfuture:501"). */
+const conceptIdSchema = z.union([z.number(), z.string()]);
+
+export const taxonomyConceptRefSchema = z.object({
+  id: conceptIdSchema,
+  name: z.string(),
+});
+export type TaxonomyConceptRef = z.infer<typeof taxonomyConceptRefSchema>;
+
+/** `GET /taxonomy/search` result row. */
+export const taxonomyConceptSummarySchema = taxonomyConceptRefSchema.extend({
+  level: conceptLevelSchema,
+});
+export type TaxonomyConceptSummary = z.infer<typeof taxonomyConceptSummarySchema>;
+
+/** One parent chain from a concept up to its service; any step can be null (an orphan row). */
+export const taxonomyPathSchema = z.object({
+  service: taxonomyConceptRefSchema.nullable(),
+  category: taxonomyConceptRefSchema.nullable(),
+  speciality: taxonomyConceptRefSchema.nullable(),
+});
+export type TaxonomyPath = z.infer<typeof taxonomyPathSchema>;
+
+/** `GET /taxonomy/{level}/{id}` - a concept's path(s) up, children, and (for a speciality) its tags. */
+export const taxonomyConceptDetailSchema = z.object({
+  id: conceptIdSchema,
+  name: z.string(),
+  level: conceptLevelSchema,
+  dataset: z.string(),
+  paths: z.array(taxonomyPathSchema),
+  children: z.array(taxonomyConceptRefSchema),
+  tags: z.array(taxonomyConceptRefSchema),
+});
+export type TaxonomyConceptDetail = z.infer<typeof taxonomyConceptDetailSchema>;

@@ -36,6 +36,7 @@ taxonomy_pipeline/
 │   │   ├── depth.py                  #   branching factor
 │   │   ├── breadth.py                #   coverage vs. a reference dataset
 │   │   ├── saturation.py             #   new-items curve across ordered incoming sources
+│   │   ├── judge.py                  #   optional LLM judge (OpenAI Decisions API) for saturation's ambiguous concepts
 │   │   ├── category_adaptation.py    #   Case A: place new tags by content, else via their source category (see below)
 │   │   └── registry.py               #   METRICS dict - register new metrics here
 │   ├── classification/               # Case A/B producers and the merge stages (see "Classification workflow")
@@ -57,7 +58,9 @@ taxonomy_pipeline/
 │   ├── matching.py                   # shared optional similarity protocol for merge and screening
 │   ├── pipeline.py                   # run_pipeline(config) -> RunReport
 │   ├── db.py                         # SQLite run history
-│   ├── api/app.py                    # FastAPI: /metrics, /runs
+│   ├── api/
+│   │   ├── app.py                    #   FastAPI: /metrics, /runs, /taxonomy
+│   │   └── taxonomy.py               #   dataset resolution + search/detail queries behind /taxonomy
 │   └── cli.py                        # `taxonomy-pipeline run|serve|case-a|case-b|merge-preview|integrate`
 ├── schemas/
 │   └── classification_output.schema.json # JSON Schema for the producer contract
@@ -72,8 +75,20 @@ Places the new tags saturation finds into the baseline taxonomy, builds one
 reviewable merge preview, and turns the reviewed result into an enriched
 taxonomy snapshot. Nothing here writes to a database.
 
+> **Use `judged_report.json` for every classification round.** The SkillsFuture
+> config runs saturation with the [Decisions API judge](#decisions-api-judge)
+> on, which settles most ambiguous tags before they reach Case A/B (1,410 ->
+> 177 on SkillsFuture). Write that report as `judged_report.json` and pass it
+> explicitly: `case-a`, `case-b` and `bulk-decide` still default to
+> `--report report.json` (an unjudged report), so always give `--report`.
+> Case A, Case B and bulk-decide must all read the **same** report - each run
+> has its own `run_id` and `merge-preview` refuses to mix them. Running the
+> judge needs `OPENAI_API_KEY` in `backend/.env` and `pip install -e ".[llm]"`;
+> without a key, comment out the `judge:` block, write `report.json` instead,
+> and use it for the whole round.
+
 ```text
-taxonomy-pipeline run --output report.json     # saturation, ONCE per round
+taxonomy-pipeline run --output judged_report.json   # saturation + judge, ONCE per round
         │  ADD_CANDIDATE + REVIEW_AMBIGUOUS tags, split by parent_status (classification/routing.py)
         ├── HAS_PARENT ─► taxonomy-pipeline case-a ─► case_a_output.json
         └── NO_PARENT ──► taxonomy-pipeline case-b ─► case_b_output.json
@@ -93,12 +108,12 @@ Run from `backend/taxonomy_pipeline/` (the commands default to
 `--incoming skillsfuture`):
 
 ```bash
-taxonomy-pipeline run --config configs/original_vs_skillsfuture.yaml --output report.json
-taxonomy-pipeline case-a --report report.json
-taxonomy-pipeline case-b --report report.json        # needs .[llm] and OPENAI_API_KEY
+taxonomy-pipeline run --config configs/original_vs_skillsfuture.yaml --output judged_report.json  # needs .[llm] + key
+taxonomy-pipeline case-a --report judged_report.json
+taxonomy-pipeline case-b --report judged_report.json        # needs .[llm] and OPENAI_API_KEY
 taxonomy-pipeline merge-preview --input case_a_output.json --input case_b_output.json
 # optionally draft decisions for the clear-cut ambiguous tags, then review the rest:
-taxonomy-pipeline bulk-decide --merge-run merge_runs/<timestamp> --report report.json \
+taxonomy-pipeline bulk-decide --merge-run merge_runs/<timestamp> --report judged_report.json \
     --create-below 0.6 --reuse-above 0.9 --output decisions.json
 taxonomy-pipeline merge-preview --input case_a_output.json --input case_b_output.json \
     --decisions decisions.json --out-dir merge_runs/reviewed
@@ -107,7 +122,7 @@ taxonomy-pipeline run --config integrations/<timestamp>/enriched.yaml   # score 
 ```
 
 **Run saturation once per round and give both producers the same
-`report.json`.** Case A takes the report's `HAS_PARENT` tags and Case B its
+`judged_report.json`.** Case A takes the report's `HAS_PARENT` tags and Case B its
 `NO_PARENT` tags, each from both `ADD_CANDIDATE` (nothing in the baseline is
 close) and `REVIEW_AMBIGUOUS` (something is moderately close, so saturation
 can't confirm the tag is new). Together they cover every new or possibly new
@@ -115,12 +130,14 @@ tag exactly once; duplicates (`SKIP_*`), `REVIEW_NEW_PLACEMENT` and
 `REVIEW_OTHER_LEVEL` tags are not routed. Ambiguous tags are placed like the
 others, but every placement is flagged `needs_review` and its `reason` names
 the baseline concept saturation found close (`routing.mark_ambiguous`), so
-`merge-preview` holds them for a reviewer. On the SkillsFuture run that adds
-1,225 `HAS_PARENT` and 185 `NO_PARENT` tags (about 37 more Case B batches of 5). Both fail if the report is missing or has no saturation
+`merge-preview` holds them for a reviewer. On the SkillsFuture run the judge
+leaves 140 of the 1,443 `HAS_PARENT` tags and 37 of the 317 `NO_PARENT` tags
+ambiguous (1,225 and 185 without it); tags it judges new arrive as
+`ADD_CANDIDATE`, unflagged, and its 3 judged duplicates are not routed. Both fail if the report is missing or has no saturation
 result for `--incoming`. Each record they write carries the report's `run_id`
 as `saturation_run_id`, and `merge-preview` refuses to combine files from
-different runs (unstamped files only produce a warning). `report.json` and the
-stage outputs are git-ignored: regenerate them rather than committing them,
+different runs (unstamped files only produce a warning). `judged_report.json`,
+`report.json`, `judge_cache.json` and the stage outputs are git-ignored: regenerate them rather than committing them,
 since they go stale whenever the data, thresholds or code change.
 
 ### Producer contract
@@ -167,7 +184,9 @@ so an interrupted run resumes without paying for finished tags, even with a
 different `--batch-size`; a successful run removes it. The checkpoint records
 the saturation run, source and model it was written for: rerunning against a
 different `report.json` or `--model` stops with an error rather than reusing
-old proposals, so delete the checkpoint if you mean to start over. Each record also carries an `action`:
+old proposals. Checkpoints from older proposal formats that lack required fields
+such as `service` are also rejected before any model call; delete the checkpoint
+to reclassify those tags. Each record also carries an `action`:
 `assign_existing`, `propose_new_speciality` or `propose_new_category`.
 
 ### Merge preview
@@ -177,6 +196,9 @@ old proposals, so delete the checkpoint if you mean to start over. Each record a
 `deduplication.json`, `resolution.json`, `preview.csv` and `run.json` (the
 saturation run ID, inputs and review state, which `integrate` records as the
 snapshot's provenance).
+The `validation.json` file includes per-status `counts` and derived `metrics`,
+including total, valid, review, unresolved, duplicate, invalid and skipped
+records, plus `valid_rate` and `review_rate`.
 
 - Tags with no duplicate candidates are accepted with their proposed
   placements, provided hierarchy screening also clears them; tags named in a candidate pair, and tags with a `needs_review`
@@ -282,7 +304,7 @@ saturation's closest-match similarity (meaning when the report has it, else
 spelling rescaled to 0-1) and leaves the middle band for a person:
 
 ```bash
-taxonomy-pipeline bulk-decide --merge-run merge_runs/<timestamp> --report report.json \
+taxonomy-pipeline bulk-decide --merge-run merge_runs/<timestamp> --report judged_report.json \
     --create-below 0.6 --reuse-above 0.9 [--decisions decisions.json] --output decisions.json
 ```
 
@@ -322,7 +344,7 @@ overwrites an existing folder):
 integrations/<timestamp>/
 ├── baseline/*.sql   byte-for-byte copies of the baseline dumps
 ├── additions.sql    INSERT-only new categories, specialities, tags and links
-├── enriched.yaml    config loading baseline + additions as dataset `enriched`
+├── enriched.yaml    config loading baseline + additions as dataset `enriched`, with the round's metrics
 └── manifest.json    provenance, counts, ID ranges, duplicate counts, temporary -> real IDs
 ```
 
@@ -355,6 +377,22 @@ integrations/<timestamp>/
 - Records validation set aside before review (invalid, unresolved, flagged)
   are not in the snapshot; their counts are in the manifest and printed as a
   warning.
+- `enriched.yaml` scores the snapshot the way `--config` scores the baseline:
+  every metric entry in `--config` that scores `--baseline` (its metric's
+  `subject_param`: `dataset` for integrity/depth, `target` for breadth,
+  `baseline` for saturation) is copied with that param set to `enriched` and
+  every other param kept - breadth's SSIC/SSOC references and thresholds,
+  saturation's incoming sources, models and judge settings. The datasets those
+  entries read are copied in with their absolute paths, so one
+  `taxonomy-pipeline run --config integrations/<timestamp>/enriched.yaml` from
+  any directory gives the full scorecard (#72 compares it with the baseline's).
+  Entries scoring other datasets are left out, and integrity and depth are added
+  with defaults if `--config` has none. The snapshot is named `enriched`, or
+  `enriched_2`, ... if a dataset those entries read already has that name (e.g.
+  an earlier snapshot used as an incoming source). Saturation's judge `cache` path stays
+  relative to the working directory, so run it from `backend/taxonomy_pipeline/`
+  to reuse cached verdicts. The config used is recorded as `scoring_config` in
+  the manifest's `merge_run` provenance.
 
 ## Setup
 
@@ -388,9 +426,10 @@ taxonomies against SSIC 2025 and SSOC 2024 for breadth, and compares
 SkillsFuture concepts against the original taxonomy for `saturation` (see
 [below](#saturation-new-items-curve)). Prints the full JSON report to stdout
 and a one-line-per-metric summary to stderr; pass
-`--output report.json` to write the report to a file instead (git-ignored;
-about 22 MB for this comparison, because every saturation entry lists its
-parents). Every run is also saved to SQLite run history; pass `--no-save` to
+`--output judged_report.json` to write the report to a file instead
+(git-ignored; about 22 MB for this comparison, because every saturation entry
+lists its parents). Saturation runs with the judge on in this config, so it
+needs `OPENAI_API_KEY`; reruns read `judge_cache.json` and make no new calls. Every run is also saved to SQLite run history; pass `--no-save` to
 skip that.
 
 ## Saturation: new-items curve
@@ -473,7 +512,8 @@ services of its own, so its sectors (categories) are `NO_PARENT`.
 and describe the last source; `details.steps` holds the same block for every
 source and `details.curve` lists `{step, source, reviewed, add_candidates,
 review_ambiguous, new_rate_min, new_rate_max, new_placements,
-new_placement_rate, review_other_level, cumulative_known_concepts}`.
+new_placement_rate, review_other_level, cumulative_known_concepts}`, plus
+`review_ambiguous_before_judge` and `judge_counts` when the judge is on.
 Matches also report `matched_source` and `baseline_status`; matches to
 inactive (`status='0'`) rows are counted in `matched_inactive`.
 
@@ -494,6 +534,61 @@ Defaults come from `SaturationMetric.default_params`
 | `add_candidate_lexical_threshold` | 60 | `ADD_CANDIDATE` needs the best spelling score at every level below this | 60 |
 | `add_candidate_semantic_threshold` | 0.50 | ...and (with a model) the best meaning score below this; otherwise `REVIEW_AMBIGUOUS` | 0.50 |
 | `cross_level` | true | Also search the other levels of the known taxonomy | true |
+| `judge` | none (off) | Optional LLM judge for `REVIEW_AMBIGUOUS` concepts; see [Decisions API judge](#decisions-api-judge) | on: `gpt-6-luna`, `[tags]`, cache `judge_cache.json` |
+
+### Decisions API judge
+
+The spelling and meaning scores can't tell "the same skill, worded differently"
+from "a different skill in the same field", so most SkillsFuture tags land in
+the `REVIEW_AMBIGUOUS` band. With `judge` set, saturation sends each
+`REVIEW_AMBIGUOUS` concept to OpenAI's Decisions API (`POST /v1/decisions`,
+public beta) with its closest known concepts by meaning, each with up to three
+parents as context, and asks one `choice` question: the same concept as
+candidate N, or none?
+
+- Probability of candidate N >= `same_at_or_above` -> duplicate:
+  `SKIP_SEMANTIC_DUPLICATE` with `match_type: "judged"`, listed in
+  `judged_match_details` (parent check as for any match).
+- Probability of "none" >= `new_at_or_above` -> `ADD_CANDIDATE`, `reason: judged_new`.
+- Otherwise it stays `REVIEW_AMBIGUOUS` with `reason: judge_unsure`, or
+  `judge_failed` when the request failed after the SDK's retries.
+
+Every judged entry carries `judge: {model, choice, probability, candidates}`.
+`ADD_CANDIDATE` and duplicates are never sent.
+
+| `judge` key | Default | Meaning |
+|---|---|---|
+| `model` | `gpt-6-luna` | Decisions API model |
+| `candidates` | 5 | Closest known concepts (by meaning) offered per concept |
+| `same_at_or_above` | 0.8 | Probability needed to call it a duplicate |
+| `new_at_or_above` | 0.8 | Probability of "none" needed to call it new |
+| `levels` | `[tags]` | Levels the judge runs on |
+| `cache` | none | JSON file of verdicts keyed by request; reruns reuse them instead of paying again (git-ignored as `judge_cache.json`) |
+| `workers` | 8 | Parallel requests |
+
+Setup: `pip install -e ".[llm]"`, `OPENAI_API_KEY` in `backend/.env` (the same
+key Case B uses), and `semantic_model` set (it picks the candidates). It is on
+in `configs/original_vs_skillsfuture.yaml`; its report is `judged_report.json`
+(see [Classification workflow](#classification-workflow)). One request per
+ambiguous concept: about 1,410 for SkillsFuture tags, roughly $0.04 at
+$0.10/1M input tokens, and free on a cached rerun. A request the API rejects
+outright (bad key, unknown model or endpoint) stops the run with a `judge:`
+error; other failures only mark that concept `judge_failed`.
+
+Things to keep in mind:
+
+- **It changes the metric.** The ambiguous count, new-rate range and curve
+  move when the judge is on. Levels it ran on also report
+  `review_ambiguous_before_judge` and `judge_counts` (`asked`,
+  `judged_duplicate`, `judged_new`, `unsure`, `failed`), and each curve point
+  `review_ambiguous_before_judge`, so the pre-judge figure is never lost.
+  Compare baseline and enriched runs only with identical judge settings.
+- **Reproducibility comes from the cache.** The model is in public beta and
+  can change; keep the cache file with a report you want to reproduce.
+- **Downstream:** judged duplicates are not routed to Case A/B; judged-new tags
+  are routed as `ADD_CANDIDATE`, so they reach merge-preview without a review
+  flag; only unsure or failed tags keep it. Case A's own matching
+  (`category_adaptation`) never uses the judge.
 
 ### Reading the saturation report
 
@@ -505,14 +600,14 @@ Each incoming concept appears in exactly one list:
 | Verdict (`recommended_action`) | List | What to do |
 |---|---|---|
 | `SKIP_DUPLICATE` | `exact_match_details`, `fuzzy_match_details` | Nothing - already in the taxonomy |
-| `SKIP_SEMANTIC_DUPLICATE` | `semantic_match_details` | Nothing (spot-check meaning matches if in doubt) |
+| `SKIP_SEMANTIC_DUPLICATE` | `semantic_match_details`, `judged_match_details` (judge only) | Nothing (spot-check meaning and judge matches if in doubt) |
 | `REVIEW_NEW_PLACEMENT` | `new_placement_details` | Known concept, new parent: decide whether to add it under `unmatched_incoming_parents` |
 | `REVIEW_OTHER_LEVEL` | `other_level_match_details` | Similar concept at another level: confirm it really is the same concept |
 | `ADD_CANDIDATE` | `ambiguous_concepts` | New: decide where to place it, using `parents` |
 | `REVIEW_AMBIGUOUS` | `ambiguous_concepts` | Partly similar: check against `closest_baseline_name` / `closest_semantic_baseline_name` |
 
-`reason` values: `no_close_match` (ADD), `partial_similarity` and
-`close_spelling_unconfirmed` (REVIEW_AMBIGUOUS), `parent_differs` and
+`reason` values: `no_close_match` and `judged_new` (ADD), `partial_similarity`,
+`close_spelling_unconfirmed`, `judge_unsure` and `judge_failed` (REVIEW_AMBIGUOUS), `parent_differs` and
 `existing_has_no_parent` (NEW_PLACEMENT), `parent_not_comparable`
 (OTHER_LEVEL). Skipped duplicates carry `parent_check`: `same_parent`,
 `no_incoming_parent` or `not_checked_for_tags`.
@@ -528,7 +623,7 @@ Example - export every new skill with its SkillsFuture job roles to CSV:
 import csv
 import json
 
-with open("report.json") as f:
+with open("judged_report.json") as f:
     report = json.load(f)
 saturation = next(r for r in report["results"] if r["metric_id"] == "saturation")["details"]
 skills = saturation["by_concept_level"]["tags"]["ambiguous_concepts"]
@@ -666,8 +761,8 @@ validates the result against the contract before writing it out
 (`case_a_output.json` by default). `--semantic-model ''` runs it lexically only.
 
 ```bash
-taxonomy-pipeline run --config configs/original_vs_skillsfuture.yaml --output report.json
-taxonomy-pipeline case-a --report report.json --output case_a_output.json
+taxonomy-pipeline run --config configs/original_vs_skillsfuture.yaml --output judged_report.json
+taxonomy-pipeline case-a --report judged_report.json --output case_a_output.json
 ```
 
 ## Industry and occupational breadth
@@ -783,6 +878,25 @@ taxonomy-pipeline serve --reload
   `"running"` -> `"done"` or `"failed"`; once finished, the full report is
   in the response.
 - `GET /runs` - recent run history.
+- `GET /taxonomy/search?run_id=&dataset=&q=&level=&limit=` - name search
+  (case/punctuation-insensitive, via the same `normalize` `integrity` uses)
+  over a dataset loaded by a past run, optionally filtered by `level`
+  (`services`/`categories`/`specialities`/`tags`). `q` omitted lists
+  concepts unfiltered, up to `limit` (default 50, max 200) - a browse, not
+  a search.
+- `GET /taxonomy/{level}/{concept_id}?run_id=&dataset=` - one concept's
+  parent path(s) up to its service, its direct children one level down, and
+  (for a speciality) its linked tags. A tag gets one path per speciality
+  it's linked to, since it can be linked to more than one; an orphan row
+  (e.g. a speciality whose category doesn't resolve) gets a shorter path
+  rather than an error, the same row `integrity` would report as an orphan.
+
+Both `/taxonomy` endpoints re-read the dataset from disk on every call, using
+the file paths saved in that run's own config - nothing is kept loaded
+between requests, and no snapshot of what the run originally loaded is kept
+either. So a result reflects the source files' *current* contents, not
+necessarily what that run saw: editing a dataset file changes what the same
+`run_id` returns immediately, with no new run needed.
 
 Every run (CLI or API) is persisted to `taxonomy_pipeline.sqlite3` next to
 this README, so a future dashboard has run history to list and diff without
@@ -857,11 +971,20 @@ the CLI's stdout, `GET /runs/{run_id}`, or the SQLite `report_json` column:
       "metric_id": "integrity",
       "status": "ok",         // "ok" | "error" (bad params/dataset)
       "summary": "...",        // one-line, human-readable
-      "details": {...}         // metric-specific structured data - see that metric's module for its shape
+      "details": {...},        // metric-specific structured data - see that metric's module for its shape
+      "index": 0,              // position of the producing entry in the config's `metrics` list
+      "params": {"dataset": "original", "fuzzy_threshold": 85}  // that entry's params over the metric's defaults
     }
   ]
 }
 ```
+
+`index` and `params` say which config entry produced a result, since one
+config can run the same metric more than once (integrity once per dataset).
+They are `null` on reports saved before they existed. The CLI summary and the
+dashboard's run page label a repeated metric by the params that differ between
+its runs, e.g. `[OK] integrity (dataset=skillsfuture): ...`
+(`pipeline.result_labels`, mirrored by the dashboard's `metricLabels`).
 
 A check inside a metric that can't run on a given dataset is reported as
 `null`, not as an empty "all clean" result, and named with a reason in that
@@ -919,11 +1042,11 @@ Ruff linting and the test suite run in CI (see the root
   with its natural home (e.g. a functional skill used in one sector) falls
   back to its sector's industry category. Case B reads the skill description;
   embedding it here too is a possible follow-up.
-- **Case B service:** every resolved Case B placement is written with
-  `service="Industry"`, although most baseline categories sit under Function,
-  Subject or Others. A correct pick such as "Data analytics" (under Subject)
-  therefore reaches hierarchy screening as an exact match under a different
-  parent and stays pending rather than creating another category. Tracked in #52.
+- **Case B service selection:** the model now selects a service from the
+  baseline's allowed services and receives each speciality's service context in
+  its prompt. The output conversion preserves that selection, so categories
+  are no longer implicitly moved under `Industry`. The merge stages still
+  validate the complete service/category/speciality path.
 - **No promotion step:** `integrate` writes and checks an enriched snapshot,
   and `enriched.yaml` scores it, but comparing it against the baseline and
   promoting it to the next baseline is still the incremental flow in #49 (and
