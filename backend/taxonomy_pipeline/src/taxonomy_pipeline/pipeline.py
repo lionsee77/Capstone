@@ -5,6 +5,7 @@ over HTTP, so there is exactly one implementation of "what a run does".
 """
 from __future__ import annotations
 
+from collections import Counter
 from typing import Any
 
 from .config import PipelineConfig
@@ -59,33 +60,44 @@ def result_labels(results: list[MetricResult]) -> list[str]:
 
     `integrity` once stays `integrity`; run for two datasets it becomes
     `integrity (dataset=original)` and `integrity (dataset=skillsfuture)`. Only
-    params whose values differ between the repeats are shown. Repeats with
-    identical (or unrecorded) params fall back to their config position, `#<index>`.
+    params whose values differ between the repeats are shown. Repeats those
+    params still don't tell apart (identical or unrecorded params) get their
+    config position too, `#<index>`, so every label in a report is unique.
+    Mirrored by the dashboard's `metricLabels`; keep the two in step.
     """
     groups: dict[str, list[MetricResult]] = {}
     for result in results:
         groups.setdefault(result.metric_id, []).append(result)
     labels = []
-    for position, result in enumerate(results):
+    for result in results:
         group = groups[result.metric_id]
-        if len(group) == 1:
-            labels.append(result.metric_id)
-            continue
         params = [other.params or {} for other in group]
-        differing = sorted(key for key in {k for p in params for k in p} if len({repr(p.get(key)) for p in params}) > 1)
-        own = result.params or {}
-        if differing and result.params is not None:
-            shown = ", ".join(f"{key}={_param_text(own.get(key))}" for key in differing)
+        keys = sorted({key for p in params for key in p})
+        differing = [key for key in keys if len({_param_text(p.get(key)) for p in params}) > 1]
+        if len(group) > 1 and differing and result.params is not None:
+            shown = ", ".join(f"{key}={_param_text(result.params.get(key))}" for key in differing)
             labels.append(f"{result.metric_id} ({shown})")
         else:
-            labels.append(f"{result.metric_id} #{result.index if result.index is not None else position}")
-    return labels
+            labels.append(result.metric_id)
+    counts = Counter(labels)
+    return [
+        f"{label} #{result.index if result.index is not None else position}" if counts[label] > 1 else label
+        for position, (label, result) in enumerate(zip(labels, results, strict=True))
+    ]
 
 
 def _param_text(value: Any) -> str:
-    """Like the dashboard's `metricLabels` (JSON numbers): 85.0 prints as 85."""
-    if isinstance(value, list):
-        return ",".join(map(_param_text, value))
+    """One param value as label text, in the same format as the dashboard's `paramText`: JSON-like
+    literals (true, false, null), whole floats as integers (85.0 -> 85, as JSON numbers arrive in the
+    browser), top-level lists comma-joined, and objects with their keys sorted."""
+    if value is None:
+        return "null"
+    if isinstance(value, bool):
+        return "true" if value else "false"
     if isinstance(value, float) and value.is_integer():
         return str(int(value))
+    if isinstance(value, list):
+        return ",".join(_param_text(item) for item in value)
+    if isinstance(value, dict):
+        return "{" + ",".join(f"{key}:{_param_text(value[key])}" for key in sorted(value)) + "}"
     return str(value)

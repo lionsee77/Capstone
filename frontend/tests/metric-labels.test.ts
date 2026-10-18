@@ -28,6 +28,30 @@ describe("metricLabels", () => {
     expect(metricLabels(results)).toEqual(["saturation (incoming=a,b)", "saturation (incoming=c)"]);
   });
 
+  it("adds the position when repeats share their differing params", () => {
+    const results = [
+      result("integrity", 0, { dataset: "a" }),
+      result("integrity", 1, { dataset: "a" }),
+      result("integrity", 2, { dataset: "b" }),
+    ];
+    expect(metricLabels(results)).toEqual([
+      "integrity (dataset=a) #0",
+      "integrity (dataset=a) #1",
+      "integrity (dataset=b)",
+    ]);
+  });
+
+  it("keeps objects, booleans and nulls readable, in the pipeline's format", () => {
+    const results = [
+      result("depth", 0, { by_level: { tags: 0.8, specialities: 0.75 }, cross_level: true, model: null }),
+      result("depth", 1, { by_level: { tags: 0.9 }, cross_level: false, model: "m" }),
+    ];
+    expect(metricLabels(results)).toEqual([
+      "depth (by_level={specialities:0.75,tags:0.8}, cross_level=true, model=null)",
+      "depth (by_level={tags:0.9}, cross_level=false, model=m)",
+    ]);
+  });
+
   it("falls back to the config position for identical or unrecorded params", () => {
     expect(metricLabels([result("depth", 0, { dataset: "a" }), result("depth", 3, { dataset: "a" })])).toEqual([
       "depth #0",
