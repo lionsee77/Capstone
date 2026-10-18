@@ -94,6 +94,7 @@ frontend/
 │   │   │   ├── client.ts             #   fetch wrapper; parses every response with zod
 │   │   │   ├── proxy.ts              #   which pipeline endpoints the proxy forwards
 │   │   │   └── queries.ts            #   TanStack Query hooks + query keys
+│   │   ├── metric-labels.ts          #   labels repeated metrics by their differing params
 │   │   └── utils.ts                  #   `cn` class-name helper (shadcn)
 │   └── stores/
 │       └── source-draft-store.ts     #   zustand: datasets + metrics for a new source run

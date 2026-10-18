@@ -20,7 +20,7 @@ from pathlib import Path
 from . import db
 from .config import load_config
 from .datasets.base import LoadedDataset, TaxonomyDataset
-from .pipeline import load_datasets, run_pipeline
+from .pipeline import load_datasets, result_labels, run_pipeline
 
 SKILLSFUTURE_WORKBOOK = (
     Path(__file__).resolve().parents[3] / "skillsfuture" / "jobsandskills-skillsfuture-unique-skills-list.xlsx"
@@ -41,8 +41,8 @@ def _cmd_run(args: argparse.Namespace) -> int:
     else:
         print(output)
 
-    for result in report.results:
-        print(f"[{result.status.upper()}] {result.metric_id}: {result.summary}", file=sys.stderr)
+    for result, label in zip(report.results, result_labels(report.results), strict=True):
+        print(f"[{result.status.upper()}] {label}: {result.summary}", file=sys.stderr)
     if report.error:
         print(f"[FAILED] {report.error}", file=sys.stderr)
 
