@@ -12,18 +12,21 @@ from pydantic import (
     ConfigDict,
     Field,
     SerializerFunctionWrapHandler,
-    StringConstraints,
     TypeAdapter,
     model_serializer,
     model_validator,
 )
 
 from ..datasets.base import TaxonomyDataset
+from ..models import HierarchyGroup as HierarchyGroup
+from ..models import InputLocation as InputLocation
 from ..models import MetricResult
+from ..models import NonBlankText as NonBlankText
+from ..models import SourceTagRef as SourceTagRef
+from ..models import TaxonomyId as TaxonomyId
+from ..proposals.models import ProposalScreeningReport
 
-NonBlankText = Annotated[str, StringConstraints(pattern=r"\S")]
 Confidence = Annotated[float, Field(ge=0, le=1, allow_inf_nan=False)]
-TaxonomyId = Annotated[int, Field(gt=0)]
 CanonicalTagId = TaxonomyId | NonBlankText
 
 
@@ -109,13 +112,6 @@ class LegacyClassificationOutput(BaseModel):
         return self
 
 
-class InputLocation(BaseModel):
-    """Locate original evidence even after repeated placements are collapsed."""
-
-    input_name: str
-    row_index: int
-
-
 class PlacementTarget(BaseModel):
     """Existing IDs; null child IDs mark proposed additions at the output's named path."""
 
@@ -156,15 +152,6 @@ class BatchValidationReport(BaseModel):
     merged_outputs: list[ClassificationOutput]
 
 
-class SourceTagRef(BaseModel):
-    """Keep equal tag IDs from different datasets distinct."""
-
-    model_config = ConfigDict(strict=True, extra="forbid")
-
-    source_dataset: NonBlankText
-    tag_id: NonBlankText
-
-
 class DuplicateCandidate(BaseModel):
     """A suggested pair for review; a matching score does not approve a merge."""
 
@@ -190,17 +177,6 @@ class TagProposal(BaseModel):
     origins: list[InputLocation]
 
 
-class HierarchyGroup(BaseModel):
-    """One normalized parent path with label variants and all contributing sources."""
-
-    level: Literal["category", "speciality"]
-    path: list[str]
-    variants: list[list[str]]
-    existing_id: TaxonomyId | None
-    members: list[SourceTagRef]
-    origins: list[InputLocation]
-
-
 class DeduplicationReport(BaseModel):
     """Candidate evidence and shared hierarchy paths; decisions and preview construction follow later."""
 
@@ -214,6 +190,7 @@ class DeduplicationReport(BaseModel):
     tags: list[TagProposal]
     hierarchy: list[HierarchyGroup]
     candidates: list[DuplicateCandidate]
+    screening_hierarchy: list[HierarchyGroup] | None = None
 
 
 class TaxonomyPath(BaseModel):
@@ -331,6 +308,7 @@ class ResolutionReport(BaseModel):
     dispositions: list[SourceDisposition]
     counts: dict[str, int]
     partial: bool
+    screening: ProposalScreeningReport | None = None
 
 
 class PreviewCounts(BaseModel):

@@ -21,6 +21,7 @@ from . import db
 from .config import load_config
 from .datasets.base import LoadedDataset, TaxonomyDataset
 from .pipeline import load_datasets, result_labels, run_pipeline
+from .proposals.models import ScreeningSettings
 
 SKILLSFUTURE_WORKBOOK = (
     Path(__file__).resolve().parents[3] / "skillsfuture" / "jobsandskills-skillsfuture-unique-skills-list.xlsx"
@@ -120,6 +121,9 @@ def _cmd_merge_preview(args: argparse.Namespace) -> int:
     try:
         if not (args.input or args.legacy_case_a or args.legacy_case_b):
             raise ValueError("give at least one --input, --legacy-case-a or --legacy-case-b file")
+        screening_settings = ScreeningSettings(
+            lexical_threshold=args.screening_lexical, semantic_threshold=args.screening_semantic,
+        )
         baseline = _datasets(args, args.baseline)[args.baseline]
         run = run_merge_preview(
             args.input, baseline, out_dir=out_dir,
@@ -127,6 +131,7 @@ def _cmd_merge_preview(args: argparse.Namespace) -> int:
             skip_case_a_handoffs=args.skip_case_a_handoffs,
             decisions=load_decisions(args.decisions) if args.decisions else [],
             semantic_matcher=SemanticMatcher(args.semantic_model) if args.semantic_model else None,
+            screening_settings=screening_settings,
         )
     except (OSError, ValueError) as exc:
         print(f"[FAILED] merge-preview: {exc}", file=sys.stderr)
@@ -283,6 +288,11 @@ def build_parser() -> argparse.ArgumentParser:
                        help="skip legacy Case A rows that only route a tag to Case B")
     merge.add_argument("--decisions", help="JSON list of review decisions from an earlier run")
     merge.add_argument("--semantic-model", help="sentence model for semantic duplicate candidates")
+    screening_defaults = ScreeningSettings()
+    merge.add_argument("--screening-lexical", type=float, default=screening_defaults.lexical_threshold,
+                       help="hierarchy lexical review threshold, 0-1 (default: %(default)s; uncalibrated)")
+    merge.add_argument("--screening-semantic", type=float, default=screening_defaults.semantic_threshold,
+                       help="hierarchy semantic review threshold, 0-1 (default: %(default)s; needs --semantic-model)")
     merge.add_argument("--out-dir", help="where to write the reports (default: merge_runs/<timestamp>)")
     merge.set_defaults(func=_cmd_merge_preview)
 

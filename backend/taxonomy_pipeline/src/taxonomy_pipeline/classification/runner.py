@@ -19,6 +19,8 @@ from pathlib import Path
 from pydantic import TypeAdapter
 
 from ..datasets.base import TaxonomyDataset
+from ..matching import SimilarityMatcher
+from ..proposals.models import ScreeningSettings
 from .deduplication import deduplicate_outputs
 from .export import export_preview_csv
 from .models import BatchValidationReport, MergePreview, ReviewDecision
@@ -93,6 +95,7 @@ def _input_names(paths: list[Path]) -> dict[Path, str]:
     return names
 
 
+# Run the shared merge stages with optional screening settings and persist their review evidence.
 def run_merge_preview(
     inputs: list[str | Path],
     baseline: TaxonomyDataset,
@@ -102,7 +105,8 @@ def run_merge_preview(
     legacy_case_b: dict[str | Path, str] | None = None,
     skip_case_a_handoffs: bool = False,
     decisions: list[ReviewDecision] = (),
-    semantic_matcher: object | None = None,
+    semantic_matcher: SimilarityMatcher | None = None,
+    screening_settings: ScreeningSettings | None = None,
 ) -> MergeRun:
     """Chain the stages over producer files and write validation, deduplication,
     resolution and the preview CSV to `out_dir`.
@@ -125,7 +129,10 @@ def run_merge_preview(
         skip_case_a_handoffs=skip_case_a_handoffs,
     )
     deduplication = deduplicate_outputs(validation, semantic_matcher=semantic_matcher)
-    resolution = resolve_outputs(deduplication, baseline, list(decisions))
+    resolution = resolve_outputs(
+        deduplication, baseline, list(decisions), semantic_matcher=semantic_matcher,
+        screening_settings=screening_settings,
+    )
     preview = build_preview(resolution, baseline)
 
     out_dir = Path(out_dir)

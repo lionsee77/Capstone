@@ -115,6 +115,8 @@ def draft_decisions(
               for ref in (pair.left, pair.right)}
     placements = {(tag.source.source_dataset, tag.source.tag_id): tag.placements for tag in resolution.evidence.tags}
     ambiguous = saturation.ambiguous_matches()
+    hierarchy_held = {source for proposal in resolution.screening.proposals if proposal.status == "review"
+                      for source in proposal.source_tags} if resolution.screening else set()
 
     draft = BulkDraft(decisions=existing, drafted=[])
     for disposition in resolution.dispositions:
@@ -130,7 +132,7 @@ def draft_decisions(
         if concept is None:
             draft.counts["not_ambiguous"] += 1
             continue
-        if key in paired or not disposition.reason.startswith(PRODUCER_REVIEW_PREFIX):
+        if key in paired or key in hierarchy_held or not disposition.reason.startswith(PRODUCER_REVIEW_PREFIX):
             draft.counts["held_for_another_reason"] += 1
             continue
         if not closest or path is None:

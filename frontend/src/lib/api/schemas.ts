@@ -99,6 +99,57 @@ export const createRunResponseSchema = z.object({
   status: z.literal("queued"),
 });
 
+/** Mirrors proposals/models.py; persisted as resolution.json's optional `screening` field. */
+const proposalConceptLevelSchema = z.enum(["category", "speciality"]);
+const proposalConceptIdSchema = z.union([z.number().int(), z.string()]).nullable();
+
+export const existingConceptSchema = z.object({
+  reference: z.string(),
+  level: proposalConceptLevelSchema,
+  id: proposalConceptIdSchema,
+  name: z.string(),
+  path: z.array(z.string().nullable()),
+  path_ids: z.array(proposalConceptIdSchema),
+  reusable: z.boolean(),
+});
+
+export const conceptMatchSchema = z.object({
+  concept: existingConceptSchema,
+  match_types: z.array(z.enum(["normalized_name", "match_key", "lexical", "semantic"])),
+  lexical_score: z.number().min(0).max(1),
+  semantic_score: z.number().min(-1).max(1).nullable().default(null),
+  same_parent: z.boolean(),
+});
+
+export const screenedProposalSchema = z.object({
+  proposal_id: z.string(),
+  level: proposalConceptLevelSchema,
+  name: z.string(),
+  path: z.array(z.string()),
+  variants: z.array(z.array(z.string())),
+  source_tags: z.array(z.tuple([z.string(), z.string()])),
+  origins: z.array(z.tuple([z.string(), z.number().int()])),
+  matches: z.array(conceptMatchSchema).default([]),
+  status: z.enum(["new", "reuse", "review"]),
+  existing_id: z.number().int().nullable().default(null),
+  blocks_creation: z.boolean().default(false),
+  reason: z.string(),
+});
+
+export const screeningSettingsSchema = z.object({
+  lexical_threshold: z.number().min(0).max(1).default(0.9),
+  semantic_threshold: z.number().min(0).max(1).default(0.7),
+}).strict();
+
+export const proposalScreeningReportSchema = z.object({
+  baseline_snapshot_id: z.string(),
+  settings: screeningSettingsSchema,
+  semantic_status: z.enum(["disabled", "complete", "failed"]),
+  skipped_checks: z.record(z.string(), z.string()).default({}),
+  proposals: z.array(screenedProposalSchema),
+});
+export type ProposalScreeningReport = z.infer<typeof proposalScreeningReportSchema>;
+
 export function isRunFinished(status: RunStatus): boolean {
   return status === "done" || status === "failed";
 }

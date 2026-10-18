@@ -259,6 +259,21 @@ Use `resolve_outputs(deduplication, taxonomy, decisions)` from
 report, independent of producer filenames, branch formats, and source dataset names.
 The nine-field producer contract is unchanged.
 
+Before resolving additions, PB06 screens category and speciality proposals
+against the baseline. `ResolutionReport.screening` retains each proposal's paths,
+source references, exact/near matches and lexical/optional semantic scores.
+`DeduplicationReport.screening_hierarchy` includes complete proposals held by
+intake as well as eligible paths; it does not make held source tags eligible.
+
+Unambiguous exact spelling variants within the same parent reuse existing IDs.
+Near matches require review before automatic acceptance. An exact match at
+another parent or level, or an ambiguous exact match, blocks new-node creation;
+a tag decision cannot override that hierarchy hold. Safe approved paths still
+proceed; blocked paths are retained in `unapproved_paths` and flagged in the
+preview. Sources stay pending when all their decision's approved paths are blocked.
+See [hierarchy screening](README.md#hierarchy-proposal-screening) for the matching
+rules and report fields. This adds internal evidence, not producer JSON fields.
+
 Valid source tags with no duplicate candidates are accepted automatically, keeping
 all supplied placements and creating any required category/speciality nodes under
 their supplied parents. Tags named in duplicate candidate pairs, tags whose name
