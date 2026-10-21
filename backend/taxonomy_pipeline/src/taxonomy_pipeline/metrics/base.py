@@ -20,13 +20,24 @@ class Metric(ABC):
     # The param naming the taxonomy this metric scores (e.g. integrity's
     # "dataset", breadth's "target"), or None for a metric that doesn't score
     # one taxonomy. `integrate` uses it to point a round's config at the
-    # enriched snapshot, so a new scoring metric only needs to set it.
+    # enriched snapshot, so a new scoring metric only needs to set it. It also
+    # puts the metric under the metric definitions version, and tells
+    # `definitions.check_comparable` which param may differ between a baseline
+    # run and an enriched one (see `definitions.py`).
     subject_param: str | None = None
 
     def params_schema(self) -> dict[str, Any]:
         """Default parameters, exposed via `GET /metrics` so a caller (e.g. a
         future dashboard) knows what's tunable without reading the source."""
         return dict(self.default_params)
+
+    def definition(self) -> dict[str, Any]:
+        """What this metric's scores depend on besides a run's params: its
+        defaults, plus any fixed part of its formula that no param exposes
+        (a pinned model revision, a versioned text profile). Override to add
+        those. For a metric with a `subject_param`, this is part of the metric
+        definitions version (`definitions.py`), so changing it means a bump."""
+        return {"default_params": dict(self.default_params)}
 
     def resolve_params(self, params: dict[str, Any]) -> dict[str, Any]:
         merged = dict(self.default_params)

@@ -7,7 +7,7 @@ from datetime import UTC, datetime
 from typing import Annotated, Any, Literal
 from uuid import uuid4
 
-from pydantic import BaseModel, ConfigDict, Field, StringConstraints
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints, computed_field
 
 NonBlankText = Annotated[str, StringConstraints(pattern=r"\S")]
 TaxonomyId = Annotated[int, Field(gt=0)]
@@ -77,9 +77,57 @@ class RunReport(BaseModel):
     created_at: datetime = Field(default_factory=utcnow)
     finished_at: datetime | None = None
     status: Literal["queued", "running", "done", "failed"] = "queued"
+    # The metric definitions (formulas and defaults, see `definitions.py`) the
+    # results were scored with. Set by `pipeline.run_pipeline`; None on reports
+    # saved before runs were stamped, so their definitions are unknown rather
+    # than assumed current.
+    metric_definitions_version: int | None = None
     datasets: list[DatasetSummary] = Field(default_factory=list)
     results: list[MetricResult] = Field(default_factory=list)
     error: str | None = None
+
+
+class ComparabilityIssue(BaseModel):
+    """One reason two runs' numbers would not compare like for like."""
+
+    kind: Literal["run_status", "definitions_version", "missing_result", "result_status", "settings", "reference_data"]
+    message: str
+
+
+class MetricComparison(BaseModel):
+    """One scoring result of either run, matched to the other run's result scored
+    the same way. An index is None when the other run has no such result."""
+
+    metric_id: str
+    before_index: int | None = Field(default=None, description="Position in the before report's `results`")
+    after_index: int | None = Field(default=None, description="Position in the after report's `results`")
+    issues: list[ComparabilityIssue] = Field(default_factory=list)
+
+
+class Comparability(BaseModel):
+    """Whether two runs scored their taxonomies the same way - the precondition
+    for reading their difference as a change in the taxonomy (PB11).
+
+    Built by `definitions.check_comparable`. `issues` concern the whole run (a
+    failed run, different metric definitions); each entry in `metrics` pairs
+    one scoring result with its counterpart and lists what stops that pair
+    comparing. A version-to-version comparison report (#69) should only show
+    deltas for pairs without issues, and none at all when `issues` is not empty.
+    """
+
+    before_run_id: str
+    after_run_id: str
+    before_subject: str
+    after_subject: str
+    before_definitions_version: int | None
+    after_definitions_version: int | None
+    issues: list[ComparabilityIssue] = Field(default_factory=list)
+    metrics: list[MetricComparison] = Field(default_factory=list)
+
+    @computed_field
+    @property
+    def comparable(self) -> bool:
+        return not self.issues and not any(metric.issues for metric in self.metrics)
 
 
 ConceptLevel = Literal["services", "categories", "specialities", "tags"]

@@ -38,6 +38,10 @@ export const runReportSchema = z.object({
   created_at: z.string(),
   finished_at: z.string().nullable(),
   status: runStatusSchema,
+  // The metric definitions (formulas and defaults) the run was scored with; only
+  // runs with the same version compare. Null or absent on reports saved before
+  // runs were stamped, whose definitions are unknown.
+  metric_definitions_version: z.number().int().nullish(),
   datasets: z.array(datasetSummarySchema),
   results: z.array(metricResultSchema),
   error: z.string().nullable(),
@@ -89,6 +93,8 @@ export type MetricConfig = z.infer<typeof metricConfigSchema>;
 
 /** `POST /runs` body - same schema as the YAML configs. */
 export const pipelineConfigSchema = z.object({
+  // Optional pin: the run fails if the pipeline implements another definitions version.
+  metric_definitions_version: z.number().int().positive().optional(),
   datasets: z.array(datasetConfigSchema).min(1, "Add at least one dataset"),
   metrics: z.array(metricConfigSchema).min(1, "Pick at least one metric"),
 });

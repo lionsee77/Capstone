@@ -7,6 +7,7 @@ import pytest
 import yaml
 
 from taxonomy_pipeline.cli import main
+from taxonomy_pipeline.definitions import METRIC_DEFINITIONS_VERSION
 from tests.conftest import FIXTURES
 
 
@@ -268,19 +269,14 @@ def test_bulk_decide_refuses_a_merge_run_with_no_saturation_run_recorded(tmp_pat
     assert "records no saturation run" in capsys.readouterr().err
 
 
-def test_enriched_config_scores_the_snapshot_with_the_rounds_metrics(
-    tmp_path, saturation_report, classification_paths, capsys, monkeypatch,
-):
+def _integrated_round(tmp_path, saturation_report, classification_paths, metrics, **config_fields):
+    """A round config scoring `original` with `metrics`, taken through case-a, merge-preview and integrate.
+    Returns the config's path and the snapshot folder."""
     config_path = _write_stage_config(tmp_path)
     config = yaml.safe_load(config_path.read_text())
     config["datasets"][2:] = [{"name": kind, "type": kind, "paths": [str(path)]}
                               for kind, path in classification_paths.items()]
-    config["metrics"] = [
-        {"id": "integrity", "params": {"dataset": "original", "fuzzy_threshold": 70}},
-        {"id": "integrity", "params": {"dataset": "skillsfuture"}},  # scores another dataset: left out
-        {"id": "breadth", "params": {"target": "original", "matching_method": "lexical"}},
-        {"id": "saturation", "params": {"baseline": "original", "incoming": ["skillsfuture"]}},
-    ]
+    config.update(metrics=metrics, **config_fields)
     config_path.write_text(yaml.safe_dump(config))
     report = saturation_report([
         {"recommended_action": "ADD_CANDIDATE", "parent_status": "HAS_PARENT", "incoming_ids": [9001]},
@@ -291,6 +287,18 @@ def test_enriched_config_scores_the_snapshot_with_the_rounds_metrics(
           "--out-dir", str(tmp_path / "merge")])
     assert main(["integrate", "--config", str(config_path), "--merge-run", str(tmp_path / "merge"),
                  "--out-dir", str(tmp_path / "enriched")]) == 0
+    return config_path, tmp_path / "enriched"
+
+
+def test_enriched_config_scores_the_snapshot_with_the_rounds_metrics(
+    tmp_path, saturation_report, classification_paths, capsys, monkeypatch,
+):
+    _integrated_round(tmp_path, saturation_report, classification_paths, [
+        {"id": "integrity", "params": {"dataset": "original", "fuzzy_threshold": 70}},
+        {"id": "integrity", "params": {"dataset": "skillsfuture"}},  # scores another dataset: left out
+        {"id": "breadth", "params": {"target": "original", "matching_method": "lexical"}},
+        {"id": "saturation", "params": {"baseline": "original", "incoming": ["skillsfuture"]}},
+    ])
     capsys.readouterr()
 
     enriched = yaml.safe_load((tmp_path / "enriched" / "enriched.yaml").read_text())
@@ -310,3 +318,56 @@ def test_enriched_config_scores_the_snapshot_with_the_rounds_metrics(
     out = capsys.readouterr()
     for metric_id in ("integrity", "depth", "breadth", "saturation"):
         assert f"[OK] {metric_id}" in out.err + out.out
+
+
+def test_a_pinned_round_scores_the_baseline_and_its_snapshot_comparably(
+    tmp_path, saturation_report, classification_paths, capsys,
+):
+    config_path, snapshot = _integrated_round(tmp_path, saturation_report, classification_paths, [
+        {"id": "integrity", "params": {"dataset": "original", "fuzzy_threshold": 85}},
+        {"id": "depth", "params": {"dataset": "original"}},
+        {"id": "breadth", "params": {"target": "original", "matching_method": "lexical"}},
+        {"id": "saturation", "params": {"baseline": "original", "incoming": ["skillsfuture"]}},
+    ], metric_definitions_version=METRIC_DEFINITIONS_VERSION)
+    baseline, enriched = tmp_path / "baseline.json.gz", tmp_path / "enriched.json"
+    assert main(["run", "--config", str(config_path), "--output", str(baseline), "--no-save"]) == 0
+    assert main(["run", "--config", str(snapshot / "enriched.yaml"), "--output", str(enriched), "--no-save"]) == 0
+    capsys.readouterr()
+
+    assert main(["check-comparable", str(baseline), str(enriched)]) == 0
+    out = capsys.readouterr().out
+    assert [line for line in out.splitlines() if line.startswith("[")] == [
+        "[OK] integrity", "[OK] depth", "[OK] breadth", "[OK] saturation",
+    ]
+    version = f"definitions v{METRIC_DEFINITIONS_VERSION}"
+    assert f"(original, {version}), after" in out and f"(enriched, {version})" in out
+
+    # Scoring the snapshot another way is flagged, with what changed.
+    config = yaml.safe_load((snapshot / "enriched.yaml").read_text())
+    next(entry for entry in config["metrics"] if entry["id"] == "breadth")["params"]["threshold"] = 60
+    (snapshot / "lenient.yaml").write_text(yaml.safe_dump(config))
+    main(["run", "--config", str(snapshot / "lenient.yaml"), "--output", str(tmp_path / "lenient.json"), "--no-save"])
+    capsys.readouterr()
+
+    assert main(["check-comparable", str(baseline), str(tmp_path / "lenient.json")]) == 1
+    out = capsys.readouterr().out
+    assert "[FLAGGED] breadth: scored with different settings: threshold 75.0 -> 60" in out
+    assert "NOT comparable" in out
+
+
+def test_check_comparable_reads_runs_from_history_by_id(tmp_path, isolated_db, capsys):
+    from taxonomy_pipeline import db
+
+    config_path = _write_config(tmp_path, [{"id": "integrity", "params": {"dataset": "original"}}])
+    main(["run", "--config", str(config_path)])
+    main(["run", "--config", str(config_path)])
+    newer, older = (record.run_id for record in db.list_runs())
+    capsys.readouterr()
+
+    assert main(["check-comparable", older, newer]) == 0
+    assert "[OK] integrity" in capsys.readouterr().out
+
+
+def test_check_comparable_fails_cleanly_for_an_unknown_report(tmp_path, isolated_db, capsys):
+    assert main(["check-comparable", "no-such-run", str(tmp_path / "missing.json")]) == 1
+    assert "neither a report file nor a run ID" in capsys.readouterr().err

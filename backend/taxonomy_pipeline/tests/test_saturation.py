@@ -79,7 +79,7 @@ def test_invalid_threshold_reports_an_error():
 
 def test_semantic_candidates_are_reported_separately_from_lexical_matches(monkeypatch):
     class FakeSemanticMatcher:
-        def __init__(self, model_name):
+        def __init__(self, model_name, revision=None):
             assert model_name == "test-model"
 
         def best_matches(self, queries, choices):
@@ -117,6 +117,41 @@ def test_semantic_candidates_are_reported_separately_from_lexical_matches(monkey
     assert levels["tags"]["semantic_match_details"][0]["incoming_name"] == "Carbon Reporting"
     assert levels["categories"]["ambiguous_concepts"][0]["recommended_action"] == "ADD_CANDIDATE"
     assert levels["specialities"]["ambiguous_concepts"][0]["recommended_action"] == "REVIEW_AMBIGUOUS"
+
+
+def test_a_pinned_model_revision_is_loaded_and_recorded(monkeypatch):
+    loaded = []
+
+    class RecordingSemanticMatcher:
+        def __init__(self, model_name, revision=None):
+            loaded.append((model_name, revision))
+
+        def best_matches(self, queries, choices):
+            return [(None, None) for _ in queries]
+
+        def similarity(self, queries, choices):
+            return np.zeros((len(queries), len(choices)))
+
+    monkeypatch.setattr(saturation, "SemanticMatcher", RecordingSemanticMatcher)
+    result = SaturationMetric().run(_datasets(), {
+        "baseline": "original", "incoming": "skillsfuture",
+        "semantic_model": "test-model", "semantic_model_revision": "abc123",
+    })
+
+    assert result.status == "ok"
+    assert loaded == [("test-model", "abc123")]
+    assert result.details["semantic_model_revision"] == "abc123"
+
+
+@pytest.mark.parametrize(("params", "message"), [
+    ({"semantic_model_revision": "abc123"}, "semantic_model_revision needs semantic_model"),
+    ({"semantic_model": "test-model", "semantic_model_revision": " "}, "must be a model commit"),
+])
+def test_a_model_revision_must_pin_a_configured_model(params, message):
+    result = SaturationMetric().run(_datasets(), {"baseline": "original", "incoming": "skillsfuture", **params})
+
+    assert result.status == "error"
+    assert message in result.summary
 
 
 def test_invalid_semantic_threshold_reports_an_error():
@@ -182,7 +217,7 @@ def test_invalid_add_candidate_threshold_reports_an_error():
 def _fake_matcher(monkeypatch, results, parent_similarity=None):
     parent_similarity = parent_similarity or {}
     class FakeSemanticMatcher:
-        def __init__(self, model_name):
+        def __init__(self, model_name, revision=None):
             pass
 
         def best_matches(self, queries, choices):
@@ -675,7 +710,7 @@ class FakeJudge:
 
 def _judge_matcher(monkeypatch):
     class FakeSemanticMatcher:
-        def __init__(self, model_name):
+        def __init__(self, model_name, revision=None):
             pass
 
         def _scores(self, query):
