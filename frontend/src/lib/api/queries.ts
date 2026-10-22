@@ -70,13 +70,18 @@ function runListQuery(limit: number) {
   return { queryKey: queryKeys.runList(limit), queryFn: () => api.listRuns(limit) };
 }
 
-/** Polls while the run is queued/running, stops once it is done or failed. */
+/** Polls while the run is queued/running, stops once it is done or failed.
+ * An empty `runId` (nothing picked yet) disables the query instead of
+ * requesting `/runs/`. */
 export function useRun(runId: string) {
   return useQuery({
-    queryKey: queryKeys.run(runId),
-    queryFn: () => api.getRun(runId),
+    ...runQuery(runId),
     refetchInterval: (query) => pollWhileActive(query.state.data && [query.state.data]),
   });
+}
+
+export function runQuery(runId: string) {
+  return { queryKey: queryKeys.run(runId), queryFn: () => api.getRun(runId), enabled: runId !== "" };
 }
 
 export function useCreateRun() {
