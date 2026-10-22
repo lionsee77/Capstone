@@ -4,12 +4,15 @@ A run is a batch job, not a request/response - `POST /runs` validates the
 config, schedules the work as a background task, and returns immediately
 with a run id. Poll `GET /runs/{run_id}` for status (queued -> running ->
 done|failed) and, once done, the report. This is also the seam a future admin dashboard talks to.
+
+Every route requires the shared API token, and runs may only read dataset
+files under the configured data roots; see `security.py`.
 """
 from __future__ import annotations
 
 from pathlib import Path
 
-from fastapi import BackgroundTasks, FastAPI, HTTPException
+from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException
 
 from .. import db
 from ..config import PipelineConfig
@@ -17,11 +20,13 @@ from ..metrics.registry import METRICS
 from ..models import ConceptLevel, RunReport, TaxonomyConceptDetail, TaxonomyConceptSummary
 from ..pipeline import run_pipeline
 from . import taxonomy as taxonomy_api
+from .security import disallowed_paths, require_token
 
 app = FastAPI(
     title="Taxonomy Validation Pipeline",
     version="0.1.0",
     description="Runs integrity/breadth/depth/saturation checks against one or more taxonomy datasets.",
+    dependencies=[Depends(require_token)],
 )
 
 
@@ -55,6 +60,19 @@ def _require_absolute_dataset_paths(config: PipelineConfig) -> None:
         )
 
 
+def _require_allowed_dataset_paths(config: PipelineConfig) -> None:
+    """Reject paths outside the data roots, so a run can't be used to read arbitrary server files."""
+    outside = disallowed_paths(config)
+    if outside:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "message": "API dataset paths must be inside the server's allowed data directories.",
+                "disallowed_paths": outside,
+            },
+        )
+
+
 @app.get("/metrics")
 def list_metrics() -> dict:
     """Self-describing metric catalogue, so a dashboard can build a
@@ -68,6 +86,7 @@ def list_metrics() -> dict:
 @app.post("/runs", status_code=202)
 def create_run(config: PipelineConfig, background_tasks: BackgroundTasks) -> dict:
     _require_absolute_dataset_paths(config)
+    _require_allowed_dataset_paths(config)
     report = RunReport(status="queued")
     db.save_run(report, config_json=config.model_dump_json())
     background_tasks.add_task(_execute_and_save, report, config)

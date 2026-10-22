@@ -869,9 +869,30 @@ storage without a database migration.
 taxonomy-pipeline serve --reload
 ```
 
+Every request needs the shared API token in an `Authorization: Bearer <token>`
+header. Set it in `backend/.env` (or the server's environment):
+
+| Env var | Default | Meaning |
+|---|---|---|
+| `TAXONOMY_API_TOKEN` | *(none)* | The token every request must send. With no token set, **every request gets 401**, so a forgotten setting can't leave the API open. |
+| `TAXONOMY_API_AUTH` | *(on)* | Set to `off` to skip the token check, for local development on your own machine only. |
+| `TAXONOMY_DATA_ROOTS` | `backend/` | Directories (separated by `:` on macOS/Linux) that `POST /runs` may read dataset files from. Paths are resolved first, so `..` and symlinks can't escape. The default covers the bundled SQL dumps, SkillsFuture data, reference workbooks and `integrations/` snapshots, but only when the package is installed in editable mode (`pip install -e .`); otherwise set it explicitly. |
+
+```bash
+curl -H "Authorization: Bearer $TAXONOMY_API_TOKEN" http://localhost:8000/metrics
+```
+
+The dashboard's proxy adds the token server-side (see `frontend/README.md`),
+so give the frontend the same `TAXONOMY_API_TOKEN`. The token check lives in
+`api/security.py` and is attached to the whole app, so a new route is
+covered automatically. The interactive `/docs` page and `/openapi.json` stay
+public (they describe the API but run nothing), and the docs page can't send
+the token, so use curl or the dashboard to call endpoints.
+
 - `GET /metrics` - self-describing catalogue of what's runnable.
 - `POST /runs` - body is a `PipelineConfig` (the same schema as the YAML
-  configs, as JSON); dataset paths must be absolute paths on the server. It
+  configs, as JSON); dataset paths must be absolute paths on the server,
+  inside `TAXONOMY_DATA_ROOTS` (anything else is rejected with 422). It
   returns `{run_id, status: "queued"}` immediately and runs the pipeline in
   the background.
 - `GET /runs/{run_id}` - poll for status, which moves `"queued"` ->
@@ -944,7 +965,7 @@ Two things worth reusing rather than reimplementing when you do:
 
 **Config** (`config.py`) - what the CLI reads from YAML and what `POST
 /runs` accepts as JSON. YAML paths can be relative to the YAML file; API
-paths must be absolute server-side paths:
+paths must be absolute server-side paths inside `TAXONOMY_DATA_ROOTS`:
 
 ```yaml
 datasets:

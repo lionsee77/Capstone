@@ -1,11 +1,13 @@
 /**
  * Allowlist for the `/api/pipeline/*` proxy to the taxonomy pipeline API.
  *
- * The pipeline API has no authentication, and `POST /runs` makes the server
- * read whatever absolute dataset paths the caller sends. So the proxy forwards
- * only the endpoints the dashboard actually uses, and run creation is off
- * unless `PIPELINE_ALLOW_RUN_CREATION=true` is set for a trusted environment.
- * Add a route here (with a test) when the dashboard starts using a new one.
+ * The pipeline API requires a shared token (`TAXONOMY_API_TOKEN`). The proxy
+ * adds it server-side (`upstreamHeaders`), so it never reaches the browser,
+ * which means anyone who can load the dashboard acts with that token. So the
+ * proxy still forwards only the endpoints the dashboard actually uses, and run
+ * creation stays off unless `PIPELINE_ALLOW_RUN_CREATION=true` is set for a
+ * trusted environment. Add a route here (with a test) when the dashboard starts
+ * using a new one.
  *
  * Writes must also be same-origin JSON (`checkWriteRequest`): a `text/plain`
  * or form POST from another site needs no CORS preflight, so without this a
@@ -15,6 +17,7 @@
 export type ProxyEnv = {
   TAXONOMY_API_URL?: string;
   PIPELINE_ALLOW_RUN_CREATION?: string;
+  TAXONOMY_API_TOKEN?: string;
 };
 
 export type ProxyRejection = { ok: false; status: 403 | 404 | 415; reason: string };
@@ -139,6 +142,18 @@ export function checkWriteRequest(headers: WriteRequestHeaders): ProxyRejection 
     if (originHost === null || originHost !== requestHost) return CROSS_SITE;
   }
   return null;
+}
+
+/**
+ * Headers for the forwarded request: the caller's `Content-Type` on a body
+ * (already checked by `checkWriteRequest`), and the API token when one is
+ * configured. Nothing else from the browser's request is passed on.
+ */
+export function upstreamHeaders(contentType: string | null, env: ProxyEnv): Record<string, string> {
+  const headers: Record<string, string> = {};
+  if (contentType !== null) headers["Content-Type"] = contentType;
+  if (env.TAXONOMY_API_TOKEN) headers.Authorization = `Bearer ${env.TAXONOMY_API_TOKEN}`;
+  return headers;
 }
 
 /**
