@@ -25,7 +25,7 @@ cp .env.example .env.local   # optional, defaults to http://localhost:8000
 | Env var | Default | Meaning |
 |---|---|---|
 | `TAXONOMY_API_URL` | `http://localhost:8000` | Where `taxonomy-pipeline serve` is running |
-| `TAXONOMY_API_TOKEN` | *(none)* | The pipeline API's shared token (same value as in `backend/.env`). The proxy adds it server-side, so it never reaches the browser |
+| `TAXONOMY_API_TOKEN` | *(none)* | The token of the pipeline API this dashboard calls (the same value as that API's `backend/.env`). The proxy adds it server-side, so it never reaches the browser |
 | `PIPELINE_ALLOW_RUN_CREATION` | `false` | Allow the dashboard to start runs (`POST /runs`). Enable only in a trusted local environment (see [Security](#security)) |
 
 ## Run it
@@ -47,9 +47,9 @@ app needs no CORS config.
 
 ## Security
 
-The pipeline API requires a shared token, and `POST /runs` only reads dataset
-files inside the server's `TAXONOMY_DATA_ROOTS` (see
-`backend/taxonomy_pipeline/README.md`). The proxy adds the token server-side
+The pipeline API requires a token, and `POST /runs` only reads dataset files
+inside the server's `TAXONOMY_DATA_ROOTS` (see "Run it as a service" in
+`backend/taxonomy_pipeline/README.md`, including who needs which token). The proxy adds the token server-side
 (`upstreamHeaders` in `src/lib/api/proxy.ts`), so the browser never sees it.
 That also means **anyone who can open the dashboard acts with the token**,
 since the dashboard itself has no login yet:

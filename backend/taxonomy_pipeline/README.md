@@ -869,8 +869,9 @@ storage without a database migration.
 taxonomy-pipeline serve --reload
 ```
 
-Every request needs the shared API token in an `Authorization: Bearer <token>`
-header. Set it in `backend/.env` (or the server's environment):
+Every request needs the API token configured for that server, sent in an
+`Authorization: Bearer <token>` header. Set it in `backend/.env` (or the
+server's environment):
 
 | Env var | Default | Meaning |
 |---|---|---|
@@ -882,8 +883,19 @@ header. Set it in `backend/.env` (or the server's environment):
 curl -H "Authorization: Bearer $TAXONOMY_API_TOKEN" http://localhost:8000/metrics
 ```
 
+**Who needs which token.** A token belongs to one running API server, not to
+the project:
+
+- **Everyone running the API on their own machine** (the usual setup) picks
+  their own token, or sets `TAXONOMY_API_AUTH=off`. Only their own dashboard
+  calls that API, so nobody needs anyone else's token.
+- **One server that several people or dashboards call** (e.g. a deployed demo)
+  has one token. Whoever runs the server generates it and shares it privately
+  with the people who use it, never in git or a group chat. Changing it means
+  telling all of them.
+
 The dashboard's proxy adds the token server-side (see `frontend/README.md`),
-so give the frontend the same `TAXONOMY_API_TOKEN`. The token check lives in
+so give the dashboard that calls this API the same `TAXONOMY_API_TOKEN`. The token check lives in
 `api/security.py` and is attached to the whole app, so a new route is
 covered automatically. The interactive `/docs` page and `/openapi.json` stay
 public (they describe the API but run nothing), and the docs page can't send
