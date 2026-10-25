@@ -9,7 +9,8 @@ classified too, and their records flagged for review.
 
 Proposal-only: writes JSON and CSV review files and never touches a database.
 Taxonomies come from the pipeline config, the same datasets saturation and Case A
-use. The OpenAI client comes from `llm.py`; the SDK is an optional dependency
+use. Progress is logged to `taxonomy_pipeline.enrichment.case_b` (raw model
+responses at DEBUG), never printed. The OpenAI client comes from `llm.py`; the SDK is an optional dependency
 (`pip install -e ".[llm]"`) imported only when a run needs it, so this module imports without it.
 
 """
@@ -17,6 +18,7 @@ from __future__ import annotations
 
 import csv
 import json
+import logging
 import os
 from pathlib import Path
 from typing import Any
@@ -27,6 +29,7 @@ from ..taxonomy.base import TaxonomyDataset
 from .models import CLASSIFICATION_OUTPUTS
 from .routing import RUN_ID_FIELD, case_b_tag_ids, load_saturation, mark_ambiguous
 
+logger = logging.getLogger(__name__)
 ACTIONS = ["assign_existing", "propose_new_speciality", "propose_new_category"]
 VALID_ACTIONS = set(ACTIONS)
 PROPOSAL_FIELDS = ("tag", "tag_id", "action", "service", "category", "speciality", "confidence", "reason")
@@ -68,7 +71,7 @@ def proposal_is_well_formed(proposal: dict[str, Any]) -> bool:
 
 
 async def classify_batch(
-    client: Any, prompt: str, batch: list[dict[str, Any]], model: str, *, debug: bool = False,
+    client: Any, prompt: str, batch: list[dict[str, Any]], model: str,
 ) -> list[dict[str, Any]]:
     """Call the model, retrying when it omits or invents tag IDs."""
     expected = {item["tag_id"] for item in batch}
@@ -79,9 +82,7 @@ async def classify_batch(
                 model=model, messages=[{"role": "user", "content": prompt}], temperature=0,
             )
             raw = response.choices[0].message.content or ""
-            if debug:
-                print("  Raw model response:")
-                print(raw[:4000] if raw else "  <empty response>")
+            logger.debug("  Raw model response:\n%s", raw[:4000] if raw else "  <empty response>")
             proposals = parse_json(raw).get("proposals", [])
             for proposal in proposals:
                 if isinstance(proposal, dict) and proposal.get("tag_id") in expected and proposal_is_well_formed(
@@ -95,9 +96,9 @@ async def classify_batch(
                 f"\nYour last response was incomplete. Return exactly one proposal for these missing tag_id "
                 f"values: {missing}. Do not include any other tag IDs."
             )
-            print(f"  Incomplete response; retrying ({attempt}/3), missing {len(missing)}")
+            logger.info("  Incomplete response; retrying (%d/3), missing %d", attempt, len(missing))
         except Exception as exc:  # noqa: BLE001 - retry transient API and response errors
-            print(f"  Invalid model response; retrying ({attempt}/3): {exc}")
+            logger.info("  Invalid model response; retrying (%d/3): %s", attempt, exc)
     raise CaseBError(f"Model failed to return one valid proposal for every tag in batch: {sorted(expected)}")
 
 
@@ -194,14 +195,12 @@ def write_outputs(records: list[dict[str, Any]], output: Path) -> None:
         writer.writerows(records)
 
 
-def _openai_client(debug: bool) -> Any:
+def _openai_client() -> Any:
     try:
         client = llm.openai_client("Case B", async_client=True)
     except llm.LLMError as exc:
         raise CaseBError(str(exc)) from exc
-    if debug:
-        print(f"OpenAI endpoint: {llm.base_url()}")
-        print("API key loaded: yes")
+    logger.debug("OpenAI endpoint: %s\nAPI key loaded: yes", llm.base_url())
     return client
 
 
@@ -267,7 +266,6 @@ async def run_case_b(
     checkpoint: str | Path | None = None,
     batch_size: int = 5,
     model: str | None = None,
-    debug: bool = False,
     client: Any = None,
 ) -> list[dict[str, Any]]:
     """Classify every Case B tag and write `output` (JSON) plus a CSV next to it.
@@ -293,14 +291,15 @@ async def run_case_b(
     if not input_tag_ids:
         raise CaseBError(f"None of the Case B tags in {report_path} exist in dataset {incoming!r}")
     ambiguous = sum(tag_id in saturation.ambiguous_matches() for tag_id in input_tag_ids)
-    print(f"Using {len(input_tag_ids)} Case B tag(s) from {report_path} (NO_PARENT; {ambiguous} need review)")
+    logger.info(
+        "Using %d Case B tag(s) from %s (NO_PARENT; %d need review)", len(input_tag_ids), report_path, ambiguous,
+    )
 
     contexts = provider.load_tag_context(context)
     services, categories, specialities = baseline_hierarchy(datasets[baseline])
     if client is None:
-        client = _openai_client(debug)
-    if debug:
-        print(f"Model: {model}")
+        client = _openai_client()
+    logger.debug("Model: %s", model)
 
     provenance = {"saturation_run_id": saturation.run_id, "incoming": incoming, "model": model}
     wanted = set(input_tag_ids)
@@ -310,16 +309,16 @@ async def run_case_b(
     # Batch only what is still missing, so resuming with a different --batch-size never resends finished tags.
     pending = [tag_id for tag_id in input_tag_ids if tag_id not in proposals]
     if proposals:
-        print(f"Resuming from {checkpoint}: {len(proposals)}/{len(input_tag_ids)} already classified")
+        logger.info("Resuming from %s: %d/%d already classified", checkpoint, len(proposals), len(input_tag_ids))
     for start in range(0, len(pending), batch_size):
         batch = []
         for tag_id in pending[start:start + batch_size]:
             batch.append({"tag_id": tag_id, "title": tags[tag_id], **provider.context_for(contexts, tag_id)})
         prompt = build_prompt(services, categories, specialities, batch, source_name=provider.display_name)
-        for proposal in await classify_batch(client, prompt, batch, model, debug=debug):
+        for proposal in await classify_batch(client, prompt, batch, model):
             proposals[proposal["tag_id"]] = proposal
         _save_checkpoint(checkpoint, provenance, proposals)
-        print(f"Processed {len(proposals)}/{len(input_tag_ids)}")
+        logger.info("Processed %d/%d", len(proposals), len(input_tag_ids))
 
     ordered = [proposals[tag_id] for tag_id in input_tag_ids]
     records = mark_ambiguous(
@@ -327,7 +326,7 @@ async def run_case_b(
     )
     CLASSIFICATION_OUTPUTS.validate_python(records)
     write_outputs(records, output)
-    print(f"Wrote {len(records)} classifications to {output} and {output.with_suffix('.csv')}")
+    logger.info("Wrote %d classifications to %s and %s", len(records), output, output.with_suffix(".csv"))
     if checkpoint.exists():
         checkpoint.unlink()
     return records

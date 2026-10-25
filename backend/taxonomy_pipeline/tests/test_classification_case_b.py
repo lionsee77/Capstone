@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import csv
 import json
+import logging
 from types import SimpleNamespace
 
 import pytest
@@ -184,6 +185,20 @@ class CrashAfter(StubClient):
         return await super()._create(model=model, messages=messages, temperature=temperature)
 
 
+def test_run_logs_its_progress_instead_of_printing_it(tmp_path, workbook, saturation_report, caplog, capsys):
+    unresolved = {**PROPOSAL, "tag_id": "3002", "action": "propose_new_category", "category": "", "speciality": ""}
+    with caplog.at_level(logging.DEBUG, logger="taxonomy_pipeline.enrichment.case_b"):
+        _run(saturation_report(CONCEPTS), tmp_path / "out.json", StubClient(_response(PROPOSAL, unresolved)),
+             workbook=workbook)
+
+    messages = [record.getMessage() for record in caplog.records]
+    assert messages[0].startswith("Using 2 Case B tag(s) from")
+    assert "Processed 2/2" in messages and messages[-1].startswith("Wrote 2 classifications to")
+    assert any(record.levelno == logging.DEBUG and "Raw model response" in record.getMessage()
+               for record in caplog.records)
+    assert capsys.readouterr().out == ""
+
+
 def test_run_resumes_from_a_checkpoint_without_calling_the_model_again(tmp_path, workbook, saturation_report):
     report, output = saturation_report(SIX_TAGS), tmp_path / "case_b_output.json"
     with pytest.raises(CaseBError):
@@ -277,7 +292,7 @@ def test_missing_llm_dependencies_explain_the_extra(monkeypatch):
 
     monkeypatch.setattr(builtins, "__import__", without_openai)
     with pytest.raises(CaseBError, match=r"\.\[llm\]"):
-        case_b._openai_client(debug=False)
+        case_b._openai_client()
 
 
 def test_flags_ambiguous_tags_for_review_in_the_json_and_csv(tmp_path, workbook, saturation_report):

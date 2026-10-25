@@ -179,7 +179,7 @@ def test_case_a_then_merge_preview_run_end_to_end_from_the_cli(tmp_path, saturat
 
 
 def test_integrate_refuses_a_merge_run_with_nothing_to_add(tmp_path, capsys):
-    from tests.test_classification_integrate import PRODUCER_FILES
+    from tests.conftest import PRODUCER_FILES
 
     # These producer files target another baseline, so validation sets every record aside.
     config_path = _write_stage_config(tmp_path)
@@ -445,3 +445,20 @@ def test_check_comparable_never_creates_run_history_to_look_up_a_run_id(isolated
 
     assert "there is no run history" in capsys.readouterr().err
     assert not isolated_db.exists()
+
+
+def test_library_logs_print_to_stdout_as_bare_lines_without_repeating(capsys):
+    import logging
+
+    from taxonomy_pipeline import cli
+
+    logger = logging.getLogger("taxonomy_pipeline.enrichment.case_b")
+    cli._show_library_logs(logging.INFO)
+    cli._show_library_logs(logging.INFO)  # a second command in the same process must not double the output
+    logger.info("Processed %d/%d", 1, 2)
+    logger.debug("Raw model response")
+
+    assert capsys.readouterr().out == "Processed 1/2\n"
+    cli._show_library_logs(logging.DEBUG)
+    logger.debug("Raw model response")
+    assert capsys.readouterr().out == "Raw model response\n"

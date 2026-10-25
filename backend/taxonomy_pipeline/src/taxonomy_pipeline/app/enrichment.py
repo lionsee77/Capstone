@@ -49,14 +49,14 @@ def case_a(
 def case_b(
     config_path: str | Path, report: str | Path, *, baseline: str, incoming: str, output: str | Path,
     provider: str | None = None, context: str | Path | None = None, checkpoint: str | Path | None = None,
-    batch_size: int = 5, model: str | None = None, debug: bool = False,
+    batch_size: int = 5, model: str | None = None,
 ) -> list[dict[str, Any]]:
     """Classify the tags saturation routed to Case B; `provider` defaults to the incoming dataset's name."""
     datasets = load_taxonomies(config_path, baseline, incoming)
     source = get_provider(provider or incoming)
     return asyncio.run(run_case_b(
         datasets, report, baseline=baseline, incoming=incoming, provider=source, context=context, output=output,
-        checkpoint=checkpoint, batch_size=batch_size, model=model, debug=debug,
+        checkpoint=checkpoint, batch_size=batch_size, model=model,
     ))
 
 

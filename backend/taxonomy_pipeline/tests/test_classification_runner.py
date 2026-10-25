@@ -7,7 +7,6 @@ from pathlib import Path
 
 import pytest
 
-from taxonomy_pipeline.enrichment.models import PlacementPath, ReviewDecision
 from taxonomy_pipeline.enrichment.runner import (
     MixedSaturationRunsError,
     load_decisions,
@@ -15,9 +14,8 @@ from taxonomy_pipeline.enrichment.runner import (
     run_merge_preview,
 )
 from taxonomy_pipeline.taxonomy.base import TaxonomyDataset
-
-FIXTURES = Path(__file__).parent / "fixtures" / "classification"
-PRODUCER_FILES = [FIXTURES / "case_a.json", FIXTURES / "case_b.json"]
+from tests.conftest import CLASSIFICATION_FIXTURES as FIXTURES
+from tests.conftest import PRODUCER_FILES, approve_data_analytics, review_candidate_file
 
 
 @pytest.fixture
@@ -42,32 +40,6 @@ def test_writes_every_stage_report_and_leaves_duplicate_candidates_pending(tmp_p
     assert run.preview.counts.pending_sources > 0
     with (tmp_path / "run" / "preview.csv").open(encoding="utf-8-sig") as stream:
         assert any(row["status"] == "pending" for row in csv.DictReader(stream))
-
-
-def review_candidate_file(tmp_path: Path) -> Path:
-    """A producer file like Case A's: one tag offered under two candidate categories, flagged for review,
-    next to an ordinary placement that needs nothing."""
-    def record(tag_id: str, tag: str, category: str, speciality: str, **extra: object) -> dict[str, object]:
-        return {
-            "source_dataset": "case-a", "tag_id": tag_id, "tag": tag, "original_classification": "classified",
-            "service": "Subject", "category": category, "speciality": speciality, "confidence": 0.5,
-            "reason": "Proposal", **extra,
-        }
-
-    path = tmp_path / "case_a_output.json"
-    path.write_text(json.dumps([
-        record("9", "Fire Prevention", "Data analytics", "Fire Prevention", needs_review=True),
-        record("9", "Fire Prevention", "Biology", "Fire Prevention", needs_review=True),
-        record("10", "Spreadsheet Modelling", "Data analytics", "Data presentation"),
-    ]), encoding="utf-8")
-    return path
-
-
-def approve_data_analytics() -> ReviewDecision:
-    return ReviewDecision(
-        members=[{"source_dataset": "case-a", "tag_id": "9"}], action="create", reason="Reviewed",
-        approved_paths=[PlacementPath(service="Subject", category="Data analytics", speciality="Fire Prevention")],
-    )
 
 
 def _placement_rows(out_dir: Path) -> dict[tuple[str, str], dict[str, str]]:

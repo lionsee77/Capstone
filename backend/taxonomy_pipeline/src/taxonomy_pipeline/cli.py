@@ -10,6 +10,7 @@ outputs - belongs in its use case, not here.
 from __future__ import annotations
 
 import argparse
+import logging
 import sys
 from pathlib import Path
 
@@ -100,7 +101,7 @@ def _cmd_case_b(args: argparse.Namespace) -> int:
         use_cases.case_b(
             args.config, args.report, baseline=args.baseline, incoming=args.incoming, output=args.output,
             provider=args.provider, context=args.context, checkpoint=args.checkpoint, batch_size=args.batch_size,
-            model=args.model, debug=args.debug_response,
+            model=args.model,
         )
     except (OSError, ValueError, RuntimeError) as exc:
         print(f"[FAILED] case-b: {exc}", file=sys.stderr)
@@ -242,7 +243,8 @@ def build_parser() -> argparse.ArgumentParser:
     case_b.add_argument("--checkpoint", help="checkpoint file for resuming after a failed run")
     case_b.add_argument("--batch-size", type=int, default=5)
     case_b.add_argument("--model", help="OpenAI model name (default: $OPENAI_MODEL or gpt-4o-mini)")
-    case_b.add_argument("--debug-response", action="store_true", help="print up to 4,000 characters per response")
+    case_b.add_argument("--debug-response", action="store_true",
+                        help="also log the endpoint, model and up to 4,000 characters per response")
     case_b.set_defaults(func=_cmd_case_b)
 
     merge = subparsers.add_parser("merge-preview", help="validate, deduplicate and resolve outputs into a preview CSV")
@@ -289,9 +291,29 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+_log_handler: logging.Handler | None = None
+
+
+def _show_library_logs(level: int) -> None:
+    """Print the package's log records (e.g. Case B progress) to stdout as bare lines, as a command's own output.
+
+    Bound to the current `sys.stdout` on every call, replacing the previous handler, so a caller
+    that redirects stdout around `main` (tests, the golden run) captures them too.
+    """
+    global _log_handler
+    package = logging.getLogger("taxonomy_pipeline")
+    if _log_handler is not None:
+        package.removeHandler(_log_handler)
+    _log_handler = logging.StreamHandler(sys.stdout)
+    _log_handler.setFormatter(logging.Formatter("%(message)s"))
+    package.addHandler(_log_handler)
+    package.setLevel(level)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
+    _show_library_logs(logging.DEBUG if getattr(args, "debug_response", False) else logging.INFO)
     return args.func(args)
 
 

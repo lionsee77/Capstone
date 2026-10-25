@@ -215,7 +215,9 @@ OPENAI_API_KEY=your-openai-api-key
 OPENAI_MODEL=gpt-4o-mini
 ```
 
-Options: `--batch-size` (default 5), `--model`, `--debug-response`,
+Options: `--batch-size` (default 5), `--model`, `--debug-response` (also
+shows the endpoint, model and each raw response; Case B logs its progress to
+the `taxonomy_pipeline.enrichment.case_b` logger, which the CLI prints),
 `--checkpoint`, `--output` (default `case_b_output.json`; a CSV is written next
 to it). Completed batches are checkpointed to a hidden file next to the output,
 so an interrupted run resumes without paying for finished tags, even with a
