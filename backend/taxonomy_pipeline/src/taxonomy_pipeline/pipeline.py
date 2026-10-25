@@ -5,12 +5,16 @@ over HTTP, so there is exactly one implementation of "what a run does".
 """
 from __future__ import annotations
 
+import gzip
+import zlib
 from collections import Counter
+from pathlib import Path
 from typing import Any
 
 from .config import PipelineConfig
 from .datasets import load_dataset
 from .datasets.base import LoadedDataset
+from .definitions import METRIC_DEFINITIONS_VERSION
 from .metrics.registry import get_metric
 from .models import DatasetSummary, MetricResult, RunReport, utcnow
 
@@ -22,20 +26,28 @@ def load_datasets(config: PipelineConfig) -> dict[str, LoadedDataset]:
 def run_pipeline(config: PipelineConfig) -> RunReport:
     """Run every configured metric against the configured datasets.
 
+    Every report is stamped with the metric definitions version it is scored
+    with. A config pinned to another version fails the run before anything
+    loads: its results would not be what the config was written to produce.
     A bad dataset (missing file, unreadable dump) fails the whole run, since
     nothing downstream can run without it. A bad *metric* (unknown id, a
     param that makes it raise) does not - it's caught and turned into its
     own `MetricResult(status="error")` so one broken metric can't discard
     every other metric's already-computed result.
     """
-    report = RunReport(status="running")
+    report = RunReport(status="running", metric_definitions_version=METRIC_DEFINITIONS_VERSION)
+    pinned = config.metric_definitions_version
+    if pinned is not None and pinned != METRIC_DEFINITIONS_VERSION:
+        current = METRIC_DEFINITIONS_VERSION
+        return _failed(report, (
+            f"config pins metric definitions v{pinned}, but this code scores with v{current}; score with a "
+            f"config pinned to v{current} (configs/baseline_v{current}.yaml, or an enriched.yaml integrated "
+            f"from it), or run this config from a commit that implements v{pinned}"
+        ))
     try:
         datasets = load_datasets(config)
     except Exception as exc:
-        report.status = "failed"
-        report.error = f"{type(exc).__name__}: {exc}"
-        report.finished_at = utcnow()
-        return report
+        return _failed(report, f"{type(exc).__name__}: {exc}")
 
     report.datasets = [DatasetSummary(name=name, counts=ds.counts()) for name, ds in datasets.items()]
 
@@ -53,6 +65,33 @@ def run_pipeline(config: PipelineConfig) -> RunReport:
     report.status = "done"
     report.finished_at = utcnow()
     return report
+
+
+def _failed(report: RunReport, error: str) -> RunReport:
+    report.status = "failed"
+    report.error = error
+    report.finished_at = utcnow()
+    return report
+
+
+def write_report(report: RunReport, path: str | Path) -> None:
+    """Save a report as JSON, gzip-compressed when the file name ends in `.gz`
+    (a saturation run lists every concept, so a full report runs to megabytes)."""
+    path = Path(path)
+    data = report.model_dump_json(indent=2).encode("utf-8")
+    path.write_bytes(gzip.compress(data, mtime=0) if path.suffix == ".gz" else data)
+
+
+def read_report(path: str | Path) -> RunReport:
+    """Load a report saved by `write_report` (or `taxonomy-pipeline run --output`)."""
+    path = Path(path)
+    data = path.read_bytes()
+    if path.suffix == ".gz":
+        try:
+            data = gzip.decompress(data)
+        except (OSError, EOFError, zlib.error) as exc:  # not gzip, truncated, or corrupted
+            raise ValueError(f"{path} is not a readable gzip report: {exc}") from exc
+    return RunReport.model_validate_json(data)
 
 
 def result_labels(results: list[MetricResult]) -> list[str]:

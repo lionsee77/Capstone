@@ -38,11 +38,49 @@ export const runReportSchema = z.object({
   created_at: z.string(),
   finished_at: z.string().nullable(),
   status: runStatusSchema,
+  // The metric definitions (formulas and defaults) the run was scored with; only
+  // runs with the same version compare. Null or absent on reports saved before
+  // runs were stamped, whose definitions are unknown.
+  metric_definitions_version: z.number().int().nullish(),
   datasets: z.array(datasetSummarySchema),
   results: z.array(metricResultSchema),
   error: z.string().nullable(),
 });
 export type RunReport = z.infer<typeof runReportSchema>;
+
+/** Mirrors `ComparabilityIssue`: one reason two runs' numbers don't compare like for like. */
+export const comparabilityIssueSchema = z.object({
+  kind: z.enum(["run_status", "definitions_version", "missing_result", "result_status", "settings", "reference_data"]),
+  message: z.string(),
+});
+export type ComparabilityIssue = z.infer<typeof comparabilityIssueSchema>;
+
+/** Mirrors `MetricComparison`: a scoring result paired with its counterpart; an index is null when there is none. */
+export const metricComparisonSchema = z.object({
+  metric_id: z.string(),
+  before_index: z.number().int().nullable(),
+  after_index: z.number().int().nullable(),
+  issues: z.array(comparabilityIssueSchema),
+});
+export type MetricComparison = z.infer<typeof metricComparisonSchema>;
+
+/**
+ * Mirrors `Comparability` (`definitions.check_comparable`): whether two runs were scored alike. A
+ * version comparison (#69) shows deltas only for pairs without issues, and none when `issues` isn't empty.
+ */
+export const comparabilitySchema = z.object({
+  before_run_id: z.string(),
+  after_run_id: z.string(),
+  // Null when that run didn't finish, so it records no scored taxonomy.
+  before_subject: z.string().nullable(),
+  after_subject: z.string().nullable(),
+  before_definitions_version: z.number().int().nullable(),
+  after_definitions_version: z.number().int().nullable(),
+  issues: z.array(comparabilityIssueSchema),
+  metrics: z.array(metricComparisonSchema),
+  comparable: z.boolean(),
+});
+export type Comparability = z.infer<typeof comparabilitySchema>;
 
 /** `GET /runs` rows - a summary, not the full report. */
 export const runSummarySchema = runReportSchema.pick({ run_id: true, status: true, created_at: true });
@@ -89,6 +127,8 @@ export type MetricConfig = z.infer<typeof metricConfigSchema>;
 
 /** `POST /runs` body - same schema as the YAML configs. */
 export const pipelineConfigSchema = z.object({
+  // Optional pin: the run fails if the pipeline implements another definitions version.
+  metric_definitions_version: z.number().int().positive().optional(),
   datasets: z.array(datasetConfigSchema).min(1, "Add at least one dataset"),
   metrics: z.array(metricConfigSchema).min(1, "Pick at least one metric"),
 });

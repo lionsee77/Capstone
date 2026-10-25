@@ -19,7 +19,11 @@ wrapper around one library function in the same way.
 
 ```text
 taxonomy_pipeline/
-├── configs/                          # example pipeline configs
+├── baselines/                        # stored baseline-of-record reports, one per definitions version
+│   └── baseline_v1.json.gz           #   the original taxonomy scored with definitions v1
+├── configs/                          # pipeline configs
+│   ├── baseline_v1.yaml              #   pinned config that produced baselines/baseline_v1.json.gz
+│   └── original_vs_skillsfuture.yaml #   classification rounds: scores both taxonomies, saturation judge on
 ├── docs/                             # design notes and future-work references
 │   ├── saturation-coverage-options.md      #   options for deciding "good coverage" from the saturation curve
 │   └── saturation-threshold-calibration.md #   method for choosing saturation thresholds from labelled pairs
@@ -53,15 +57,16 @@ taxonomy_pipeline/
 │   │   ├── runner.py                 #   chains merge 1-5 for `merge-preview`
 │   │   ├── bulk_decisions.py         #   `bulk-decide`: draft decisions for ambiguous tags by similarity
 │   │   └── integrate.py              #   reviewed merge run -> enriched snapshot (real IDs, additions.sql)
-│   ├── config.py                     # YAML/JSON pipeline config (datasets + metrics)
-│   ├── models.py                     # shared reports, hierarchy groups and source/evidence references
+│   ├── config.py                     # YAML/JSON pipeline config (datasets + metrics + optional definitions pin)
+│   ├── models.py                     # shared reports, comparability checks, hierarchy groups, evidence references
 │   ├── matching.py                   # shared optional similarity protocol for merge and screening
-│   ├── pipeline.py                   # run_pipeline(config) -> RunReport
+│   ├── definitions.py                # METRIC_DEFINITIONS_VERSION and check_comparable (see "Official metric definitions")
+│   ├── pipeline.py                   # run_pipeline(config) -> RunReport; reading/writing saved reports
 │   ├── db.py                         # SQLite run history
 │   ├── api/
 │   │   ├── app.py                    #   FastAPI: /metrics, /runs, /taxonomy
 │   │   └── taxonomy.py               #   dataset resolution + search/detail queries behind /taxonomy
-│   └── cli.py                        # `taxonomy-pipeline run|serve|case-a|case-b|merge-preview|integrate`
+│   └── cli.py                        # `taxonomy-pipeline run|check-comparable|serve|case-a|case-b|merge-preview|bulk-decide|integrate`
 ├── schemas/
 │   └── classification_output.schema.json # JSON Schema for the producer contract
 └── tests/
@@ -117,8 +122,10 @@ taxonomy-pipeline bulk-decide --merge-run merge_runs/<timestamp> --report judged
     --create-below 0.6 --reuse-above 0.9 --output decisions.json
 taxonomy-pipeline merge-preview --input case_a_output.json --input case_b_output.json \
     --decisions decisions.json --out-dir merge_runs/reviewed
-taxonomy-pipeline integrate --merge-run merge_runs/reviewed
-taxonomy-pipeline run --config integrations/<timestamp>/enriched.yaml   # score the enriched taxonomy
+# score the enriched taxonomy the way the baseline of record was scored, then check it compares:
+taxonomy-pipeline integrate --merge-run merge_runs/reviewed --config configs/baseline_v1.yaml
+taxonomy-pipeline run --config integrations/<timestamp>/enriched.yaml --output enriched_report.json
+taxonomy-pipeline check-comparable baselines/baseline_v1.json.gz enriched_report.json
 ```
 
 **Run saturation once per round and give both producers the same
@@ -214,7 +221,8 @@ records, plus `valid_rate` and `review_rate`.
   `tests/fixtures/classification/review_decisions.json` for an example).
 - `--semantic-model all-MiniLM-L6-v2` adds meaning-based duplicate candidates
   (needs `.[semantic]`); without it, only name/spelling candidates are found and
-  the preview is marked partial.
+  the preview is marked partial. The model loads at the revision pinned in
+  `metrics/embeddings.py`, as saturation and breadth do.
 - Older exports go through temporary adapters: `--legacy-case-a FILE`,
   `--legacy-case-b FILE=SOURCE_DATASET`, and `--skip-case-a-handoffs`.
 - Exit code is non-zero if an input file is unreadable or the preview is
@@ -393,6 +401,12 @@ integrations/<timestamp>/
   relative to the working directory, so run it from `backend/taxonomy_pipeline/`
   to reuse cached verdicts. The config used is recorded as `scoring_config` in
   the manifest's `merge_run` provenance.
+- A `metric_definitions_version` pin in `--config` is copied into
+  `enriched.yaml` too. To compare the snapshot with the baseline of record
+  (PB11), integrate with `--config configs/baseline_v1.yaml`: the default round
+  config runs saturation's judge and the baseline doesn't, so their saturation
+  results would not compare (see
+  [Official metric definitions](#official-metric-definitions-and-the-baseline-of-record)).
 
 ## Setup
 
@@ -428,9 +442,131 @@ SkillsFuture concepts against the original taxonomy for `saturation` (see
 and a one-line-per-metric summary to stderr; pass
 `--output judged_report.json` to write the report to a file instead
 (git-ignored; about 22 MB for this comparison, because every saturation entry
-lists its parents). Saturation runs with the judge on in this config, so it
+lists its parents). A name ending in `.gz` is gzip-compressed (about 1.5 MB);
+`check-comparable` reads those, but `case-a`, `case-b` and `bulk-decide` need
+plain JSON. Saturation runs with the judge on in this config, so it
 needs `OPENAI_API_KEY`; reruns read `judge_cache.json` and make no new calls. Every run is also saved to SQLite run history; pass `--no-save` to
 skip that.
+
+This config drives classification rounds. The official scorecard of a
+taxonomy - the numbers a before/after comparison uses - comes from
+`configs/baseline_v1.yaml` instead; see the next section.
+
+## Official metric definitions and the baseline of record
+
+A score depends on the method as much as on the taxonomy: switching breadth to
+semantic matching (#79) moved the original taxonomy's industry coverage from 0%
+to 22%, and SkillsFuture's occupational coverage from 6.9% to 57.9%, with
+neither taxonomy changed. A before/after comparison of an enriched taxonomy
+(PB11, #29) only shows the enrichment if both runs were scored the same way, so
+the pipeline makes that checkable:
+
+- **Every report records `metric_definitions_version`**, the version of every
+  scoring metric's formulas and defaults (`definitions.py`). Reports saved
+  before versioning have `null`: unknown, never assumed current.
+- **`configs/baseline_v1.yaml` pins the official settings.** Every setting that
+  changes a result is written out, saturation's sentence model is pinned to a
+  revision (the one in `metrics/embeddings.py`'s `PINNED_REVISIONS`, which breadth
+  also uses; a test fails if the config's copy drifts from it), and `metric_definitions_version: 1` makes a run fail if the code
+  implements another version.
+- **The baseline of record is stored** in `baselines/baseline_v1.json.gz`. Run
+  history is git-ignored and local, so this file is what everyone compares
+  against.
+- **`taxonomy-pipeline check-comparable` flags two runs that weren't scored
+  alike**, including runs with different definitions versions.
+
+### Definitions v1
+
+The official settings for PB10 (#28). The formulas are documented in #67.
+
+| Metric | v1 method and settings | Why |
+|---|---|---|
+| `integrity` | Exact duplicates after `normalize`; fuzzy duplicates at RapidFuzz `fuzzy_threshold` 85; orphans; dead ends | Same method and threshold as the audit that first measured the original taxonomy |
+| `depth` | Specialities per category and tags per speciality (links with both ends present) | No settings |
+| `breadth` | **Semantic.** `sentence-transformers/all-MiniLM-L6-v2` at revision `1110a243fdf4706b3f48f1d95db1a4f5529b4d41`, labels only (`semantic_labels_v1`), match at cosine >= 0.60, top 5 candidates kept. SSIC 2025 divisions vs industry categories (`service_id` 1); SSOC 2024 minor groups vs all specialities | Lexical matching (fuzzy 75) scores the original's industry coverage at 0%, so it can't register an improvement. 0.60 is provisional until calibrated (#47) |
+| `saturation` | Incoming `skillsfuture`, compared at every level. Close spelling (>= 90) counts only when meaning agrees (>= 0.70; 0.80 for specialities). Add candidate below 60 spelling and 0.50 meaning. The same pinned sentence model as breadth. **Judge off** | The judge is an LLM in public beta, so its verdicts can't be reproduced, and judged ambiguous counts don't compare with unjudged ones. Classification rounds still use it (`judged_report.json`); the scorecard doesn't |
+
+Thresholds are uncalibrated (#47): calibrating them is a definitions change,
+so it becomes v2 and the baseline is re-scored.
+
+### Baseline of record (v1)
+
+Run `3d685fb6b1aa4a99b60d256700b4d256` (2026-10-21), stored in
+`baselines/baseline_v1.json.gz`, scored Ankit's original taxonomy with
+definitions v1:
+
+| Metric | Original taxonomy |
+|---|---|
+| integrity | 53 rows in exact-duplicate clusters (1 category and 25 speciality clusters); 86 fuzzy pairs; 14 dead-end categories (12.7%), 1 dead-end speciality, 1 unused tag, no orphans |
+| depth | 5.39 specialities per category (median 5, n=110); 2.43 tags per speciality (median 2, n=593) |
+| breadth | Industry 18/82 SSIC divisions (22%); occupational 16/145 SSOC minor groups (11%) |
+| saturation | SkillsFuture new-items rate 15.4%-83.5% of 4,308 concepts (665 add candidates, 2,934 to review); 30 known concepts in a new placement, 32 known at another level |
+
+To check the config still reproduces it, rerun it without touching the record
+and compare the summaries (a second run gave identical results):
+
+```bash
+taxonomy-pipeline run --config configs/baseline_v1.yaml --no-save --output check.json.gz
+```
+
+Sentence-model scores can differ in the seventh decimal place between machines
+and devices (CPU vs Apple's MPS differed by up to 3e-7 here), so a concept
+sitting exactly on a threshold could in principle land differently.
+
+### Compare an enriched taxonomy with it
+
+```bash
+taxonomy-pipeline integrate --merge-run merge_runs/reviewed --config configs/baseline_v1.yaml
+taxonomy-pipeline run --config integrations/<timestamp>/enriched.yaml --output enriched_report.json
+taxonomy-pipeline check-comparable baselines/baseline_v1.json.gz enriched_report.json
+```
+
+`integrate --config configs/baseline_v1.yaml` writes an `enriched.yaml` with
+the same settings and the same pin, aimed at the snapshot. `check-comparable
+BEFORE AFTER` takes report files (`.json` or `.json.gz`) or run IDs from run
+history. It is read-only: an argument that looks like a path (has a `/` or a
+`.json`/`.gz` suffix) and doesn't exist fails as a missing file, and a run ID is
+looked up only when run history exists, so the check never creates the
+database. It prints `[OK]` or `[FLAGGED]` per result and exits non-zero if
+anything is flagged:
+
+| Flag | Meaning |
+|---|---|
+| `definitions_version` | Scored with different definitions versions, or one run predates versioning: nothing compares |
+| `run_status` | A run failed |
+| `missing_result` | A metric scored the taxonomy in one run only, or a run has no result scoring its subject at all (e.g. a mistyped `--before-subject`), so nothing would be compared |
+| `result_status` | A result is `error` or `skipped` |
+| `settings` | Same metric, different params (all but the scored taxonomy's `dataset`/`target`/`baseline`); the changes are listed |
+| `reference_data` | A dataset the result reads (SSIC, SSOC, the incoming source) has different row counts |
+
+Each run's subject, the taxonomy it scores, is read from its results. Name it
+with `--before-subject`/`--after-subject` for a run that scores several (e.g.
+one from `original_vs_skillsfuture.yaml`). The library call,
+`definitions.check_comparable`, also pairs each result with its counterpart;
+the comparison report (#69) builds on it. Row counts are the only data check,
+so reference data edited without changing its size isn't caught.
+
+### Changing a definition
+
+Any change to how a scoring metric scores is a new definitions version. That
+includes a formula, a normalisation step, a matching tier, a default, or a
+pinned model or text profile.
+
+1. Bump `METRIC_DEFINITIONS_VERSION` in `definitions.py`.
+2. Pin the new `definitions_snapshot()` in `tests/test_definitions.py` under
+   the new number. That test fails on any changed default or pinned constant
+   until you do. Formula changes have no such tripwire, so call them out in
+   the PR.
+3. Copy the latest baseline config to `configs/baseline_v<N>.yaml`, apply the
+   change and bump its pin. Keep the old config as history.
+4. Score it with `taxonomy-pipeline run --config configs/baseline_v<N>.yaml
+   --output baselines/baseline_v<N>.json.gz`, then update the run ID and
+   numbers above (a test checks this README names the stored run).
+5. Record the decision on the issue.
+
+A config pinned to an older version then fails with an explanation rather
+than quietly producing new-version numbers. To reproduce an old baseline, run
+its config from a commit that implemented that version.
 
 ## Saturation: new-items curve
 
@@ -529,6 +665,7 @@ Defaults come from `SaturationMetric.default_params`
 | `incoming` | - | One dataset name or an ordered list; each is one point on the curve | `[skillsfuture]` |
 | `threshold` | 90 | RapidFuzz score (0-100) for a "close spelling"; never enough on its own | 90 |
 | `semantic_model` | none | Optional sentence-transformers model; without it only exact/spelling evidence is used | `all-MiniLM-L6-v2` |
+| `semantic_model_revision` | none | Hugging Face commit, branch or tag to load `semantic_model` at. Unset, a model pinned in `metrics/embeddings.py` (`all-MiniLM-L6-v2`, by its short or full id) loads at that pin, the same one breadth uses; any other model follows its default branch, which can move. The revision loaded is recorded in `details` | none (`configs/baseline_v1.yaml` writes the pin out) |
 | `semantic_threshold` | 0.70 | Cosine similarity for a meaning match; also used by the parent check | 0.70 |
 | `semantic_threshold_by_level` | `{}` | Per incoming level override of `semantic_threshold` for concept matching | `{specialities: 0.80}` |
 | `add_candidate_lexical_threshold` | 60 | `ADD_CANDIDATE` needs the best spelling score at every level below this | 60 |
@@ -758,7 +895,8 @@ and a review candidate from its candidate category (`candidate_category_*`,
 runs `category_adaptation` on them, serializes the placements via
 `classification.from_category_adaptation.build_classification_outputs`, and
 validates the result against the contract before writing it out
-(`case_a_output.json` by default). `--semantic-model ''` runs it lexically only.
+(`case_a_output.json` by default). `--semantic-model ''` runs it lexically only;
+a model pinned in `metrics/embeddings.py` loads at that pin.
 
 ```bash
 taxonomy-pipeline run --config configs/original_vs_skillsfuture.yaml --output judged_report.json
@@ -771,7 +909,10 @@ The `breadth` metric defaults to **semantic matching** and returns separate
 estimated industry and occupational coverage. It compares SSIC division titles
 against industry category names (`service_id=1`), and SSOC minor-group titles
 against all named specialities. Reference levels and target selection are the
-same in lexical and semantic modes; no hierarchy roll-up is performed.
+same in lexical and semantic modes; no hierarchy roll-up is performed. Semantic
+matching at 0.60 is the official method for definitions v1 (see
+[Official metric definitions](#official-metric-definitions-and-the-baseline-of-record)):
+compare only results scored with the same method and threshold.
 
 Semantic matching uses local `sentence-transformers/all-MiniLM-L6-v2`, pinned to
 revision `1110a243fdf4706b3f48f1d95db1a4f5529b4d41`. Install updated dependencies
@@ -940,6 +1081,13 @@ Two things worth reusing rather than reimplementing when you do:
   supplies reference types through `expected_types` -
   every metric here uses it instead of hand-rolling the same lookup.
 
+A metric that scores one taxonomy sets `subject_param` (the param naming it).
+That makes it part of the metric definitions version and of `check_comparable`:
+adding one, or changing its defaults or formula, means a new version (see
+[Changing a definition](#changing-a-definition)). Override `definition()` to
+pin anything its scores depend on that no param exposes, as breadth does for
+its sentence model.
+
 ## Config and report reference
 
 **Config** (`config.py`) - what the CLI reads from YAML and what `POST
@@ -947,6 +1095,7 @@ Two things worth reusing rather than reimplementing when you do:
 paths must be absolute server-side paths:
 
 ```yaml
+metric_definitions_version: 1 # optional pin: the run fails if the code implements another version
 datasets:
   - name: original          # referenced by name from metric params
     type: sql_dump
@@ -964,6 +1113,7 @@ the CLI's stdout, `GET /runs/{run_id}`, or the SQLite `report_json` column:
 {
   "run_id": "...",
   "status": "done",          // "queued" | "running" | "done" | "failed"
+  "metric_definitions_version": 1,  // formulas and defaults it was scored with; null on reports from before versioning
   "error": null,              // set only when status == "failed" (e.g. a dataset failed to load)
   "datasets": [{"name": "original", "counts": {"categories": 110, ...}}],
   "results": [
@@ -1048,9 +1198,10 @@ Ruff linting and the test suite run in CI (see the root
   are no longer implicitly moved under `Industry`. The merge stages still
   validate the complete service/category/speciality path.
 - **No promotion step:** `integrate` writes and checks an enriched snapshot,
-  and `enriched.yaml` scores it, but comparing it against the baseline and
-  promoting it to the next baseline is still the incremental flow in #49 (and
-  the PB11 evaluation, #29).
+  `enriched.yaml` scores it, and `check-comparable` confirms that run is scored
+  like the baseline of record. The before/after comparison report (#69) and
+  promoting the snapshot to the next baseline are still the incremental flow
+  in #49 (and the PB11 evaluation, #29).
 
 - **`saturation`** recommendations are review aids, not database
   operations. Its thresholds are not yet calibrated against a hand-labelled
@@ -1064,8 +1215,8 @@ Ruff linting and the test suite run in CI (see the root
   (e.g. "Technician" -> tag "tech"). There is no agreed "good coverage"
   cutoff for the curve yet; candidate methods are collected in
   [`docs/saturation-coverage-options.md`](docs/saturation-coverage-options.md).
-- **`breadth`** and the fuzzy layer of **`integrity`** use lexical
-  (RapidFuzz) matching only. Saturation additionally supports an optional
+- The fuzzy layer of **`integrity`** uses lexical (RapidFuzz) matching only.
+  `breadth` matches semantically by default, and saturation optionally adds a
   `sentence-transformers` embedding model for semantic candidates.
 
 - No live-database source yet - sources are `sql_dump`, `ssic`, and `ssoc`. `backend/audit/` already
