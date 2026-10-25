@@ -13,7 +13,7 @@ from collections import Counter, defaultdict
 from collections.abc import Collection, Mapping
 from typing import Any
 
-from ..quality.integrity import normalize
+from ..matching.names import normalize
 from ..taxonomy.base import TaxonomyDataset
 from .models import (
     BatchValidationReport,

@@ -12,9 +12,8 @@ from collections import Counter, defaultdict
 import numpy as np
 from rapidfuzz import fuzz, process
 
+from ..matching.names import match_key, normalize
 from ..matching.semantic import SimilarityMatcher as SimilarityMatcher
-from ..quality.integrity import normalize
-from ..quality.saturation import match_key
 from .models import (
     BatchValidationReport,
     DeduplicationReport,

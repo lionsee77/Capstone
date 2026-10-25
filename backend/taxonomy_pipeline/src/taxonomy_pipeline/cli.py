@@ -171,7 +171,7 @@ def _legacy_case_b(values: list[str]) -> dict[str, str]:
 
 def _cmd_merge_preview(args: argparse.Namespace) -> int:
     from .enrichment.runner import load_decisions, run_merge_preview
-    from .quality.saturation import SemanticMatcher
+    from .matching.semantic import SemanticMatcher
 
     out_dir = args.out_dir or f"merge_runs/{datetime.now():%Y%m%d-%H%M%S}"
     try:

@@ -27,9 +27,9 @@ from collections import Counter
 from dataclasses import dataclass, field
 from typing import Any, NamedTuple
 
-from ..quality.integrity import normalize
+from ..matching.names import normalize
 from ..taxonomy.base import TaxonomyDataset
-from .models import ClassificationOutput, ResolutionReport, ReviewDecision, SourceTagRef, TaxonomyPath
+from .models import ClassificationOutput, PlacementPath, ResolutionReport, ReviewDecision, SourceTagRef
 from .resolution import taxonomy_snapshot_id
 from .review import apply_hierarchy_decisions
 from .routing import SaturationReport
@@ -74,13 +74,13 @@ def _check_threshold(name: str, value: float | None) -> None:
         raise ValueError(f"{name} must be a similarity between 0 and 1, got {value}")
 
 
-def _top_path(placements: list[ClassificationOutput]) -> TaxonomyPath | None:
+def _top_path(placements: list[ClassificationOutput]) -> PlacementPath | None:
     """The highest-confidence placement; ties go to the first path in name order, so reruns agree."""
     placed = [row for row in placements if row.category is not None]
     if not placed:
         return None
     best = min(placed, key=lambda row: (-(row.confidence or 0.0), row.service, row.category, row.speciality))
-    return TaxonomyPath(service=best.service, category=best.category, speciality=best.speciality)
+    return PlacementPath(service=best.service, category=best.category, speciality=best.speciality)
 
 
 def _baseline_tag_id(taxonomy: TaxonomyDataset, name: str | None) -> Any:

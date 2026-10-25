@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
-from ..quality.integrity import normalize
+from ..matching.names import normalize
 from ..taxonomy.base import TaxonomyDataset
 from .models import ReviewDecision
 from .proposals.models import ConceptMatch, ProposalScreeningReport, ScreenedProposal

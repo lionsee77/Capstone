@@ -11,9 +11,9 @@ import json
 from collections import Counter
 from typing import Any
 
+from ..matching.names import match_key, normalize
 from ..models import MetricResult
-from ..quality.integrity import IntegrityMetric, normalize
-from ..quality.saturation import match_key
+from ..quality.integrity import IntegrityMetric
 from ..taxonomy.base import CONCEPTS, TaxonomyDataset
 from .models import (
     ClassificationOutput,

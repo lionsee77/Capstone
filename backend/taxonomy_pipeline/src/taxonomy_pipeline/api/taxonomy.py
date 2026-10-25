@@ -14,8 +14,8 @@ from typing import Any
 
 from .. import db
 from ..config import PipelineConfig
+from ..matching.names import normalize
 from ..models import ConceptLevel, TaxonomyConceptDetail, TaxonomyConceptRef, TaxonomyConceptSummary, TaxonomyPath
-from ..quality.integrity import normalize
 from ..taxonomy import load_dataset
 from ..taxonomy.base import TaxonomyDataset
 

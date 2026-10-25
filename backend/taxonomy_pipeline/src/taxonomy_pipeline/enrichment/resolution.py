@@ -12,13 +12,14 @@ import json
 from collections.abc import Sequence
 from typing import Any
 
+from ..matching.names import normalize
 from ..matching.semantic import SimilarityMatcher
-from ..quality.integrity import normalize
 from ..taxonomy.base import TaxonomyDataset
 from .models import (
     CanonicalMapping,
     CanonicalTag,
     DeduplicationReport,
+    PlacementPath,
     ResolutionReport,
     ResolvedHierarchyNode,
     ResolvedLink,
@@ -26,7 +27,6 @@ from .models import (
     SourceDisposition,
     SourceTagRef,
     TagProposal,
-    TaxonomyPath,
 )
 from .proposals.models import ProposalScreeningReport, ScreeningSettings
 from .proposals.screening import screen_proposals
@@ -49,7 +49,7 @@ def _source_key(source: SourceTagRef) -> SourceKey:
 
 
 # Match reviewed paths using the same parent-scoped normalization as intake and deduplication.
-def _path_key(path: TaxonomyPath) -> PathKey:
+def _path_key(path: PlacementPath) -> PathKey:
     return path.service, normalize(path.category), normalize(path.speciality)
 
 
@@ -72,10 +72,10 @@ def _index_tags(report: DeduplicationReport) -> dict[SourceKey, TagProposal]:
 
 
 # Recover every distinct proposed path for a source without discarding raw labels in its evidence.
-def _tag_paths(tag: TagProposal) -> dict[PathKey, TaxonomyPath]:
+def _tag_paths(tag: TagProposal) -> dict[PathKey, PlacementPath]:
     paths = {}
     for row in sorted(tag.placements, key=lambda row: row.model_dump_json()):
-        path = TaxonomyPath(service=row.service, category=row.category, speciality=row.speciality)
+        path = PlacementPath(service=row.service, category=row.category, speciality=row.speciality)
         paths.setdefault(_path_key(path), path)
     return paths
 
@@ -188,7 +188,7 @@ def _baseline_match_reasons(tags: dict[SourceKey, TagProposal], taxonomy: Taxono
 def _producer_review_reasons(tags: dict[SourceKey, TagProposal]) -> dict[SourceKey, str]:
     reasons = {}
     for key, tag in tags.items():
-        flagged = {_path_key(TaxonomyPath(service=row.service, category=row.category, speciality=row.speciality))
+        flagged = {_path_key(PlacementPath(service=row.service, category=row.category, speciality=row.speciality))
                    for row in tag.placements if row.needs_review}
         if flagged:
             reasons[key] = (

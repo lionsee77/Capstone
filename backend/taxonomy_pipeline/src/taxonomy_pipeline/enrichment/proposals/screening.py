@@ -19,11 +19,10 @@ from typing import Any
 
 import numpy as np
 
+from ...matching.names import lexical_scores, match_key, normalize
 from ...matching.semantic import SimilarityMatcher
-from ...models import HierarchyGroup
-from ...quality.integrity import normalize
-from ...quality.saturation import lexical_scores, match_key
 from ...taxonomy.base import TaxonomyDataset
+from ..models import HierarchyGroup
 from .intake import collect_proposals
 from .models import ConceptMatch, ExistingConcept, ProposalScreeningReport, ScreenedProposal, ScreeningSettings
 

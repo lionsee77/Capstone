@@ -245,7 +245,7 @@ The candidate's `similarity` is the largest available name score, not a probabil
 or approval; inspect the separate scores and placement context.
 
 Semantic checks are optional at runtime. Supply an existing
-`taxonomy_pipeline.metrics.saturation.SemanticMatcher` as `semantic_matcher` to use
+`taxonomy_pipeline.matching.semantic.SemanticMatcher` as `semantic_matcher` to use
 the shared embedding implementation. Without a matcher, name/lexical checks run and
 `skipped_checks.semantic` explains the omission. Matcher failures likewise retain
 name-based results with an explicit finding. `complete` requires readable input files

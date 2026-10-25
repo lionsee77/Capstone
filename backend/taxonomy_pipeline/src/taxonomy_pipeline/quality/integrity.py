@@ -6,32 +6,15 @@ dead-end categories, etc.) so results are comparable to that baseline.
 """
 from __future__ import annotations
 
-import re
-import unicodedata
 from collections import defaultdict
 from typing import Any
 
 from rapidfuzz import fuzz, process
 
+from ..matching.names import normalize
 from ..models import MetricResult
 from ..taxonomy.base import LoadedDataset
 from .base import Metric
-
-_DASH_VARIANTS = re.compile(r"[‐‑‒–—―]")
-
-
-# Normalize names consistently even when trailing punctuation is separated by whitespace.
-def normalize(name: str | None) -> str:
-    """Duplicated from (not imported from) `backend/audit/taxonomy_audit.py`'s
-    `normalized()`, step for step - that module pulls in `mysql.connector` as
-    a live-DB dependency this pipeline deliberately doesn't take on, but the
-    steps must still match exactly or duplicate counts stop being comparable
-    to that baseline, which is this module's whole point.
-    """
-    value = unicodedata.normalize("NFKC", name or "").strip().casefold()
-    value = _DASH_VARIANTS.sub("-", value)
-    value = re.sub(r"\s+", " ", value)
-    return value.rstrip(" .,;:!?")
 
 
 def _exact_duplicate_clusters(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:

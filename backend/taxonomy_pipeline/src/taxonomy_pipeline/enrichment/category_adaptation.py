@@ -35,18 +35,11 @@ from typing import Any
 import numpy as np
 from rapidfuzz import fuzz, process
 
+from ..matching.engine import KnownPool, SourceParents, compare_level, validated_float
+from ..matching.names import is_valid_name, match_key, normalize
+from ..matching.semantic import SemanticMatcher
 from ..models import MetricResult
 from ..quality.base import Metric
-from ..quality.integrity import normalize
-from ..quality.saturation import (
-    SemanticMatcher,
-    _compare_level,
-    _is_valid_name,
-    _KnownPool,
-    _Parents,
-    _validated_float,
-    match_key,
-)
 from ..taxonomy.base import LoadedDataset, TaxonomyDataset
 
 NEW_CATEGORY = "NEW_CATEGORY"
@@ -115,15 +108,15 @@ def _match_against_pool(
     source_rows: list[dict[str, Any]],
     baseline_rows: list[dict[str, Any]],
     baseline: TaxonomyDataset,
-    parents: _Parents,
+    parents: SourceParents,
     settings: dict[str, Any],
     semantic_matcher: SemanticMatcher | None,
 ) -> dict[str, Any]:
     tables = {"services": baseline.services, "categories": baseline.categories, "specialities": baseline.specialities}
     tables[level] = baseline_rows
-    pool = _KnownPool()
+    pool = KnownPool()
     pool.add(baseline.name, TaxonomyDataset(name=baseline.name, **tables))
-    return _compare_level(level, source_rows, pool, parents, settings, semantic_matcher, seen_in_source={})
+    return compare_level(level, source_rows, pool, parents, settings, semantic_matcher, seen_in_source={})
 
 
 def _outcomes_by_incoming_id(comparison: dict[str, Any], new_action: str) -> dict[Any, dict[str, Any]]:
@@ -189,8 +182,8 @@ def _closest_categories(
 ) -> list[tuple[dict[str, Any], float, str]]:
     """The REVIEW_CANDIDATES baseline categories closest to a source category name, as
     (row, score, score_type): by meaning when a model is loaded, else by spelling."""
-    named = [row for row in categories if _is_valid_name(row.get("name"))]
-    if not named or not _is_valid_name(name):
+    named = [row for row in categories if is_valid_name(row.get("name"))]
+    if not named or not is_valid_name(name):
         return []
     if semantic_matcher:
         scores = semantic_matcher.similarity([normalize(str(name))], [normalize(str(row["name"])) for row in named])[0]
@@ -272,10 +265,10 @@ class CategoryAdaptationMetric(Metric):
             )
 
         try:
-            threshold = _validated_float(p, "threshold", 0, 100)
-            semantic_threshold = _validated_float(p, "semantic_threshold", -1, 1)
-            add_candidate_lexical_threshold = _validated_float(p, "add_candidate_lexical_threshold", 0, 100)
-            add_candidate_semantic_threshold = _validated_float(p, "add_candidate_semantic_threshold", -1, 1)
+            threshold = validated_float(p, "threshold", 0, 100)
+            semantic_threshold = validated_float(p, "semantic_threshold", -1, 1)
+            add_candidate_lexical_threshold = validated_float(p, "add_candidate_lexical_threshold", 0, 100)
+            add_candidate_semantic_threshold = validated_float(p, "add_candidate_semantic_threshold", -1, 1)
         except (TypeError, ValueError) as exc:
             return MetricResult(metric_id=self.id, status="error", summary=str(exc))
         try:
@@ -291,7 +284,7 @@ class CategoryAdaptationMetric(Metric):
             "cross_level": False,
             "semantic_threshold_by_level": {},
         }
-        parents = _Parents(incoming)
+        parents = SourceParents(incoming)
         baseline_categories_by_id = {row.get("id"): row for row in baseline.categories}
         baseline_services_by_id = {row.get("id"): row.get("name") for row in baseline.services}
         tag_rows = [row for row in incoming.tags if row.get("id") in new_tag_ids]

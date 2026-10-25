@@ -4,7 +4,7 @@ import types
 import numpy as np
 import pytest
 
-from taxonomy_pipeline.matching import embeddings
+from taxonomy_pipeline.matching import embeddings, names
 from taxonomy_pipeline.quality import saturation
 from taxonomy_pipeline.quality.saturation import SaturationMetric
 from taxonomy_pipeline.taxonomy.base import TaxonomyDataset
@@ -231,14 +231,14 @@ def test_empty_baseline_level_with_incoming_records_reports_an_error():
 
 
 def test_batches_lexical_comparisons_with_cdist(monkeypatch):
-    original_cdist = saturation.process.cdist
+    original_cdist = names.process.cdist
     calls = []
 
     def recording_cdist(*args, **kwargs):
         calls.append((args, kwargs))
         return original_cdist(*args, **kwargs)
 
-    monkeypatch.setattr(saturation.process, "cdist", recording_cdist)
+    monkeypatch.setattr(names.process, "cdist", recording_cdist)
     result = SaturationMetric().run(
         _datasets(), {"baseline": "original", "incoming": "skillsfuture", "threshold": 90}
     )

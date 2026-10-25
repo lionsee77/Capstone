@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 from taxonomy_pipeline.enrichment.bulk_decisions import draft_decisions
-from taxonomy_pipeline.enrichment.models import ReviewDecision, SourceTagRef, TaxonomyPath
+from taxonomy_pipeline.enrichment.models import PlacementPath, ReviewDecision, SourceTagRef
 from taxonomy_pipeline.enrichment.routing import load_saturation, mark_ambiguous
 from taxonomy_pipeline.enrichment.runner import run_merge_preview
 from taxonomy_pipeline.taxonomy.base import TaxonomyDataset
@@ -108,7 +108,7 @@ def test_creates_loose_matches_and_reuses_near_certain_tags(baseline, merge):
     assert set(by_tag) == {"11", "12"}
     assert by_tag["11"].action == "create"
     assert by_tag["11"].approved_paths == [  # the higher-confidence of its two placements
-        TaxonomyPath(service="Subject", category="Data analytics", speciality="Data presentation"),
+        PlacementPath(service="Subject", category="Data analytics", speciality="Data presentation"),
     ]
     assert by_tag["12"].action == "reuse" and by_tag["12"].existing_tag_id == 200
     assert "semantic similarity 0.93 to existing tag 'SQL'" in by_tag["12"].reason

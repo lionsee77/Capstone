@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from taxonomy_pipeline.enrichment.models import ReviewDecision, TaxonomyPath
+from taxonomy_pipeline.enrichment.models import PlacementPath, ReviewDecision
 from taxonomy_pipeline.enrichment.runner import MixedSaturationRunsError, load_decisions, run_merge_preview
 from taxonomy_pipeline.taxonomy.base import TaxonomyDataset
 
@@ -61,7 +61,7 @@ def review_candidate_file(tmp_path: Path) -> Path:
 def approve_data_analytics() -> ReviewDecision:
     return ReviewDecision(
         members=[{"source_dataset": "case-a", "tag_id": "9"}], action="create", reason="Reviewed",
-        approved_paths=[TaxonomyPath(service="Subject", category="Data analytics", speciality="Fire Prevention")],
+        approved_paths=[PlacementPath(service="Subject", category="Data analytics", speciality="Fire Prevention")],
     )
 
 

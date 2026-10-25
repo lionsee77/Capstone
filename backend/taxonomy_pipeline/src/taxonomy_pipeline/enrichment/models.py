@@ -18,17 +18,41 @@ from pydantic import (
     model_validator,
 )
 
-from ..models import HierarchyGroup as HierarchyGroup
-from ..models import InputLocation as InputLocation
 from ..models import MetricResult
 from ..models import NonBlankText as NonBlankText
-from ..models import SourceTagRef as SourceTagRef
 from ..models import TaxonomyId as TaxonomyId
 from ..taxonomy.base import TaxonomyDataset
 from .proposals.models import ProposalScreeningReport, ScreenedProposal, ScreeningSettings
 
 Confidence = Annotated[float, Field(ge=0, le=1, allow_inf_nan=False)]
 CanonicalTagId = TaxonomyId | NonBlankText
+
+
+class InputLocation(BaseModel):
+    """Locate original evidence even after repeated placements are collapsed."""
+
+    input_name: str
+    row_index: int
+
+
+class SourceTagRef(BaseModel):
+    """Keep equal tag IDs from different datasets distinct."""
+
+    model_config = ConfigDict(strict=True, extra="forbid")
+
+    source_dataset: NonBlankText
+    tag_id: NonBlankText
+
+
+class HierarchyGroup(BaseModel):
+    """Share parent-scoped evidence between classification and proposal screening."""
+
+    level: Literal["category", "speciality"]
+    path: list[str]
+    variants: list[list[str]]
+    existing_id: TaxonomyId | None
+    members: list[SourceTagRef]
+    origins: list[InputLocation]
 
 
 class ClassificationOutput(BaseModel):
@@ -194,7 +218,7 @@ class DeduplicationReport(BaseModel):
     screening_hierarchy: list[HierarchyGroup] | None = None
 
 
-class TaxonomyPath(BaseModel):
+class PlacementPath(BaseModel):
     """Approve an existing or proposed speciality without needing a database ID first."""
 
     model_config = ConfigDict(strict=True, extra="ignore")
@@ -216,7 +240,7 @@ class ReviewDecision(BaseModel):
     existing_tag_id: TaxonomyId | None = None
     existing_concept_id: TaxonomyId | None = None
     approved_speciality_ids: list[TaxonomyId] = Field(default_factory=list)
-    approved_paths: list[TaxonomyPath] = Field(default_factory=list)
+    approved_paths: list[PlacementPath] = Field(default_factory=list)
     canonical_name: NonBlankText | None = None
 
     @model_validator(mode="after")
@@ -318,7 +342,7 @@ class SourceDisposition(BaseModel):
     source: SourceTagRef
     status: Literal["accepted", "excluded", "deferred", "pending"]
     reason: NonBlankText
-    unapproved_paths: list[TaxonomyPath] = Field(default_factory=list)
+    unapproved_paths: list[PlacementPath] = Field(default_factory=list)
 
 
 class ResolutionReport(BaseModel):

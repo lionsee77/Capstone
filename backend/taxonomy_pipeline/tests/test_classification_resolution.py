@@ -9,7 +9,7 @@ import pytest
 from pydantic import ValidationError
 
 from taxonomy_pipeline.enrichment.deduplication import deduplicate_outputs
-from taxonomy_pipeline.enrichment.models import DeduplicationReport, ResolutionReport, ReviewDecision, TaxonomyPath
+from taxonomy_pipeline.enrichment.models import DeduplicationReport, PlacementPath, ResolutionReport, ReviewDecision
 from taxonomy_pipeline.enrichment.resolution import resolve_outputs
 from taxonomy_pipeline.enrichment.validation import validate_outputs
 from taxonomy_pipeline.taxonomy.base import TaxonomyDataset
@@ -56,8 +56,8 @@ def decision(
 
 
 # Refer to a placement without relying on existing or temporary numeric IDs.
-def path(**changes: str) -> TaxonomyPath:
-    return TaxonomyPath(**(dict(service="Subject", category="Computing", speciality="Languages") | changes))
+def path(**changes: str) -> PlacementPath:
+    return PlacementPath(**(dict(service="Subject", category="Computing", speciality="Languages") | changes))
 
 
 # Merge a reviewed group across unrelated source datasets and retain every approved parent link.
@@ -184,7 +184,7 @@ def test_shared_labels_do_not_collapse_different_parent_paths(baseline: Taxonomy
     ]
     report = dedup(placements, baseline)
     approvals = [
-        TaxonomyPath(**{key: item[key] for key in ("service", "category", "speciality")}) for item in placements
+        PlacementPath(**{key: item[key] for key in ("service", "category", "speciality")}) for item in placements
     ]
     result = resolve_outputs(report, baseline, [decision(approved_paths=approvals)])
     assert len(result.hierarchy) == 6 and len({node.id for node in result.hierarchy}) == 6
@@ -317,7 +317,7 @@ def test_legacy_adapter_reports_use_the_same_resolution_entry_point() -> None:
     report = deduplicate_outputs(intake)
     decisions = [ReviewDecision(
         members=[tag.source], action="create", reason="Reviewed separately", approved_paths=[
-            TaxonomyPath(service=p.service, category=p.category, speciality=p.speciality) for p in tag.placements
+            PlacementPath(service=p.service, category=p.category, speciality=p.speciality) for p in tag.placements
         ],
     ) for tag in report.tags]
     result = resolve_outputs(report, baseline, decisions)

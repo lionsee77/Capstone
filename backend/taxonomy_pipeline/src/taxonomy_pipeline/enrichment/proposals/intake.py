@@ -5,7 +5,7 @@ import hashlib
 import json
 from collections.abc import Sequence
 
-from ...models import HierarchyGroup
+from ..models import HierarchyGroup
 from .models import ScreenedProposal
 
 
