@@ -3,9 +3,12 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 from taxonomy_pipeline.config import DatasetConfig, MetricConfig, PipelineConfig
+from taxonomy_pipeline.definitions import METRIC_DEFINITIONS_VERSION
 from taxonomy_pipeline.models import MetricResult, RunReport
-from taxonomy_pipeline.pipeline import result_labels, run_pipeline
+from taxonomy_pipeline.pipeline import read_report, result_labels, run_pipeline, write_report
 from tests.conftest import FIXTURES
 
 
@@ -68,6 +71,49 @@ def test_unloadable_dataset_fails_the_whole_run(classification_paths):
     assert report.error is not None
 
 
+def test_every_run_records_the_metric_definitions_it_was_scored_with(classification_paths):
+    assert run_pipeline(_config(classification_paths)).metric_definitions_version == METRIC_DEFINITIONS_VERSION
+
+
+def test_a_config_pinned_to_other_metric_definitions_fails_before_scoring_anything(classification_paths):
+    config = _config(classification_paths)
+    config.metric_definitions_version = METRIC_DEFINITIONS_VERSION + 1
+    config.datasets[0].paths = ["/no/such/file.sql"]  # never read: the pin is checked first
+
+    report = run_pipeline(config)
+
+    assert report.status == "failed" and report.results == []
+    assert f"config pins metric definitions v{METRIC_DEFINITIONS_VERSION + 1}" in report.error
+
+
+def test_a_config_pinned_to_the_current_metric_definitions_runs(classification_paths):
+    config = _config(classification_paths)
+    config.metric_definitions_version = METRIC_DEFINITIONS_VERSION
+
+    assert run_pipeline(config).status == "done"
+
+
+@pytest.mark.parametrize("name", ["report.json", "report.json.gz"])
+def test_a_saved_report_reads_back_unchanged_compressed_or_not(tmp_path: Path, name: str) -> None:
+    report = RunReport(status="done", metric_definitions_version=METRIC_DEFINITIONS_VERSION, results=[
+        MetricResult(metric_id="depth", summary="s", index=0, params={"dataset": "original"}),
+    ])
+
+    write_report(report, tmp_path / name)
+
+    assert read_report(tmp_path / name) == report
+    assert (tmp_path / name).read_bytes().startswith(b"\x1f\x8b") == name.endswith(".gz")  # gzip magic number
+
+
+def test_a_damaged_gzip_report_is_a_clear_error_not_a_crash(tmp_path: Path) -> None:
+    path = tmp_path / "report.json.gz"
+    write_report(RunReport(status="done"), path)
+    path.write_bytes(path.read_bytes()[:-8])  # cut off, as by an interrupted copy
+
+    with pytest.raises(ValueError, match="not a readable gzip report"):
+        read_report(path)
+
+
 def test_each_result_records_its_config_entry_and_resolved_params(classification_paths: dict[str, Path]) -> None:
     config = _config(classification_paths)
     config.metrics = [
@@ -90,9 +136,10 @@ def test_each_result_records_its_config_entry_and_resolved_params(classification
 
 def test_reports_saved_before_results_had_an_index_still_load() -> None:
     old = {"run_id": "r", "status": "done", "results": [{"metric_id": "depth", "summary": "s"}]}
-    result = RunReport.model_validate(old).results[0]
+    report = RunReport.model_validate(old)
 
-    assert result.index is None and result.params is None
+    assert report.results[0].index is None and report.results[0].params is None
+    assert report.metric_definitions_version is None  # unknown, not assumed current
 
 
 def _result(index: int, params: dict[str, Any], metric_id: str = "depth") -> MetricResult:

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  comparabilitySchema,
   existingConceptSchema,
   isRunFinished,
   isTaxonomyDataset,
@@ -44,6 +45,37 @@ describe("runReportSchema", () => {
   it("rejects a status the backend does not emit", () => {
     expect(runReportSchema.safeParse({ ...doneRunReport, status: "cancelled" }).success).toBe(false);
   });
+
+  it("reads the metric definitions version, and accepts reports saved before runs were stamped", () => {
+    expect(runReportSchema.parse(doneRunReport).metric_definitions_version).toBe(1);
+    const legacy: Record<string, unknown> = { ...doneRunReport };
+    delete legacy.metric_definitions_version;
+    expect(runReportSchema.parse(legacy).metric_definitions_version).toBeUndefined();
+    expect(runReportSchema.parse({ ...doneRunReport, metric_definitions_version: null }).metric_definitions_version)
+      .toBeNull();
+  });
+});
+
+describe("comparabilitySchema", () => {
+  // The shape `Comparability.model_dump(mode="json")` produces, including the computed `comparable`.
+  const check = {
+    before_run_id: "a1", after_run_id: "b2", before_subject: "original", after_subject: null,
+    before_definitions_version: 1, after_definitions_version: 1,
+    issues: [{ kind: "run_status", message: "the after run is failed: boom" }],
+    metrics: [{ metric_id: "integrity", before_index: 0, after_index: null, issues: [] }],
+    comparable: false,
+  };
+
+  it("reads a check, including a failed run with no subject and an unpaired result", () => {
+    const parsed = comparabilitySchema.parse(check);
+    expect(parsed.after_subject).toBeNull();
+    expect(parsed.metrics[0].after_index).toBeNull();
+  });
+
+  it("rejects an issue kind the backend doesn't report", () => {
+    const bad = { ...check, issues: [{ kind: "typo", message: "x" }] };
+    expect(comparabilitySchema.safeParse(bad).success).toBe(false);
+  });
 });
 
 describe("pipelineConfigSchema", () => {
@@ -75,6 +107,13 @@ describe("pipelineConfigSchema", () => {
 
   it("requires at least one dataset and one metric", () => {
     expect(pipelineConfigSchema.safeParse({ datasets: [], metrics: [] }).success).toBe(false);
+  });
+
+  it("keeps an optional metric definitions pin, which must be a positive version", () => {
+    const config = { datasets: [dataset], metrics: [{ id: "integrity" }] };
+    expect(pipelineConfigSchema.parse({ ...config, metric_definitions_version: 1 }).metric_definitions_version).toBe(1);
+    expect(pipelineConfigSchema.parse(config).metric_definitions_version).toBeUndefined();
+    expect(pipelineConfigSchema.safeParse({ ...config, metric_definitions_version: 0 }).success).toBe(false);
   });
 });
 

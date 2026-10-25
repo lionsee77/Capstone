@@ -43,6 +43,7 @@ from rapidfuzz import fuzz, process
 
 from ..datasets.base import LoadedDataset, TaxonomyDataset
 from ..models import MetricResult
+from . import embeddings
 from .base import Metric
 from .integrity import normalize
 from .judge import NONE_CHOICE, DecisionsJudge, JudgeCandidate, JudgeError, JudgeQuestion
@@ -89,9 +90,15 @@ def _is_valid_name(name: Any) -> bool:
 
 
 class SemanticMatcher:
-    """Lazy sentence-embedding matcher, kept optional for lightweight runs."""
+    """Lazy sentence-embedding matcher, kept optional for lightweight runs.
 
-    def __init__(self, model_name: str):
+    `revision` pins the model to one Hugging Face commit. Without it, a model
+    `embeddings.PINNED_REVISIONS` names loads at that pin (the one breadth
+    uses), and any other model at its current default branch, which can move.
+    """
+
+    def __init__(self, model_name: str, revision: str | None = None):
+        revision = revision or embeddings.pinned_revision(model_name)
         try:
             from sentence_transformers import SentenceTransformer
         except ImportError as exc:
@@ -99,7 +106,7 @@ class SemanticMatcher:
                 "semantic matching requires the optional dependency; install with "
                 '`pip install -e ".[dev,semantic]"`'
             ) from exc
-        self.model = SentenceTransformer(model_name)
+        self.model = SentenceTransformer(model_name, revision=revision)
         self._cache: dict[str, np.ndarray] = {}
 
     def similarity(self, queries: list[str], choices: list[str]) -> np.ndarray:
@@ -709,6 +716,9 @@ class SaturationMetric(Metric):
         "incoming": None,
         "threshold": 90.0,
         "semantic_model": None,
+        # Hugging Face commit to load `semantic_model` at. None uses the pin in
+        # embeddings.PINNED_REVISIONS for a model listed there, else the model's default branch.
+        "semantic_model_revision": None,
         "semantic_threshold": 0.7,
         "add_candidate_lexical_threshold": 60.0,
         "add_candidate_semantic_threshold": 0.5,
@@ -717,6 +727,14 @@ class SaturationMetric(Metric):
         # Off unless set; see JUDGE_DEFAULTS and metrics/judge.py.
         "judge": None,
     }
+
+    def definition(self) -> dict[str, Any]:
+        # A `judge` mapping only names the settings it changes; JUDGE_DEFAULTS fill in the rest. A model left
+        # unpinned in a config loads at the revision pinned in code, so the pins are part of the definition too.
+        return {
+            **super().definition(), "judge_defaults": dict(JUDGE_DEFAULTS),
+            "pinned_model_revisions": dict(embeddings.PINNED_REVISIONS),
+        }
 
     def run(self, datasets: dict[str, LoadedDataset], params: dict[str, Any]) -> MetricResult:
         p = self.resolve_params(params)
@@ -750,6 +768,15 @@ class SaturationMetric(Metric):
             return MetricResult(metric_id=self.id, status="error", summary=(
                 "judge needs semantic_model: the meaning model picks the candidates the judge chooses from"
             ))
+        revision = p["semantic_model_revision"]
+        if revision is not None and not (isinstance(revision, str) and revision.strip()):
+            return MetricResult(metric_id=self.id, status="error", summary=(
+                "semantic_model_revision must be a model commit, branch or tag, or omitted"
+            ))
+        if revision is not None and not p["semantic_model"]:
+            return MetricResult(metric_id=self.id, status="error", summary=(
+                "semantic_model_revision needs semantic_model: it pins that model's version"
+            ))
 
         baseline = resolved["baseline"]
         incoming = [resolved[f"incoming[{i}]"] for i in range(len(incoming_names))]
@@ -769,8 +796,13 @@ class SaturationMetric(Metric):
                 f"{baseline.name} has no named records for {', '.join(empty_baseline_levels)} while "
                 "an incoming source does; check the dataset source or table_map."
             ))
+        if p["semantic_model"] and revision is None:
+            # Recorded as loaded: an unpinned config still scores with the model version pinned in code.
+            revision = embeddings.pinned_revision(str(p["semantic_model"]))
         try:
-            semantic_matcher = SemanticMatcher(str(p["semantic_model"])) if p["semantic_model"] else None
+            semantic_matcher = (
+                SemanticMatcher(str(p["semantic_model"]), revision=revision) if p["semantic_model"] else None
+            )
         except ValueError as exc:
             return MetricResult(metric_id=self.id, status="error", summary=str(exc))
         if judge_cfg:
@@ -813,6 +845,7 @@ class SaturationMetric(Metric):
                 "incoming": incoming_names,
                 "threshold": settings["threshold"],
                 "semantic_model": p["semantic_model"],
+                "semantic_model_revision": revision,
                 "semantic_threshold": settings["semantic_threshold"] if semantic_matcher else None,
                 "add_candidate_lexical_threshold": settings["add_candidate_lexical_threshold"],
                 "add_candidate_semantic_threshold": (

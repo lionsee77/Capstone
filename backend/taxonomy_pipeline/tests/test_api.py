@@ -5,6 +5,7 @@ import time
 from fastapi.testclient import TestClient
 
 from taxonomy_pipeline.api.app import app
+from taxonomy_pipeline.definitions import METRIC_DEFINITIONS_VERSION
 from tests.conftest import FIXTURES
 
 
@@ -48,6 +49,20 @@ def test_create_and_poll_a_run(isolated_db):
 
     assert report["status"] == "done", report
     assert report["results"][0]["metric_id"] == "integrity"
+
+
+def test_a_run_report_says_which_metric_definitions_scored_it(isolated_db):
+    client = TestClient(app)
+
+    # TestClient runs BackgroundTasks before returning, so each run has finished by now.
+    current = client.post("/runs", json=_config_payload()).json()["run_id"]
+    pinned_elsewhere = client.post(
+        "/runs", json={**_config_payload(), "metric_definitions_version": METRIC_DEFINITIONS_VERSION + 1},
+    ).json()["run_id"]
+
+    assert client.get(f"/runs/{current}").json()["metric_definitions_version"] == METRIC_DEFINITIONS_VERSION
+    failed = client.get(f"/runs/{pinned_elsewhere}").json()
+    assert failed["status"] == "failed" and "config pins metric definitions" in failed["error"]
 
 
 def test_create_run_rejects_relative_dataset_paths(isolated_db):
