@@ -15,7 +15,7 @@ new work should follow the same shape unless there's a good reason not to.
   module, and register instances in one `registry.py`. Adding a new one
   should mean "add a file + one registry line," not touching call sites.
 - Keep one implementation behind both the CLI and the API where both exist
-  (e.g. `pipeline.run_pipeline`) - no parallel logic paths for the same
+  (e.g. `app.scoring.run_pipeline`) - no parallel logic paths for the same
   operation.
 - Shared result/data shapes (what gets printed, persisted, and returned
   over HTTP) live in one `models.py` using Pydantic - one shape everywhere,
@@ -25,9 +25,13 @@ new work should follow the same shape unless there's a good reason not to.
   `taxonomy/`, `matching/`, `quality/`, `providers/`, `enrichment/`). Each
   context exposes public names; never import another context's `_private`
   names, and import only contexts below yours (taxonomy_pipeline:
-  `enrichment -> quality -> matching -> taxonomy`, with `providers` used
+  `app -> enrichment -> quality -> matching -> taxonomy`, with `providers` used
   by `enrichment` only). Code specific to one external source lives in
   `providers/`, not in generic modules.
+- The CLI and API are adapters: each command or route calls one use-case
+  function in `app/` and only translates inputs and outputs. Checks, file
+  writes and warnings belong in the use case (taxonomy_pipeline:
+  `app/scoring.py`, `app/enrichment.py`).
 
 ## Frontend
 

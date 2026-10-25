@@ -29,6 +29,28 @@ def test_list_metrics_is_self_describing():
     assert "description" in body["integrity"]
 
 
+def test_run_and_metric_routes_declare_their_response_models():
+    paths = TestClient(app).get("/openapi.json").json()["paths"]
+
+    def response_schema(path: str, method: str, status: str = "200") -> dict:
+        return paths[path][method]["responses"][status]["content"]["application/json"]["schema"]
+
+    assert response_schema("/metrics", "get")["additionalProperties"]["$ref"].endswith("/MetricInfo")
+    assert response_schema("/runs", "post", "202")["$ref"].endswith("/RunCreated")
+    assert response_schema("/runs", "get")["items"]["$ref"].endswith("/RunSummary")
+
+
+def test_run_list_rows_keep_the_stored_timestamp(isolated_db):
+    client = TestClient(app)
+    created = client.post("/runs", json=_config_payload()).json()
+    assert created["status"] == "queued"
+
+    rows = client.get("/runs").json()
+
+    assert rows[0].keys() == {"run_id", "status", "created_at"}
+    assert rows[0]["run_id"] == created["run_id"] and "T" in rows[0]["created_at"]
+
+
 def test_case_as_placement_step_is_not_listed_as_a_metric():
     # It places tags rather than scoring a taxonomy; case-a calls it directly.
     assert "category_adaptation" not in TestClient(app).get("/metrics").json()

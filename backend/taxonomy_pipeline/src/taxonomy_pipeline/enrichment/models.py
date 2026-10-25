@@ -338,6 +338,24 @@ class SourceDisposition(BaseModel):
     unapproved_paths: list[PlacementPath] = Field(default_factory=list)
 
 
+class MergeRunInfo(BaseModel):
+    """A merge run's `run.json`: what `integrate` records as the snapshot's provenance and what
+    `bulk-decide` checks the saturation run against (`resolution.json` doesn't carry the run stamp).
+
+    Every field has a default because runs saved before a field existed omit it; unknown keys are
+    kept, so a provenance copy loses nothing.
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+    saturation_run_ids: list[str] = Field(default_factory=list)
+    inputs: list[str] = Field(default_factory=list)
+    decisions: int = 0
+    baseline_snapshot_id: str | None = None
+    blocked: bool = False
+    pending_sources: int = 0
+
+
 class ResolutionReport(BaseModel):
     """Resolved additions and reuse for a later preview, retaining complete deduplication evidence."""
 

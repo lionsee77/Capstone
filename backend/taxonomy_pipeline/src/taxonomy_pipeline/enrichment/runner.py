@@ -23,7 +23,7 @@ from ..taxonomy.base import TaxonomyDataset
 from .change_log import append_review_decisions
 from .deduplication import deduplicate_outputs
 from .export import export_preview_csv
-from .models import BatchValidationReport, MergePreview, ReviewDecision
+from .models import BatchValidationReport, MergePreview, MergeRunInfo, ResolutionReport, ReviewDecision
 from .preview import build_preview
 from .proposals.models import ScreeningSettings
 from .resolution import resolve_outputs
@@ -53,6 +53,16 @@ class MergeRun:
 
 def load_decisions(path: str | Path) -> list[ReviewDecision]:
     return REVIEW_DECISIONS.validate_json(Path(path).read_text(encoding="utf-8"))
+
+
+def load_merge_run(merge_run: str | Path) -> tuple[ResolutionReport, MergeRunInfo | None]:
+    """A saved merge run's resolution report, and its `run.json` (None for runs written before it existed)."""
+    merge_run = Path(merge_run)
+    resolution = ResolutionReport.model_validate_json((merge_run / "resolution.json").read_text(encoding="utf-8"))
+    run_info = merge_run / "run.json"
+    if not run_info.exists():
+        return resolution, None
+    return resolution, MergeRunInfo.model_validate_json(run_info.read_text(encoding="utf-8"))
 
 
 def saturation_run_ids(payloads: dict[str, str]) -> list[str]:
@@ -135,16 +145,16 @@ def run_merge_preview(
     ):
         (out_dir / filename).write_text(report.model_dump_json(indent=2), encoding="utf-8")
     export_preview_csv(preview, out_dir / "preview.csv")
-    # What `integrate` records as this snapshot's provenance; resolution.json doesn't carry the run stamp.
-    run_info = {
-        "saturation_run_ids": saturation_run_ids(payloads),
-        "inputs": [str(path) for path in paths],
-        "decisions": len(decisions),
-        "baseline_snapshot_id": resolution.baseline_snapshot_id,
-        "blocked": preview.blocked,
-        "pending_sources": preview.counts.pending_sources,
-    }
-    (out_dir / "run.json").write_text(json.dumps(run_info, indent=2), encoding="utf-8")
+    run_info = MergeRunInfo(
+        saturation_run_ids=saturation_run_ids(payloads),
+        inputs=[str(path) for path in paths],
+        decisions=len(decisions),
+        baseline_snapshot_id=resolution.baseline_snapshot_id,
+        blocked=preview.blocked,
+        pending_sources=preview.counts.pending_sources,
+    )
+    # json.dumps, not model_dump_json, so run.json keeps its existing formatting (ASCII-escaped).
+    (out_dir / "run.json").write_text(json.dumps(run_info.model_dump(), indent=2), encoding="utf-8")
     append_review_decisions(
         Path(change_log) if change_log else out_dir / "change_log.jsonl", resolution.decisions,
         baseline_snapshot_id=resolution.baseline_snapshot_id,

@@ -1,4 +1,4 @@
-"""FastAPI app: a thin HTTP layer over `pipeline.run_pipeline`.
+"""FastAPI app: a thin HTTP layer over the `app/` use cases (`app.scoring.run_pipeline` for runs).
 
 A run is a batch job, not a request/response - `POST /runs` validates the
 config, schedules the work as a background task, and returns immediately
@@ -15,9 +15,17 @@ from pathlib import Path
 from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException
 
 from .. import db
+from ..app.scoring import run_pipeline
 from ..config import PipelineConfig
-from ..models import ConceptLevel, RunReport, TaxonomyConceptDetail, TaxonomyConceptSummary
-from ..pipeline import run_pipeline
+from ..models import (
+    ConceptLevel,
+    MetricInfo,
+    RunCreated,
+    RunReport,
+    RunSummary,
+    TaxonomyConceptDetail,
+    TaxonomyConceptSummary,
+)
 from ..quality.registry import METRICS
 from . import taxonomy as taxonomy_api
 from .proposals import router as proposals_router
@@ -95,30 +103,30 @@ def _require_allowed_dataset_paths(config: PipelineConfig) -> None:
 
 
 @app.get("/metrics")
-def list_metrics() -> dict:
+def list_metrics() -> dict[str, MetricInfo]:
     """Self-describing metric catalogue, so a dashboard can build a
     "pick tests to run" UI without hardcoding anything."""
     return {
-        metric_id: {"description": metric.description, "default_params": metric.params_schema()}
+        metric_id: MetricInfo(description=metric.description, default_params=metric.params_schema())
         for metric_id, metric in METRICS.items()
     }
 
 
 @app.post("/runs", status_code=202)
-def create_run(config: PipelineConfig, background_tasks: BackgroundTasks) -> dict:
+def create_run(config: PipelineConfig, background_tasks: BackgroundTasks) -> RunCreated:
     _require_absolute_dataset_paths(config)
     _require_allowed_dataset_paths(config)
     _require_no_judge(config)
     report = RunReport(status="queued")
     db.save_run(report, config_json=config.model_dump_json())
     background_tasks.add_task(_execute_and_save, report, config)
-    return {"run_id": report.run_id, "status": "queued"}
+    return RunCreated(run_id=report.run_id)
 
 
 @app.get("/runs")
-def list_runs(limit: int = 50) -> list[dict]:
+def list_runs(limit: int = 50) -> list[RunSummary]:
     return [
-        {"run_id": r.run_id, "status": r.status, "created_at": r.created_at}
+        RunSummary(run_id=r.run_id, status=r.status, created_at=r.created_at)
         for r in db.list_runs(limit=limit)
     ]
 

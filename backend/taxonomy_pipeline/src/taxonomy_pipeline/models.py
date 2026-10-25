@@ -32,7 +32,7 @@ class MetricResult(BaseModel):
     details: dict[str, Any] = Field(default_factory=dict)
     # Which config entry produced this result. A config can run the same metric
     # more than once (e.g. integrity once per dataset), so `metric_id` alone
-    # doesn't identify a result. Set by `pipeline.run_pipeline`; None on reports
+    # doesn't identify a result. Set by `app.scoring.run_pipeline`; None on reports
     # saved before these fields existed, and on results built outside a run.
     index: int | None = Field(default=None, description="Position of the entry in the config's `metrics` list")
     params: dict[str, Any] | None = Field(
@@ -45,19 +45,44 @@ class DatasetSummary(BaseModel):
     counts: dict[str, int]
 
 
+RunStatus = Literal["queued", "running", "done", "failed"]
+
+
 class RunReport(BaseModel):
     run_id: str = Field(default_factory=lambda: uuid4().hex)
     created_at: datetime = Field(default_factory=utcnow)
     finished_at: datetime | None = None
-    status: Literal["queued", "running", "done", "failed"] = "queued"
+    status: RunStatus = "queued"
     # The metric definitions (formulas and defaults, see `quality/definitions.py`) the
-    # results were scored with. Set by `pipeline.run_pipeline`; None on reports
+    # results were scored with. Set by `app.scoring.run_pipeline`; None on reports
     # saved before runs were stamped, so their definitions are unknown rather
     # than assumed current.
     metric_definitions_version: int | None = None
     datasets: list[DatasetSummary] = Field(default_factory=list)
     results: list[MetricResult] = Field(default_factory=list)
     error: str | None = None
+
+
+class MetricInfo(BaseModel):
+    """One `GET /metrics` catalogue entry: what a metric checks and the params it runs with by default."""
+
+    description: str
+    default_params: dict[str, Any]
+
+
+class RunCreated(BaseModel):
+    """`POST /runs`: the queued run's id, to poll `GET /runs/{run_id}` with."""
+
+    run_id: str
+    status: Literal["queued"] = "queued"
+
+
+class RunSummary(BaseModel):
+    """One `GET /runs` row - a summary, not the full report. `created_at` is the stored ISO timestamp."""
+
+    run_id: str
+    status: RunStatus
+    created_at: str
 
 
 class ComparabilityIssue(BaseModel):

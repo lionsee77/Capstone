@@ -6,10 +6,10 @@ from typing import Any
 
 import pytest
 
+from taxonomy_pipeline.app.scoring import read_report
 from taxonomy_pipeline.config import load_config
 from taxonomy_pipeline.matching import embeddings
 from taxonomy_pipeline.models import Comparability, DatasetSummary, MetricResult, RunReport
-from taxonomy_pipeline.pipeline import read_report
 from taxonomy_pipeline.quality.definitions import (
     METRIC_DEFINITIONS_VERSION,
     check_comparable,

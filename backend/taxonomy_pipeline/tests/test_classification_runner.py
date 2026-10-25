@@ -8,7 +8,12 @@ from pathlib import Path
 import pytest
 
 from taxonomy_pipeline.enrichment.models import PlacementPath, ReviewDecision
-from taxonomy_pipeline.enrichment.runner import MixedSaturationRunsError, load_decisions, run_merge_preview
+from taxonomy_pipeline.enrichment.runner import (
+    MixedSaturationRunsError,
+    load_decisions,
+    load_merge_run,
+    run_merge_preview,
+)
 from taxonomy_pipeline.taxonomy.base import TaxonomyDataset
 
 FIXTURES = Path(__file__).parent / "fixtures" / "classification"
@@ -115,6 +120,28 @@ def test_records_the_saturation_run_and_review_state_for_integrate(tmp_path, bas
     assert info["saturation_run_ids"] == ["run-1"]
     assert info["pending_sources"] == run.preview.counts.pending_sources > 0
     assert info["baseline_snapshot_id"] == run.preview.baseline_snapshot_id
+
+
+def test_a_saved_merge_run_reads_back_typed_with_its_run_info(tmp_path, baseline):
+    inputs = [_stamped(tmp_path, path, "run-1") for path in PRODUCER_FILES]
+    run = run_merge_preview(inputs, baseline, out_dir=tmp_path / "run")
+
+    resolution, info = load_merge_run(tmp_path / "run")
+
+    assert resolution.baseline_snapshot_id == run.preview.baseline_snapshot_id
+    assert info.saturation_run_ids == ["run-1"] and info.inputs == [str(path) for path in inputs]
+
+
+def test_a_merge_run_from_before_run_json_or_its_fields_still_loads(tmp_path, baseline):
+    run_merge_preview(PRODUCER_FILES, baseline, out_dir=tmp_path / "run")
+    (tmp_path / "run" / "run.json").write_text(json.dumps({"saturation_run_ids": ["old"], "note": "kept"}))
+
+    _, info = load_merge_run(tmp_path / "run")
+    assert info.pending_sources == 0  # a default, not read from the file
+    assert info.model_dump(exclude_unset=True) == {"saturation_run_ids": ["old"], "note": "kept"}
+
+    (tmp_path / "run" / "run.json").unlink()
+    assert load_merge_run(tmp_path / "run")[1] is None
 
 
 def test_accepts_outputs_from_one_saturation_run_without_warnings(tmp_path, baseline):

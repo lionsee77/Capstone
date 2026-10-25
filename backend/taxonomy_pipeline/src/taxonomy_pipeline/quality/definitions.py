@@ -8,7 +8,7 @@ comparison (PB11) therefore only means something between runs scored the same
 way, and this module makes that checkable:
 
 - `METRIC_DEFINITIONS_VERSION` names the formulas and defaults of every scoring
-  metric (one with a `subject_param`), and `pipeline.run_pipeline` stamps it on
+  metric (one with a `subject_param`), and `app.scoring.run_pipeline` stamps it on
   every report. Bump it whenever one of them changes - a formula, a
   normalisation step, a default, a pinned model - then pin the new
   `definitions_snapshot()` in `tests/test_definitions.py`, add

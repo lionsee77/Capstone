@@ -82,11 +82,11 @@ export const comparabilitySchema = z.object({
 });
 export type Comparability = z.infer<typeof comparabilitySchema>;
 
-/** `GET /runs` rows - a summary, not the full report. */
+/** Mirrors `RunSummary`: `GET /runs` rows - a summary, not the full report. */
 export const runSummarySchema = runReportSchema.pick({ run_id: true, status: true, created_at: true });
 export type RunSummary = z.infer<typeof runSummarySchema>;
 
-/** `GET /metrics` - catalogue keyed by metric id. */
+/** Mirrors `dict[str, MetricInfo]`: `GET /metrics` - catalogue keyed by metric id. */
 export const metricCatalogueSchema = z.record(
   z.string(),
   z.object({
@@ -134,6 +134,7 @@ export const pipelineConfigSchema = z.object({
 });
 export type PipelineConfig = z.infer<typeof pipelineConfigSchema>;
 
+/** Mirrors `RunCreated`: the `POST /runs` response. */
 export const createRunResponseSchema = z.object({
   run_id: z.string(),
   status: z.literal("queued"),

@@ -11,9 +11,10 @@ saturation run finds into the existing taxonomy (Case A and Case B) and
 merges both results into one reviewable preview - see
 [Classification workflow](#classification-workflow).
 
-The CLI and the API call the exact same `pipeline.run_pipeline` - there is
+The CLI and the API call the exact same `app.scoring.run_pipeline` - there is
 one implementation of "what a run does," not two. Every CLI command is a thin
-wrapper around one library function in the same way.
+wrapper around one use case in `app/` in the same way: the use case does the
+loading, checks and writes, and the CLI only parses flags and prints.
 
 ## Project structure
 
@@ -81,8 +82,10 @@ taxonomy_pipeline/
 │   │       ├── screening.py          #     screen them against the baseline's categories and specialities
 │   │       └── models.py             #     screening report shapes
 │   ├── config.py                     # YAML/JSON pipeline config (datasets + metrics + optional definitions pin)
-│   ├── models.py                     # shared run reports and comparability checks
-│   ├── pipeline.py                   # run_pipeline(config) -> RunReport; reading/writing saved reports
+│   ├── models.py                     # shared run reports, comparability checks, API response shapes
+│   ├── app/                          # use cases: one function per CLI command, shared with the API
+│   │   ├── scoring.py                #   run_pipeline(config) -> RunReport; dataset loading; report I/O; check_runs
+│   │   └── enrichment.py             #   case_a, case_b, merge_preview, review_proposals, bulk_decide, integrate
 │   ├── db.py                         # SQLite run history
 │   ├── env.py                        # loads backend/.env for `serve` and llm.py
 │   ├── llm.py                        # the one OpenAI client setup (judge + Case B): key check, base URL

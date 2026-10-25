@@ -17,11 +17,11 @@ from collections import Counter
 from pathlib import Path
 from typing import Any
 
+from taxonomy_pipeline.app.scoring import load_datasets
 from taxonomy_pipeline.config import load_config
 from taxonomy_pipeline.enrichment.models import IntakeRecord
 from taxonomy_pipeline.enrichment.routing import case_b_tag_ids, load_saturation
 from taxonomy_pipeline.enrichment.validation import validate_outputs
-from taxonomy_pipeline.pipeline import load_datasets
 from taxonomy_pipeline.taxonomy.base import TaxonomyDataset
 
 # Statuses validation gives a record that a reviewer has to look at before it can merge.

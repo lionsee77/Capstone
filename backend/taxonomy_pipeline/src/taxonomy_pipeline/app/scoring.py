@@ -1,7 +1,9 @@
-"""Core orchestration: load the configured datasets, run the configured
-metrics, build a report. Both the CLI (`cli.py`) and the FastAPI app
-(`api/app.py`) call `run_pipeline` directly - neither talks to the other
-over HTTP, so there is exactly one implementation of "what a run does".
+"""Scoring use cases: run a config's metrics, save and load the report, compare two runs.
+
+Both the CLI (`cli.py`) and the FastAPI app (`api/app.py`) call `run_pipeline`
+directly - neither talks to the other over HTTP, so there is exactly one
+implementation of "what a run does". The dataset loaders here are shared with
+the enrichment use cases (`app/enrichment.py`).
 """
 from __future__ import annotations
 
@@ -11,16 +13,38 @@ from collections import Counter
 from pathlib import Path
 from typing import Any
 
-from .config import PipelineConfig
-from .models import DatasetSummary, MetricResult, RunReport, utcnow
-from .quality.definitions import METRIC_DEFINITIONS_VERSION
-from .quality.registry import get_metric
-from .taxonomy import load_dataset
-from .taxonomy.base import LoadedDataset
+from .. import db
+from ..config import PipelineConfig, load_config
+from ..models import Comparability, DatasetSummary, MetricResult, RunReport, utcnow
+from ..quality.definitions import METRIC_DEFINITIONS_VERSION, check_comparable
+from ..quality.registry import get_metric
+from ..taxonomy import load_dataset
+from ..taxonomy.base import LoadedDataset, TaxonomyDataset
 
 
 def load_datasets(config: PipelineConfig) -> dict[str, LoadedDataset]:
     return {ds_config.name: load_dataset(ds_config) for ds_config in config.datasets}
+
+
+def load_taxonomies(config_path: str | Path, *names: str) -> dict[str, LoadedDataset]:
+    """Load only the named datasets from a config, so unrelated reference workbooks aren't required;
+    each must be a taxonomy."""
+    config = load_config(config_path)
+    config.datasets = [dataset for dataset in config.datasets if dataset.name in names]
+    datasets = load_datasets(config)
+    for name in names:
+        if not isinstance(datasets.get(name), TaxonomyDataset):
+            raise ValueError(f"{config_path} declares no taxonomy dataset named {name!r}")
+    return datasets
+
+
+def run_config(config_path: str | Path, *, save: bool = True) -> tuple[PipelineConfig, RunReport]:
+    """Score a config file, saving the run to SQLite run history unless `save` is false."""
+    config = load_config(config_path)
+    report = run_pipeline(config)
+    if save:
+        db.save_run(report, config_json=config.model_dump_json())
+    return config, report
 
 
 def run_pipeline(config: PipelineConfig) -> RunReport:
@@ -92,6 +116,34 @@ def read_report(path: str | Path) -> RunReport:
         except (OSError, EOFError, zlib.error) as exc:  # not gzip, truncated, or corrupted
             raise ValueError(f"{path} is not a readable gzip report: {exc}") from exc
     return RunReport.model_validate_json(data)
+
+
+def load_report(source: str) -> RunReport:
+    """A saved report file (`run --output`, `.json` or `.json.gz`), else a run ID from SQLite run history.
+
+    Read-only: a mistyped path fails as a missing file, and run history is only queried when it exists, so a
+    check never creates the database.
+    """
+    path = Path(source)
+    if path.is_file():
+        return read_report(path)
+    if "/" in source or "\\" in source or path.suffix in {".json", ".gz"}:
+        raise ValueError(f"report file {source} does not exist")
+    if not db.DEFAULT_DB_PATH.is_file():
+        raise ValueError(f"{source!r} is not a report file, and there is no run history at {db.DEFAULT_DB_PATH}")
+    record = db.get_run(source)
+    if record is None:
+        raise ValueError(f"{source!r} is neither a report file nor a run ID in run history")
+    return RunReport.model_validate_json(record.report_json)
+
+
+def check_runs(
+    before: str, after: str, *, before_subject: str | None = None, after_subject: str | None = None,
+) -> tuple[RunReport, RunReport, Comparability]:
+    """Load two runs (files or run IDs) and check they were scored comparably."""
+    before_report, after_report = load_report(before), load_report(after)
+    check = check_comparable(before_report, after_report, before_subject=before_subject, after_subject=after_subject)
+    return before_report, after_report, check
 
 
 def result_labels(results: list[MetricResult]) -> list[str]:

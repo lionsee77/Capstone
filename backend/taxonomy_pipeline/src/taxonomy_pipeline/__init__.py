@@ -12,7 +12,7 @@ public names of the contexts below it:
 - `enrichment/`: placing new tags (Case A, Case B), merging, review and integration.
 
 See README.md for the plugin points (`taxonomy/`, `quality/`) and how the CLI
-and the API both call the same `pipeline.run_pipeline`.
+and the API both call the same `app.scoring.run_pipeline`.
 """
 
 __version__ = "0.1.0"

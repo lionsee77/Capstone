@@ -171,7 +171,7 @@ from pathlib import Path
 
 from taxonomy_pipeline.enrichment.validation import validate_outputs
 from taxonomy_pipeline.config import load_config
-from taxonomy_pipeline.pipeline import load_datasets
+from taxonomy_pipeline.app.scoring import load_datasets
 
 config = load_config("configs/original_vs_skillsfuture.yaml")
 config.datasets = [dataset for dataset in config.datasets if dataset.name == "original"]
