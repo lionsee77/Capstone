@@ -11,14 +11,14 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from taxonomy_pipeline.classification.deduplication import deduplicate_outputs
-from taxonomy_pipeline.classification.models import DeduplicationReport, ResolutionReport, ReviewDecision, TaxonomyPath
-from taxonomy_pipeline.classification.preview import build_preview
-from taxonomy_pipeline.classification.resolution import resolve_outputs
-from taxonomy_pipeline.classification.validation import validate_outputs
-from taxonomy_pipeline.datasets.base import TaxonomyDataset
-from taxonomy_pipeline.proposals import screening
-from taxonomy_pipeline.proposals.models import ScreenedProposal, ScreeningSettings
+from taxonomy_pipeline.enrichment.deduplication import deduplicate_outputs
+from taxonomy_pipeline.enrichment.models import DeduplicationReport, ResolutionReport, ReviewDecision, TaxonomyPath
+from taxonomy_pipeline.enrichment.preview import build_preview
+from taxonomy_pipeline.enrichment.proposals import screening
+from taxonomy_pipeline.enrichment.proposals.models import ScreenedProposal, ScreeningSettings
+from taxonomy_pipeline.enrichment.resolution import resolve_outputs
+from taxonomy_pipeline.enrichment.validation import validate_outputs
+from taxonomy_pipeline.taxonomy.base import TaxonomyDataset
 
 
 @pytest.fixture

@@ -14,7 +14,7 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
-from taxonomy_pipeline.classification.routing import case_b_tag_ids, load_saturation
+from taxonomy_pipeline.enrichment.routing import case_b_tag_ids, load_saturation
 
 
 def run_classification_validator(

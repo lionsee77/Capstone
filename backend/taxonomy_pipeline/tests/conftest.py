@@ -28,9 +28,9 @@ def saved_proposal_run(tmp_path: Path) -> Path:
 
     import numpy as np
 
-    from taxonomy_pipeline.classification.models import ResolutionReport, ReviewDecision
-    from taxonomy_pipeline.classification.runner import run_merge_preview
-    from taxonomy_pipeline.datasets.base import TaxonomyDataset
+    from taxonomy_pipeline.enrichment.models import ResolutionReport, ReviewDecision
+    from taxonomy_pipeline.enrichment.runner import run_merge_preview
+    from taxonomy_pipeline.taxonomy.base import TaxonomyDataset
 
     baseline = TaxonomyDataset(
         name="baseline", services=[{"id": 1, "name": "Subject"}, {"id": 2, "name": "Industry"}],

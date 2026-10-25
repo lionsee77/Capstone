@@ -5,7 +5,7 @@ import time
 from fastapi.testclient import TestClient
 
 from taxonomy_pipeline.api.app import app
-from taxonomy_pipeline.definitions import METRIC_DEFINITIONS_VERSION
+from taxonomy_pipeline.quality.definitions import METRIC_DEFINITIONS_VERSION
 from tests.conftest import FIXTURES
 
 

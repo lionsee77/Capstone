@@ -4,9 +4,10 @@ import types
 import numpy as np
 import pytest
 
-from taxonomy_pipeline.datasets.base import TaxonomyDataset
-from taxonomy_pipeline.metrics import embeddings, saturation
-from taxonomy_pipeline.metrics.saturation import SaturationMetric
+from taxonomy_pipeline.matching import embeddings
+from taxonomy_pipeline.quality import saturation
+from taxonomy_pipeline.quality.saturation import SaturationMetric
+from taxonomy_pipeline.taxonomy.base import TaxonomyDataset
 
 
 def _datasets() -> dict[str, TaxonomyDataset]:
@@ -737,7 +738,7 @@ class FakeJudge:
         self.questions = []
 
     def judge(self, questions):
-        from taxonomy_pipeline.metrics.judge import JudgeVerdict
+        from taxonomy_pipeline.matching.judge import JudgeVerdict
 
         self.questions.extend(questions)
         verdicts = []
@@ -884,7 +885,7 @@ def test_invalid_judge_settings_report_an_error(monkeypatch, judge):
 
 
 def test_a_judge_that_cannot_run_reports_an_error(monkeypatch):
-    from taxonomy_pipeline.metrics.judge import JudgeError
+    from taxonomy_pipeline.matching.judge import JudgeError
 
     result, _, _ = _with_judge(monkeypatch, {"Prompt Engineering": JudgeError("rejected (401): bad key")})
     assert result.status == "error" and result.summary == "judge: rejected (401): bad key"

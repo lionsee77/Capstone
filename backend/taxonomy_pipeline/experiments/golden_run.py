@@ -204,7 +204,7 @@ def _pending_exclusions(merge_run: Path) -> list[dict[str, Any]]:
 
 
 def record(out: Path) -> None:
-    from taxonomy_pipeline.classification import case_b
+    from taxonomy_pipeline.enrichment import case_b
 
     if out.exists():
         raise SystemExit(f"{out} already exists; pick a new folder")

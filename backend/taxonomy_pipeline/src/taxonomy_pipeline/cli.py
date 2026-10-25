@@ -5,9 +5,9 @@ holds logic of its own: `run` calls `pipeline.run_pipeline` - the exact same
 function the FastAPI `/runs` route calls - plus optional SQLite persistence and
 a JSON report on stdout or a file. `check-comparable` calls
 `definitions.check_comparable`. The classification commands call
-`classification.case_a.run_case_a`, `classification.case_b.run_case_b`,
-`classification.runner.run_merge_preview`, `classification.review_view.load_review_view`,
-`classification.bulk_decisions.draft_decisions` and `classification.integrate.integrate`.
+`enrichment.case_a.run_case_a`, `enrichment.case_b.run_case_b`,
+`enrichment.runner.run_merge_preview`, `enrichment.review_view.load_review_view`,
+`enrichment.bulk_decisions.draft_decisions` and `enrichment.integrate.integrate`.
 """
 from __future__ import annotations
 
@@ -20,11 +20,11 @@ from pathlib import Path
 
 from . import db
 from .config import load_config
-from .datasets.base import LoadedDataset, TaxonomyDataset
-from .definitions import check_comparable
+from .enrichment.proposals.models import ScreeningSettings
 from .models import RunReport
 from .pipeline import load_datasets, read_report, result_labels, run_pipeline, write_report
-from .proposals.models import ScreeningSettings
+from .quality.definitions import check_comparable
+from .taxonomy.base import LoadedDataset, TaxonomyDataset
 
 SKILLSFUTURE_WORKBOOK = (
     Path(__file__).resolve().parents[3] / "skillsfuture" / "jobsandskills-skillsfuture-unique-skills-list.xlsx"
@@ -128,7 +128,7 @@ def _datasets(args: argparse.Namespace, *names: str) -> dict[str, LoadedDataset]
 
 
 def _cmd_case_a(args: argparse.Namespace) -> int:
-    from .classification.case_a import run_case_a
+    from .enrichment.case_a import run_case_a
 
     try:
         records = run_case_a(
@@ -145,7 +145,7 @@ def _cmd_case_a(args: argparse.Namespace) -> int:
 
 
 def _cmd_case_b(args: argparse.Namespace) -> int:
-    from .classification.case_b import run_case_b
+    from .enrichment.case_b import run_case_b
 
     try:
         asyncio.run(run_case_b(
@@ -170,8 +170,8 @@ def _legacy_case_b(values: list[str]) -> dict[str, str]:
 
 
 def _cmd_merge_preview(args: argparse.Namespace) -> int:
-    from .classification.runner import load_decisions, run_merge_preview
-    from .metrics.saturation import SemanticMatcher
+    from .enrichment.runner import load_decisions, run_merge_preview
+    from .quality.saturation import SemanticMatcher
 
     out_dir = args.out_dir or f"merge_runs/{datetime.now():%Y%m%d-%H%M%S}"
     try:
@@ -212,7 +212,7 @@ def _cmd_merge_preview(args: argparse.Namespace) -> int:
 
 # Print the shared saved review view without altering decisions, reports or taxonomy data.
 def _cmd_review_proposals(args: argparse.Namespace) -> int:
-    from .classification.review_view import load_review_view
+    from .enrichment.review_view import load_review_view
 
     try:
         view = load_review_view(
@@ -227,10 +227,10 @@ def _cmd_review_proposals(args: argparse.Namespace) -> int:
 
 
 def _cmd_bulk_decide(args: argparse.Namespace) -> int:
-    from .classification.bulk_decisions import draft_decisions
-    from .classification.models import ResolutionReport
-    from .classification.routing import load_saturation
-    from .classification.runner import REVIEW_DECISIONS, load_decisions
+    from .enrichment.bulk_decisions import draft_decisions
+    from .enrichment.models import ResolutionReport
+    from .enrichment.routing import load_saturation
+    from .enrichment.runner import REVIEW_DECISIONS, load_decisions
 
     merge_run, output = Path(args.merge_run), Path(args.output)
     try:
@@ -270,8 +270,8 @@ def _cmd_bulk_decide(args: argparse.Namespace) -> int:
 
 
 def _cmd_integrate(args: argparse.Namespace) -> int:
-    from .classification.integrate import IntegrationError, integrate
-    from .classification.models import ResolutionReport
+    from .enrichment.integrate import IntegrationError, integrate
+    from .enrichment.models import ResolutionReport
 
     merge_run = Path(args.merge_run)
     out_dir = args.out_dir or f"integrations/{datetime.now():%Y%m%d-%H%M%S}"

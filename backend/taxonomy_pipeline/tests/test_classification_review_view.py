@@ -5,8 +5,8 @@ from pathlib import Path
 
 import pytest
 
-from taxonomy_pipeline.classification.models import ResolutionReport
-from taxonomy_pipeline.classification.review_view import ProposalNotFound, build_review_view, load_review_view
+from taxonomy_pipeline.enrichment.models import ResolutionReport
+from taxonomy_pipeline.enrichment.review_view import ProposalNotFound, build_review_view, load_review_view
 
 
 # Preserve cross-parent and cross-level matches, their scores, and the separate reviewer choice.

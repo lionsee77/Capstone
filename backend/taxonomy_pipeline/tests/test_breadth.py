@@ -2,11 +2,11 @@ from pathlib import Path
 
 import pytest
 
-from taxonomy_pipeline.datasets.base import TaxonomyDataset
-from taxonomy_pipeline.datasets.ssic import SsicRecord, SsicReference
-from taxonomy_pipeline.datasets.ssoc import SsocRecord, SsocReference
-from taxonomy_pipeline.metrics.breadth import BreadthMetric
-from taxonomy_pipeline.metrics.depth import DepthMetric
+from taxonomy_pipeline.quality.breadth import BreadthMetric
+from taxonomy_pipeline.quality.depth import DepthMetric
+from taxonomy_pipeline.taxonomy.base import TaxonomyDataset
+from taxonomy_pipeline.taxonomy.references.ssic import SsicRecord, SsicReference
+from taxonomy_pipeline.taxonomy.references.ssoc import SsocRecord, SsocReference
 
 
 def datasets():

@@ -8,9 +8,9 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import ValidationError
 
-from ..classification.models import ProposalReviewReport
-from ..classification.review_view import ProposalNotFound, load_review_view
-from ..proposals.models import Level
+from ..enrichment.models import ProposalReviewReport
+from ..enrichment.proposals.models import Level
+from ..enrichment.review_view import ProposalNotFound, load_review_view
 
 router = APIRouter(prefix="/proposals", tags=["proposals"])
 

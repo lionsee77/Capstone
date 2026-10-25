@@ -6,14 +6,14 @@ from pathlib import Path
 
 import pytest
 
-from taxonomy_pipeline.classification import integrate as integrate_module
-from taxonomy_pipeline.classification.integrate import IntegrationError, _additions_sql, integrate
-from taxonomy_pipeline.classification.models import ResolutionReport, ReviewDecision, TaxonomyPath
-from taxonomy_pipeline.classification.runner import load_decisions, run_merge_preview
 from taxonomy_pipeline.config import DatasetConfig, MetricConfig, PipelineConfig, load_config
-from taxonomy_pipeline.datasets.base import CONCEPTS, TaxonomyDataset
-from taxonomy_pipeline.datasets.sql_dump import SqlDumpSource, iter_insert_statements
+from taxonomy_pipeline.enrichment import integrate as integrate_module
+from taxonomy_pipeline.enrichment.integrate import IntegrationError, _additions_sql, integrate
+from taxonomy_pipeline.enrichment.models import ResolutionReport, ReviewDecision, TaxonomyPath
+from taxonomy_pipeline.enrichment.runner import load_decisions, run_merge_preview
 from taxonomy_pipeline.pipeline import load_datasets
+from taxonomy_pipeline.taxonomy.base import CONCEPTS, TaxonomyDataset
+from taxonomy_pipeline.taxonomy.sql_dump import SqlDumpSource, iter_insert_statements
 
 FIXTURES = Path(__file__).parent / "fixtures" / "classification"
 PRODUCER_FILES = [FIXTURES / "case_a.json", FIXTURES / "case_b.json"]

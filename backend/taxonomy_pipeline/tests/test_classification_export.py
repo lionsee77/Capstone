@@ -6,9 +6,9 @@ from pathlib import Path
 
 import pytest
 
-from taxonomy_pipeline.classification.export import export_preview_csv
-from taxonomy_pipeline.classification.models import MergePreview, PreviewRow, ValidationReport
-from taxonomy_pipeline.datasets.base import TaxonomyDataset
+from taxonomy_pipeline.enrichment.export import export_preview_csv
+from taxonomy_pipeline.enrichment.models import MergePreview, PreviewRow, ValidationReport
+from taxonomy_pipeline.taxonomy.base import TaxonomyDataset
 
 
 # Supply a minimal shared preview containing rows from the builder's public export shape.

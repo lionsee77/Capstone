@@ -3,8 +3,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from taxonomy_pipeline.classification.change_log import append_review_decisions
-from taxonomy_pipeline.classification.models import ReviewDecision, ReviewDecisionEvent, SourceTagRef
+from taxonomy_pipeline.enrichment.change_log import append_review_decisions
+from taxonomy_pipeline.enrichment.models import ReviewDecision, ReviewDecisionEvent, SourceTagRef
 
 
 # Retain reasons, targets, timestamps and independent submissions for both kinds of review decision.

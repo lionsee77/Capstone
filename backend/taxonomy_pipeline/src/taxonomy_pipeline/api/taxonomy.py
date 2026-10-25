@@ -14,10 +14,10 @@ from typing import Any
 
 from .. import db
 from ..config import PipelineConfig
-from ..datasets import load_dataset
-from ..datasets.base import TaxonomyDataset
-from ..metrics.integrity import normalize
 from ..models import ConceptLevel, TaxonomyConceptDetail, TaxonomyConceptRef, TaxonomyConceptSummary, TaxonomyPath
+from ..quality.integrity import normalize
+from ..taxonomy import load_dataset
+from ..taxonomy.base import TaxonomyDataset
 
 LEVELS: tuple[ConceptLevel, ...] = ("services", "categories", "specialities", "tags")
 DEFAULT_SEARCH_LIMIT = 50

@@ -36,7 +36,7 @@ new work should follow the same shape unless there's a good reason not to.
   over `typing.Dict`/`Optional`.
 - Type-hint function signatures, including return types.
 - Module and class docstrings explain *why* a thing exists and how it's
-  meant to be extended, not just what it does (see `metrics/base.py`,
+  meant to be extended, not just what it does (see `quality/base.py`,
   `models.py` for the pattern).
 - Lint with `ruff`, `select = ["E", "F", "I", "UP", "B"]`, `line-length =
   120`. Run `ruff check .` clean before opening a PR.

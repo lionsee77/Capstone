@@ -5,9 +5,9 @@ import pytest
 from fastapi.testclient import TestClient
 
 from taxonomy_pipeline.api.app import app
-from taxonomy_pipeline.datasets.base import TaxonomyDataset
-from taxonomy_pipeline.metrics import embeddings
-from taxonomy_pipeline.metrics.breadth import BreadthMetric
+from taxonomy_pipeline.matching import embeddings
+from taxonomy_pipeline.quality.breadth import BreadthMetric
+from taxonomy_pipeline.taxonomy.base import TaxonomyDataset
 from tests.test_breadth import datasets
 from tests.test_classifications import config_payload
 

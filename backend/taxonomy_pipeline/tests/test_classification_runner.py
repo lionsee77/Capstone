@@ -7,13 +7,9 @@ from pathlib import Path
 
 import pytest
 
-from taxonomy_pipeline.classification.models import ReviewDecision, TaxonomyPath
-from taxonomy_pipeline.classification.runner import (
-    MixedSaturationRunsError,
-    load_decisions,
-    run_merge_preview,
-)
-from taxonomy_pipeline.datasets.base import TaxonomyDataset
+from taxonomy_pipeline.enrichment.models import ReviewDecision, TaxonomyPath
+from taxonomy_pipeline.enrichment.runner import MixedSaturationRunsError, load_decisions, run_merge_preview
+from taxonomy_pipeline.taxonomy.base import TaxonomyDataset
 
 FIXTURES = Path(__file__).parent / "fixtures" / "classification"
 PRODUCER_FILES = [FIXTURES / "case_a.json", FIXTURES / "case_b.json"]

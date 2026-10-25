@@ -8,10 +8,10 @@ from typing import Any
 
 import pytest
 
-from taxonomy_pipeline.classification.models import BatchValidationReport, ClassificationOutput
-from taxonomy_pipeline.classification.validation import validate_outputs
-from taxonomy_pipeline.datasets.base import TaxonomyDataset
-from taxonomy_pipeline.datasets.sql_dump import SqlDumpSource
+from taxonomy_pipeline.enrichment.models import BatchValidationReport, ClassificationOutput
+from taxonomy_pipeline.enrichment.validation import validate_outputs
+from taxonomy_pipeline.taxonomy.base import TaxonomyDataset
+from taxonomy_pipeline.taxonomy.sql_dump import SqlDumpSource
 
 FIXTURES = Path(__file__).parent / "fixtures" / "classification"
 

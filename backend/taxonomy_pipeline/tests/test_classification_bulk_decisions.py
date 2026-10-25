@@ -7,11 +7,11 @@ from pathlib import Path
 
 import pytest
 
-from taxonomy_pipeline.classification.bulk_decisions import draft_decisions
-from taxonomy_pipeline.classification.models import ReviewDecision, SourceTagRef, TaxonomyPath
-from taxonomy_pipeline.classification.routing import load_saturation, mark_ambiguous
-from taxonomy_pipeline.classification.runner import run_merge_preview
-from taxonomy_pipeline.datasets.base import TaxonomyDataset
+from taxonomy_pipeline.enrichment.bulk_decisions import draft_decisions
+from taxonomy_pipeline.enrichment.models import ReviewDecision, SourceTagRef, TaxonomyPath
+from taxonomy_pipeline.enrichment.routing import load_saturation, mark_ambiguous
+from taxonomy_pipeline.enrichment.runner import run_merge_preview
+from taxonomy_pipeline.taxonomy.base import TaxonomyDataset
 
 FIXTURES = Path(__file__).parent / "fixtures" / "classification"
 

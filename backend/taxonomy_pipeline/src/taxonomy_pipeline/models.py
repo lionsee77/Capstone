@@ -77,7 +77,7 @@ class RunReport(BaseModel):
     created_at: datetime = Field(default_factory=utcnow)
     finished_at: datetime | None = None
     status: Literal["queued", "running", "done", "failed"] = "queued"
-    # The metric definitions (formulas and defaults, see `definitions.py`) the
+    # The metric definitions (formulas and defaults, see `quality/definitions.py`) the
     # results were scored with. Set by `pipeline.run_pipeline`; None on reports
     # saved before runs were stamped, so their definitions are unknown rather
     # than assumed current.

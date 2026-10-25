@@ -5,7 +5,7 @@ import json
 
 import pytest
 
-from taxonomy_pipeline.classification.routing import case_a_tag_ids, case_b_tag_ids, load_saturation, mark_ambiguous
+from taxonomy_pipeline.enrichment.routing import case_a_tag_ids, case_b_tag_ids, load_saturation, mark_ambiguous
 
 CONCEPTS = [
     {"recommended_action": "ADD_CANDIDATE", "parent_status": "NO_PARENT", "incoming_ids": [100, 100]},

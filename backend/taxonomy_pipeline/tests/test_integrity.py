@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from taxonomy_pipeline.datasets.base import TaxonomyDataset
-from taxonomy_pipeline.metrics.integrity import IntegrityMetric
+from taxonomy_pipeline.quality.integrity import IntegrityMetric
+from taxonomy_pipeline.taxonomy.base import TaxonomyDataset
 
 
 def _dataset() -> TaxonomyDataset:

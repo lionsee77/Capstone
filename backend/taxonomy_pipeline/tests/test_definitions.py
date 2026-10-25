@@ -7,16 +7,16 @@ from typing import Any
 import pytest
 
 from taxonomy_pipeline.config import load_config
-from taxonomy_pipeline.definitions import (
+from taxonomy_pipeline.matching import embeddings
+from taxonomy_pipeline.models import Comparability, DatasetSummary, MetricResult, RunReport
+from taxonomy_pipeline.pipeline import read_report
+from taxonomy_pipeline.quality.definitions import (
     METRIC_DEFINITIONS_VERSION,
     check_comparable,
     definitions_snapshot,
     report_subject,
 )
-from taxonomy_pipeline.metrics import embeddings
-from taxonomy_pipeline.metrics.registry import METRICS
-from taxonomy_pipeline.models import Comparability, DatasetSummary, MetricResult, RunReport
-from taxonomy_pipeline.pipeline import read_report
+from taxonomy_pipeline.quality.registry import METRICS
 
 PROJECT = Path(__file__).resolve().parents[1]
 

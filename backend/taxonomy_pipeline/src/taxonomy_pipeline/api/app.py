@@ -16,9 +16,9 @@ from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException
 
 from .. import db
 from ..config import PipelineConfig
-from ..metrics.registry import METRICS
 from ..models import ConceptLevel, RunReport, TaxonomyConceptDetail, TaxonomyConceptSummary
 from ..pipeline import run_pipeline
+from ..quality.registry import METRICS
 from . import taxonomy as taxonomy_api
 from .proposals import router as proposals_router
 from .security import disallowed_paths, require_token
