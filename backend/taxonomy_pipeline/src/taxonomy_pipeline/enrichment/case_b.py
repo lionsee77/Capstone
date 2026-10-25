@@ -20,6 +20,7 @@ import os
 from pathlib import Path
 from typing import Any
 
+from ..providers.skillsfuture import TAG_ID_OFFSET
 from ..taxonomy.base import TaxonomyDataset
 from .models import CLASSIFICATION_OUTPUTS
 from .routing import RUN_ID_FIELD, case_b_tag_ids, load_saturation, mark_ambiguous
@@ -44,7 +45,6 @@ RESPONSE_SCHEMA = {
     "required": ["proposals"], "additionalProperties": False,
 }
 # The tag IDs the SkillsFuture generator assigns: 3000 + position in the sorted unique-skills list.
-TAG_ID_OFFSET = 3000
 ENV_FILE = Path(__file__).resolve().parents[4] / ".env"
 
 

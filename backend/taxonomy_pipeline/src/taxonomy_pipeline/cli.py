@@ -23,12 +23,9 @@ from .config import load_config
 from .enrichment.proposals.models import ScreeningSettings
 from .models import RunReport
 from .pipeline import load_datasets, read_report, result_labels, run_pipeline, write_report
+from .providers import skillsfuture
 from .quality.definitions import check_comparable
 from .taxonomy.base import LoadedDataset, TaxonomyDataset
-
-SKILLSFUTURE_WORKBOOK = (
-    Path(__file__).resolve().parents[3] / "skillsfuture" / "jobsandskills-skillsfuture-unique-skills-list.xlsx"
-)
 
 
 def _cmd_run(args: argparse.Namespace) -> int:
@@ -352,7 +349,8 @@ def build_parser() -> argparse.ArgumentParser:
     case_b = subparsers.add_parser("case-b", help="propose placements for parentless new tags with an LLM")
     _add_dataset_args(case_b)
     case_b.add_argument("--report", default="report.json", help=report_help)
-    case_b.add_argument("--unique", default=str(SKILLSFUTURE_WORKBOOK), help="SkillsFuture unique-skills workbook")
+    case_b.add_argument("--unique", default=str(skillsfuture.UNIQUE_SKILLS_WORKBOOK),
+                        help="SkillsFuture unique-skills workbook")
     case_b.add_argument("--output", default="case_b_output.json", help="JSON output; a CSV is written next to it")
     case_b.add_argument("--checkpoint", help="checkpoint file for resuming after a failed run")
     case_b.add_argument("--batch-size", type=int, default=5)

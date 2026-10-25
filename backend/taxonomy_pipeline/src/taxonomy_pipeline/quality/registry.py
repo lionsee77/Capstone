@@ -4,7 +4,6 @@ file a new metric needs to touch outside its own module.
 """
 from __future__ import annotations
 
-from ..enrichment.category_adaptation import CategoryAdaptationMetric
 from .base import Metric
 from .breadth import BreadthMetric
 from .depth import DepthMetric
@@ -18,7 +17,6 @@ METRICS: dict[str, Metric] = {
         DepthMetric(),
         BreadthMetric(),
         SaturationMetric(),
-        CategoryAdaptationMetric(),
     )
 }
 

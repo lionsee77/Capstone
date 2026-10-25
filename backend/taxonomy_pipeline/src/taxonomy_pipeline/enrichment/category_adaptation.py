@@ -26,6 +26,10 @@ never uses source specialities as placement targets. It asks what the tag
 
 A resolved placement always carries both a category and a speciality, as the
 classification output contract (CLASSIFICATION_OUTPUT_CONTRACT.md) requires.
+
+It keeps the `Metric` interface (params, dataset checks, a `MetricResult`) but is
+not in the metric registry: it places tags rather than scoring a taxonomy, so
+`case_a.run_case_a` calls it directly and `GET /metrics` doesn't list it.
 """
 from __future__ import annotations
 
