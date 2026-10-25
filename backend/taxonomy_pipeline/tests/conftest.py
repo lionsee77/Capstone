@@ -1,10 +1,23 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
 
 FIXTURES = Path(__file__).parent / "fixtures"
+
+
+@pytest.fixture(autouse=True)
+def _open_api(monkeypatch, tmp_path_factory):
+    """Let API tests call the app without a token and post datasets from pytest's temp dirs.
+
+    `test_api_security.py` restores the real settings to test the checks themselves.
+    """
+    monkeypatch.setenv("TAXONOMY_API_AUTH", "off")
+    monkeypatch.setenv("TAXONOMY_DATA_ROOTS", os.pathsep.join([
+        str(FIXTURES.parents[2]), str(tmp_path_factory.getbasetemp()),
+    ]))
 
 
 @pytest.fixture

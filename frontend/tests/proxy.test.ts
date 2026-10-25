@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { checkWriteRequest, decideProxyRequest, resolveUpstream } from "@/lib/api/proxy";
+import { checkWriteRequest, decideProxyRequest, resolveUpstream, upstreamHeaders } from "@/lib/api/proxy";
 
 const env = { TAXONOMY_API_URL: "http://pipeline:8000/" };
 const resolve = (method: string, path: string, query = "", overrides = {}) =>
@@ -183,5 +183,23 @@ describe("proxy decision order", () => {
 
   it("does not apply the write guard to reads", () => {
     expect(decide("GET", "metrics")).toMatchObject({ ok: true });
+  });
+});
+
+describe("upstreamHeaders", () => {
+  it("adds the API token server-side when one is configured", () => {
+    expect(upstreamHeaders(null, { TAXONOMY_API_TOKEN: "s3cret" })).toEqual({ Authorization: "Bearer s3cret" });
+  });
+
+  it("forwards a body's content type alongside the token", () => {
+    expect(upstreamHeaders("application/json", { TAXONOMY_API_TOKEN: "s3cret" })).toEqual({
+      "Content-Type": "application/json",
+      Authorization: "Bearer s3cret",
+    });
+  });
+
+  it("sends no Authorization header without a token, so the API's own check decides", () => {
+    expect(upstreamHeaders(null, {})).toEqual({});
+    expect(upstreamHeaders(null, { TAXONOMY_API_TOKEN: "" })).toEqual({});
   });
 });

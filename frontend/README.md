@@ -25,6 +25,7 @@ cp .env.example .env.local   # optional, defaults to http://localhost:8000
 | Env var | Default | Meaning |
 |---|---|---|
 | `TAXONOMY_API_URL` | `http://localhost:8000` | Where `taxonomy-pipeline serve` is running |
+| `TAXONOMY_API_TOKEN` | *(none)* | The token of the pipeline API this dashboard calls (the same value as that API's `backend/.env`). The proxy adds it server-side, so it never reaches the browser |
 | `PIPELINE_ALLOW_RUN_CREATION` | `false` | Allow the dashboard to start runs (`POST /runs`). Enable only in a trusted local environment (see [Security](#security)) |
 
 ## Run it
@@ -46,11 +47,16 @@ app needs no CORS config.
 
 ## Security
 
-The pipeline API has **no authentication**, and `POST /runs` makes the server
-read whatever absolute dataset paths the request names. Until the API has auth:
+The pipeline API requires a token, and `POST /runs` only reads dataset files
+inside the server's `TAXONOMY_DATA_ROOTS` (see "Run it as a service" in
+`backend/taxonomy_pipeline/README.md`, including who needs which token). The proxy adds the token server-side
+(`upstreamHeaders` in `src/lib/api/proxy.ts`), so the browser never sees it.
+That also means **anyone who can open the dashboard acts with the token**,
+since the dashboard itself has no login yet:
 
-- Run the dashboard and the pipeline API only on localhost or a trusted network.
-  Don't deploy either one publicly.
+- Run the dashboard only on localhost or a trusted network until it has its own
+  login. The API itself can now be exposed to the dashboard's server without
+  being open to everyone.
 - The proxy forwards only `GET /metrics`, `GET /runs`, `GET /runs/{id}`,
   `GET /taxonomy/search`, `GET /taxonomy/{level}/{id}`,
   `GET /proposals`, `GET /proposals/{id}` and, when
