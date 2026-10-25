@@ -13,6 +13,7 @@ from taxonomy_pipeline.definitions import (
     definitions_snapshot,
     report_subject,
 )
+from taxonomy_pipeline.metrics import embeddings
 from taxonomy_pipeline.metrics.registry import METRICS
 from taxonomy_pipeline.models import Comparability, DatasetSummary, MetricResult, RunReport
 from taxonomy_pipeline.pipeline import read_report
@@ -52,6 +53,10 @@ PINNED_DEFINITIONS: dict[int, dict[str, Any]] = {
                 "model": "gpt-6-luna", "candidates": 5, "same_at_or_above": 0.8, "new_at_or_above": 0.8,
                 "levels": ["tags"], "cache": None, "workers": 8,
             },
+            "pinned_model_revisions": {
+                "sentence-transformers/all-MiniLM-L6-v2": "1110a243fdf4706b3f48f1d95db1a4f5529b4d41",
+                "all-MiniLM-L6-v2": "1110a243fdf4706b3f48f1d95db1a4f5529b4d41",
+            },
         },
     },
 }
@@ -80,9 +85,11 @@ def test_the_baseline_config_pins_the_current_version_and_scores_the_original_wi
 def test_the_baseline_config_depends_on_nothing_that_can_drift() -> None:
     params = {entry.id: entry.params for entry in load_config(_baseline_config_path()).metrics}
 
-    # Breadth's sentence model is pinned in code; saturation's must be pinned here. An LLM judge in public
-    # beta can't reproduce its verdicts, so it stays off for scoring.
-    assert params["saturation"].get("semantic_model_revision") or not params["saturation"].get("semantic_model")
+    # Both sentence models load at the one pin in code; the config spells saturation's out so the report records
+    # it, and it must not drift from that pin. An LLM judge in public beta can't reproduce its verdicts, so it
+    # stays off for scoring.
+    model = params["saturation"]["semantic_model"]
+    assert params["saturation"]["semantic_model_revision"] == embeddings.pinned_revision(model) is not None
     assert params["saturation"].get("judge") is None
 
 
@@ -254,3 +261,23 @@ def test_a_run_that_did_not_finish_is_flagged() -> None:
 
     assert check.issues[0].kind == "run_status"
     assert check.issues[0].message == "the after run is failed: FileNotFoundError: additions.sql"
+
+
+def test_a_failed_run_with_no_results_is_reported_as_failed_rather_than_raising() -> None:
+    after = RunReport(status="failed", metric_definitions_version=METRIC_DEFINITIONS_VERSION,
+                      error="config pins metric definitions v2")
+
+    check = check_comparable(_report("original"), after)
+
+    assert not check.comparable and check.after_subject is None
+    assert [issue.kind for issue in check.issues] == ["run_status"]
+    assert check.issues[0].message == "the after run is failed: config pins metric definitions v2"
+
+
+@pytest.mark.parametrize("subjects", [{"before_subject": "orignal"}, {"after_subject": "enrichd"}])
+def test_a_subject_no_result_scores_fails_instead_of_passing_with_nothing_compared(subjects) -> None:
+    check = check_comparable(_report("original"), _report("enriched"), **subjects)
+
+    assert not check.comparable
+    missing = [issue for issue in check.issues if issue.kind == "missing_result"]
+    assert len(missing) == 1 and repr(next(iter(subjects.values()))) in missing[0].message

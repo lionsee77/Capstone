@@ -56,9 +56,18 @@ def _cmd_run(args: argparse.Namespace) -> int:
 
 
 def _load_report(source: str) -> RunReport:
-    """A saved report file (`run --output`, `.json` or `.json.gz`), else a run ID from SQLite run history."""
-    if Path(source).is_file():
-        return read_report(source)
+    """A saved report file (`run --output`, `.json` or `.json.gz`), else a run ID from SQLite run history.
+
+    Read-only: a mistyped path fails as a missing file, and run history is only queried when it exists, so a
+    check never creates the database.
+    """
+    path = Path(source)
+    if path.is_file():
+        return read_report(path)
+    if "/" in source or "\\" in source or path.suffix in {".json", ".gz"}:
+        raise ValueError(f"report file {source} does not exist")
+    if not db.DEFAULT_DB_PATH.is_file():
+        raise ValueError(f"{source!r} is not a report file, and there is no run history at {db.DEFAULT_DB_PATH}")
     record = db.get_run(source)
     if record is None:
         raise ValueError(f"{source!r} is neither a report file nor a run ID in run history")
@@ -84,7 +93,8 @@ def _cmd_check_comparable(args: argparse.Namespace) -> int:
         for issue in metric.issues:
             print(f"[FLAGGED] {label}: {issue.message}")
     runs = [
-        f"{run_id[:8]} ({subject}, " + (f"definitions v{version})" if version is not None else "definitions unknown)")
+        f"{run_id[:8]} ({subject or 'no scored taxonomy'}, "
+        + (f"definitions v{version})" if version is not None else "definitions unknown)")
         for run_id, subject, version in (
             (check.before_run_id, check.before_subject, check.before_definitions_version),
             (check.after_run_id, check.after_subject, check.after_definitions_version),

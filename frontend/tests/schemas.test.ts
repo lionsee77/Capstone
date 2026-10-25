@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  comparabilitySchema,
   existingConceptSchema,
   isRunFinished,
   isTaxonomyDataset,
@@ -52,6 +53,28 @@ describe("runReportSchema", () => {
     expect(runReportSchema.parse(legacy).metric_definitions_version).toBeUndefined();
     expect(runReportSchema.parse({ ...doneRunReport, metric_definitions_version: null }).metric_definitions_version)
       .toBeNull();
+  });
+});
+
+describe("comparabilitySchema", () => {
+  // The shape `Comparability.model_dump(mode="json")` produces, including the computed `comparable`.
+  const check = {
+    before_run_id: "a1", after_run_id: "b2", before_subject: "original", after_subject: null,
+    before_definitions_version: 1, after_definitions_version: 1,
+    issues: [{ kind: "run_status", message: "the after run is failed: boom" }],
+    metrics: [{ metric_id: "integrity", before_index: 0, after_index: null, issues: [] }],
+    comparable: false,
+  };
+
+  it("reads a check, including a failed run with no subject and an unpaired result", () => {
+    const parsed = comparabilitySchema.parse(check);
+    expect(parsed.after_subject).toBeNull();
+    expect(parsed.metrics[0].after_index).toBeNull();
+  });
+
+  it("rejects an issue kind the backend doesn't report", () => {
+    const bad = { ...check, issues: [{ kind: "typo", message: "x" }] };
+    expect(comparabilitySchema.safeParse(bad).success).toBe(false);
   });
 });
 

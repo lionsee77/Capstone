@@ -369,5 +369,26 @@ def test_check_comparable_reads_runs_from_history_by_id(tmp_path, isolated_db, c
 
 
 def test_check_comparable_fails_cleanly_for_an_unknown_report(tmp_path, isolated_db, capsys):
+    config_path = _write_config(tmp_path, [{"id": "integrity", "params": {"dataset": "original"}}])
+    main(["run", "--config", str(config_path)])  # creates run history, so the run ID is looked up
+    capsys.readouterr()
+
     assert main(["check-comparable", "no-such-run", str(tmp_path / "missing.json")]) == 1
     assert "neither a report file nor a run ID" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("source", ["baselines/x.json", "reports/run", "baseline.json.gz"])
+def test_check_comparable_reports_a_mistyped_path_as_missing_without_creating_run_history(
+    isolated_db, capsys, source,
+):
+    assert main(["check-comparable", source, source]) == 1
+
+    assert f"report file {source} does not exist" in capsys.readouterr().err
+    assert not isolated_db.exists()
+
+
+def test_check_comparable_never_creates_run_history_to_look_up_a_run_id(isolated_db, capsys):
+    assert main(["check-comparable", "abc123", "def456"]) == 1
+
+    assert "there is no run history" in capsys.readouterr().err
+    assert not isolated_db.exists()

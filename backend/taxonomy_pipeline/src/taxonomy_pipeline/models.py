@@ -117,8 +117,9 @@ class Comparability(BaseModel):
 
     before_run_id: str
     after_run_id: str
-    before_subject: str
-    after_subject: str
+    # None when a run didn't finish and so records no scored taxonomy; `issues` says why.
+    before_subject: str | None
+    after_subject: str | None
     before_definitions_version: int | None
     after_definitions_version: int | None
     issues: list[ComparabilityIssue] = Field(default_factory=list)

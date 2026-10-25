@@ -78,9 +78,13 @@ def check_comparable(
 
     Each run's subject - the taxonomy it scores - is read from the report unless given (`report_subject`); a run
     scoring several taxonomies needs it named. Mismatches are reported, not raised: the result lists every issue.
+    It fails closed: a subject that no result of its run scores (a typo, say) is an issue, not an empty pass.
     """
-    subjects = {"before": before_subject or report_subject(before), "after": after_subject or report_subject(after)}
-    scored = {"before": _scored(before, subjects["before"]), "after": _scored(after, subjects["after"])}
+    subjects = {"before": _subject(before, before_subject), "after": _subject(after, after_subject)}
+    scored = {
+        label: _scored(report, subjects[label]) if subjects[label] is not None else {}
+        for label, report in (("before", before), ("after", after))
+    }
     counts = {
         "before": {dataset.name: dataset.counts for dataset in before.datasets},
         "after": {dataset.name: dataset.counts for dataset in after.datasets},
@@ -97,8 +101,38 @@ def check_comparable(
         before_subject=subjects["before"], after_subject=subjects["after"],
         before_definitions_version=before.metric_definitions_version,
         after_definitions_version=after.metric_definitions_version,
-        issues=_run_issues(before, after), metrics=metrics,
+        issues=[*_run_issues(before, after), *_subject_issues(before, after, subjects, scored)], metrics=metrics,
     )
+
+
+def _subject(report: RunReport, named: str | None) -> str | None:
+    """The named subject, else the report's; None for a run that didn't finish, which `_run_issues` reports."""
+    if named:
+        return named
+    try:
+        return report_subject(report)
+    except ValueError:
+        if report.status != "done":
+            return None
+        raise
+
+
+def _subject_issues(
+    before: RunReport, after: RunReport, subjects: dict[str, str | None], scored: dict[str, dict[str, list[_Scored]]],
+) -> list[ComparabilityIssue]:
+    """A finished run with no result scoring its subject: nothing would be compared, so it mustn't pass.
+
+    Results without recorded params can't be matched to a subject at all; `_run_issues` already flags those.
+    """
+    return [
+        ComparabilityIssue(kind="missing_result", message=(
+            f"the {label} run has no scoring result for {subjects[label]!r}; check the subject is the taxonomy "
+            "that run scores"
+        ))
+        for label, report in (("before", before), ("after", after))
+        if report.status == "done" and subjects[label] is not None and not scored[label]
+        and not any(result.params is None and _subject_param(result.metric_id) for result in report.results)
+    ]
 
 
 def _run_issues(before: RunReport, after: RunReport) -> list[ComparabilityIssue]:

@@ -221,7 +221,8 @@ records, plus `valid_rate` and `review_rate`.
   `tests/fixtures/classification/review_decisions.json` for an example).
 - `--semantic-model all-MiniLM-L6-v2` adds meaning-based duplicate candidates
   (needs `.[semantic]`); without it, only name/spelling candidates are found and
-  the preview is marked partial.
+  the preview is marked partial. The model loads at the revision pinned in
+  `metrics/embeddings.py`, as saturation and breadth do.
 - Older exports go through temporary adapters: `--legacy-case-a FILE`,
   `--legacy-case-b FILE=SOURCE_DATASET`, and `--skip-case-a-handoffs`.
 - Exit code is non-zero if an input file is unreadable or the preview is
@@ -465,7 +466,8 @@ the pipeline makes that checkable:
   before versioning have `null`: unknown, never assumed current.
 - **`configs/baseline_v1.yaml` pins the official settings.** Every setting that
   changes a result is written out, saturation's sentence model is pinned to a
-  revision, and `metric_definitions_version: 1` makes a run fail if the code
+  revision (the one in `metrics/embeddings.py`'s `PINNED_REVISIONS`, which breadth
+  also uses; a test fails if the config's copy drifts from it), and `metric_definitions_version: 1` makes a run fail if the code
   implements another version.
 - **The baseline of record is stored** in `baselines/baseline_v1.json.gz`. Run
   history is git-ignored and local, so this file is what everyone compares
@@ -522,14 +524,17 @@ taxonomy-pipeline check-comparable baselines/baseline_v1.json.gz enriched_report
 `integrate --config configs/baseline_v1.yaml` writes an `enriched.yaml` with
 the same settings and the same pin, aimed at the snapshot. `check-comparable
 BEFORE AFTER` takes report files (`.json` or `.json.gz`) or run IDs from run
-history. It prints `[OK]` or `[FLAGGED]` per result and exits non-zero if
+history. It is read-only: an argument that looks like a path (has a `/` or a
+`.json`/`.gz` suffix) and doesn't exist fails as a missing file, and a run ID is
+looked up only when run history exists, so the check never creates the
+database. It prints `[OK]` or `[FLAGGED]` per result and exits non-zero if
 anything is flagged:
 
 | Flag | Meaning |
 |---|---|
 | `definitions_version` | Scored with different definitions versions, or one run predates versioning: nothing compares |
 | `run_status` | A run failed |
-| `missing_result` | A metric scored the taxonomy in one run only |
+| `missing_result` | A metric scored the taxonomy in one run only, or a run has no result scoring its subject at all (e.g. a mistyped `--before-subject`), so nothing would be compared |
 | `result_status` | A result is `error` or `skipped` |
 | `settings` | Same metric, different params (all but the scored taxonomy's `dataset`/`target`/`baseline`); the changes are listed |
 | `reference_data` | A dataset the result reads (SSIC, SSOC, the incoming source) has different row counts |
@@ -660,7 +665,7 @@ Defaults come from `SaturationMetric.default_params`
 | `incoming` | - | One dataset name or an ordered list; each is one point on the curve | `[skillsfuture]` |
 | `threshold` | 90 | RapidFuzz score (0-100) for a "close spelling"; never enough on its own | 90 |
 | `semantic_model` | none | Optional sentence-transformers model; without it only exact/spelling evidence is used | `all-MiniLM-L6-v2` |
-| `semantic_model_revision` | none | Hugging Face commit, branch or tag to load `semantic_model` at; none follows the model's default branch, which can move. Recorded in `details` | none (`configs/baseline_v1.yaml` pins it) |
+| `semantic_model_revision` | none | Hugging Face commit, branch or tag to load `semantic_model` at. Unset, a model pinned in `metrics/embeddings.py` (`all-MiniLM-L6-v2`, by its short or full id) loads at that pin, the same one breadth uses; any other model follows its default branch, which can move. The revision loaded is recorded in `details` | none (`configs/baseline_v1.yaml` writes the pin out) |
 | `semantic_threshold` | 0.70 | Cosine similarity for a meaning match; also used by the parent check | 0.70 |
 | `semantic_threshold_by_level` | `{}` | Per incoming level override of `semantic_threshold` for concept matching | `{specialities: 0.80}` |
 | `add_candidate_lexical_threshold` | 60 | `ADD_CANDIDATE` needs the best spelling score at every level below this | 60 |
@@ -890,7 +895,8 @@ and a review candidate from its candidate category (`candidate_category_*`,
 runs `category_adaptation` on them, serializes the placements via
 `classification.from_category_adaptation.build_classification_outputs`, and
 validates the result against the contract before writing it out
-(`case_a_output.json` by default). `--semantic-model ''` runs it lexically only.
+(`case_a_output.json` by default). `--semantic-model ''` runs it lexically only;
+a model pinned in `metrics/embeddings.py` loads at that pin.
 
 ```bash
 taxonomy-pipeline run --config configs/original_vs_skillsfuture.yaml --output judged_report.json

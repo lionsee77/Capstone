@@ -43,6 +43,7 @@ from rapidfuzz import fuzz, process
 
 from ..datasets.base import LoadedDataset, TaxonomyDataset
 from ..models import MetricResult
+from . import embeddings
 from .base import Metric
 from .integrity import normalize
 from .judge import NONE_CHOICE, DecisionsJudge, JudgeCandidate, JudgeError, JudgeQuestion
@@ -91,11 +92,13 @@ def _is_valid_name(name: Any) -> bool:
 class SemanticMatcher:
     """Lazy sentence-embedding matcher, kept optional for lightweight runs.
 
-    `revision` pins the model to one Hugging Face commit; without it the
-    model's current default branch is used, which can move.
+    `revision` pins the model to one Hugging Face commit. Without it, a model
+    `embeddings.PINNED_REVISIONS` names loads at that pin (the one breadth
+    uses), and any other model at its current default branch, which can move.
     """
 
     def __init__(self, model_name: str, revision: str | None = None):
+        revision = revision or embeddings.pinned_revision(model_name)
         try:
             from sentence_transformers import SentenceTransformer
         except ImportError as exc:
@@ -713,7 +716,8 @@ class SaturationMetric(Metric):
         "incoming": None,
         "threshold": 90.0,
         "semantic_model": None,
-        # Hugging Face commit to load `semantic_model` at; None follows the model's default branch.
+        # Hugging Face commit to load `semantic_model` at. None uses the pin in
+        # embeddings.PINNED_REVISIONS for a model listed there, else the model's default branch.
         "semantic_model_revision": None,
         "semantic_threshold": 0.7,
         "add_candidate_lexical_threshold": 60.0,
@@ -725,8 +729,12 @@ class SaturationMetric(Metric):
     }
 
     def definition(self) -> dict[str, Any]:
-        # A `judge` mapping only names the settings it changes; JUDGE_DEFAULTS fill in the rest.
-        return {**super().definition(), "judge_defaults": dict(JUDGE_DEFAULTS)}
+        # A `judge` mapping only names the settings it changes; JUDGE_DEFAULTS fill in the rest. A model left
+        # unpinned in a config loads at the revision pinned in code, so the pins are part of the definition too.
+        return {
+            **super().definition(), "judge_defaults": dict(JUDGE_DEFAULTS),
+            "pinned_model_revisions": dict(embeddings.PINNED_REVISIONS),
+        }
 
     def run(self, datasets: dict[str, LoadedDataset], params: dict[str, Any]) -> MetricResult:
         p = self.resolve_params(params)
@@ -788,6 +796,9 @@ class SaturationMetric(Metric):
                 f"{baseline.name} has no named records for {', '.join(empty_baseline_levels)} while "
                 "an incoming source does; check the dataset source or table_map."
             ))
+        if p["semantic_model"] and revision is None:
+            # Recorded as loaded: an unpinned config still scores with the model version pinned in code.
+            revision = embeddings.pinned_revision(str(p["semantic_model"]))
         try:
             semantic_matcher = (
                 SemanticMatcher(str(p["semantic_model"]), revision=revision) if p["semantic_model"] else None

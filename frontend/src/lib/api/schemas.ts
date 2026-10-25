@@ -48,6 +48,40 @@ export const runReportSchema = z.object({
 });
 export type RunReport = z.infer<typeof runReportSchema>;
 
+/** Mirrors `ComparabilityIssue`: one reason two runs' numbers don't compare like for like. */
+export const comparabilityIssueSchema = z.object({
+  kind: z.enum(["run_status", "definitions_version", "missing_result", "result_status", "settings", "reference_data"]),
+  message: z.string(),
+});
+export type ComparabilityIssue = z.infer<typeof comparabilityIssueSchema>;
+
+/** Mirrors `MetricComparison`: a scoring result paired with its counterpart; an index is null when there is none. */
+export const metricComparisonSchema = z.object({
+  metric_id: z.string(),
+  before_index: z.number().int().nullable(),
+  after_index: z.number().int().nullable(),
+  issues: z.array(comparabilityIssueSchema),
+});
+export type MetricComparison = z.infer<typeof metricComparisonSchema>;
+
+/**
+ * Mirrors `Comparability` (`definitions.check_comparable`): whether two runs were scored alike. A
+ * version comparison (#69) shows deltas only for pairs without issues, and none when `issues` isn't empty.
+ */
+export const comparabilitySchema = z.object({
+  before_run_id: z.string(),
+  after_run_id: z.string(),
+  // Null when that run didn't finish, so it records no scored taxonomy.
+  before_subject: z.string().nullable(),
+  after_subject: z.string().nullable(),
+  before_definitions_version: z.number().int().nullable(),
+  after_definitions_version: z.number().int().nullable(),
+  issues: z.array(comparabilityIssueSchema),
+  metrics: z.array(metricComparisonSchema),
+  comparable: z.boolean(),
+});
+export type Comparability = z.infer<typeof comparabilitySchema>;
+
 /** `GET /runs` rows - a summary, not the full report. */
 export const runSummarySchema = runReportSchema.pick({ run_id: true, status: true, created_at: true });
 export type RunSummary = z.infer<typeof runSummarySchema>;
