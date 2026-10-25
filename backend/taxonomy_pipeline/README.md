@@ -27,6 +27,9 @@ taxonomy_pipeline/
 ├── docs/                             # design notes and future-work references
 │   ├── saturation-coverage-options.md      #   options for deciding "good coverage" from the saturation curve
 │   └── saturation-threshold-calibration.md #   method for choosing saturation thresholds from labelled pairs
+├── experiments/
+│   ├── evaluate_case_b.py            # compare saved Case B outputs across prompt versions
+│   └── golden_run.py                 # record every stage on the real data; diff two recordings (refactor check)
 ├── src/taxonomy_pipeline/
 │   ├── datasets/                     # pluggable taxonomy and reference sources
 │   │   ├── __init__.py               #   source registry - register new `type:` values here

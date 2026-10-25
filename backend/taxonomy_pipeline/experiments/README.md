@@ -1,4 +1,6 @@
-# Case B evaluation
+# Experiments
+
+## Case B evaluation
 
 This directory contains the evaluator for saved Case B model outputs. The
 runtime prompt is defined in
@@ -34,3 +36,41 @@ compare the per-version metrics manually, especially `error_count`,
 
 Confidence remains the model's estimate and is not treated as a calibrated
 probability. Never reuse a checkpoint after changing a prompt.
+
+## Golden run
+
+`golden_run.py` checks that a refactor doesn't change behaviour (#104). It runs
+one full classification round on the real data through the CLI and saves every
+stage's output in one folder:
+- the scorecard;
+- Case A and Case B;
+- the three merge-previews;
+- bulk-decide;
+- integrate;
+- the enriched scorecard and `check-comparable`.
+
+It is free and deterministic:
+- **No models:** scoring is lexical only, so there is no sentence model and no judge.
+- **No LLM:** Case B runs its real code against a stub model that answers from a
+  hash of each tag ID, and the hash of every prompt is recorded.
+- **No reviewer:** every tag still pending after bulk-decide is excluded, so
+  integrate gets a fully reviewed run.
+
+Run it from `backend/taxonomy_pipeline/`. A recording takes about two minutes
+and is about 300 MB. `golden_runs/` is git-ignored.
+
+```bash
+python experiments/golden_run.py record golden_runs/before    # on dev, before the change
+python experiments/golden_run.py record golden_runs/after     # after it
+python experiments/golden_run.py compare golden_runs/before golden_runs/after
+```
+
+`compare` ignores the keys that differ on every run by design (`run_id`,
+timestamps, event and submission IDs) and the recording folder's own path.
+Everything else must match exactly, including each command's exit code and
+printed output (`commands.json`). It exits non-zero and prints the first
+difference in each file that changed.
+
+`golden_run.py` installs the stub by replacing `case_b._openai_client`. If a
+refactor moves the OpenAI client setup, update that one line in the same
+change.
