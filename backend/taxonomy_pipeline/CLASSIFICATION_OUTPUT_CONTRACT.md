@@ -354,7 +354,10 @@ resolution = resolve_outputs(deduplication, taxonomy, [decision])
   produce a new tag ID; changing input order does not.
 - `ResolutionReport` contains approved hierarchy nodes, canonical tags, mappings,
   unique links, source dispositions, counts, decisions, and the full deduplication
-  evidence. Hierarchy nodes without approved links are omitted. Unapproved placements
+  evidence. Each disposition's `reason` explains in words why the tag was held or
+  flagged, and `reason_codes` lists the same reasons, in order, as codes to branch on:
+  `hierarchy_review`, `baseline_name_match`, `producer_flagged`, `hierarchy_blocked`
+  and `duplicate_candidate` (empty when nothing flagged it). Hierarchy nodes without approved links are omitted. Unapproved placements
   remain visible; repeated links are collapsed and baseline links marked `existing`.
 - Path reuse is rechecked against the supplied baseline. Changed or ambiguous targets
   require revalidation. A content fingerprint identifies the baseline used for resolution.

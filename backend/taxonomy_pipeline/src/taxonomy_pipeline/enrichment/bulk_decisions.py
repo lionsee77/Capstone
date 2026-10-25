@@ -29,13 +29,31 @@ from typing import Any, NamedTuple
 
 from ..matching.names import normalize
 from ..taxonomy.base import TaxonomyDataset
-from .models import ClassificationOutput, PlacementPath, ResolutionReport, ReviewDecision, SourceTagRef
+from .models import (
+    ClassificationOutput,
+    PlacementPath,
+    ResolutionReport,
+    ReviewDecision,
+    SourceDisposition,
+    SourceTagRef,
+)
 from .resolution import taxonomy_snapshot_id
 from .review import apply_hierarchy_decisions
 from .routing import SaturationReport
 
-# The pending reason resolution gives a tag held only because its producer flagged it.
+# How a merge run saved before reason codes existed starts the reason of a tag held only by its producer's flag.
 PRODUCER_REVIEW_PREFIX = "Producer requested review"
+
+
+def held_only_by_producer(disposition: SourceDisposition) -> bool:
+    """Whether the producer's own needs_review flag is the only thing holding this tag.
+
+    Read from `reason_codes`; a merge run saved before the codes has none, so its
+    reason text is checked instead (resolution puts the producer's reason last).
+    """
+    if disposition.reason_codes:
+        return disposition.reason_codes == ["producer_flagged"]
+    return disposition.reason.startswith(PRODUCER_REVIEW_PREFIX)
 
 
 @dataclass
@@ -162,7 +180,7 @@ def draft_decisions(
         if concept is None:
             draft.counts["not_ambiguous"] += 1
             continue
-        if key in paired or key in hierarchy_held or not disposition.reason.startswith(PRODUCER_REVIEW_PREFIX):
+        if key in paired or key in hierarchy_held or not held_only_by_producer(disposition):
             draft.counts["held_for_another_reason"] += 1
             continue
         if not closest or path is None:

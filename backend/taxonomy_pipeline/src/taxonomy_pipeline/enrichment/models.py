@@ -314,12 +314,27 @@ class ResolvedLink(BaseModel):
     existing: bool
 
 
+# Why resolution held or flagged a source tag. `reason` says the same thing in words; code branches on these.
+ReasonCode = Literal[
+    "hierarchy_review",     # hierarchy screening wants a reviewer to look at a proposed path
+    "baseline_name_match",  # the tag's normalized name matches an existing baseline tag
+    "producer_flagged",     # the producer marked a placement needs_review
+    "hierarchy_blocked",    # hierarchy screening blocked a path the decision approved
+    "duplicate_candidate",  # deduplication paired the tag with another incoming tag
+]
+
+
 class SourceDisposition(BaseModel):
-    """Account for each eligible source tag and placements not approved for linking."""
+    """Account for each eligible source tag and placements not approved for linking.
+
+    `reason_codes` lists every reason in `reason`, in the same order; it is empty for
+    tags nothing flagged, and for merge runs saved before the codes existed.
+    """
 
     source: SourceTagRef
     status: Literal["accepted", "excluded", "deferred", "pending"]
     reason: NonBlankText
+    reason_codes: list[ReasonCode] = Field(default_factory=list)
     unapproved_paths: list[PlacementPath] = Field(default_factory=list)
 
 

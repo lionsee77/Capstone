@@ -60,6 +60,33 @@ def path(**changes: str) -> PlacementPath:
     return PlacementPath(**(dict(service="Subject", category="Computing", speciality="Languages") | changes))
 
 
+# Each pending tag records why it is held as codes, matching its reason text, so callers need not parse it.
+def test_dispositions_carry_a_reason_code_for_each_hold(baseline: TaxonomyDataset) -> None:
+    report = dedup([
+        row("name", "SQL"),
+        row("pair-1", "Payroll"), row("pair-2", "payroll!"),
+        row("flagged", "Fire prevention", needs_review=True),
+        row("plain", "Glassblowing"),
+    ], baseline)
+    result = resolve_outputs(report, baseline, [])
+    by_tag = {item.source.tag_id: item for item in result.dispositions}
+    assert by_tag["name"].reason_codes == ["baseline_name_match"]
+    assert by_tag["name"].reason.startswith("Potential duplicate: normalized name matches baseline tags")
+    assert by_tag["pair-1"].reason_codes == by_tag["pair-2"].reason_codes == ["duplicate_candidate"]
+    assert by_tag["flagged"].reason_codes == ["producer_flagged"]
+    assert by_tag["flagged"].reason.startswith("Producer requested review")
+    assert by_tag["plain"].status == "accepted" and by_tag["plain"].reason_codes == []
+
+
+# A merge run saved before reason codes still loads, with no codes.
+def test_a_disposition_saved_without_reason_codes_still_loads(baseline: TaxonomyDataset) -> None:
+    result = resolve_outputs(dedup([row("x", "Glassblowing")], baseline), baseline, [])
+    saved = json.loads(result.model_dump_json())
+    for item in saved["dispositions"]:
+        del item["reason_codes"]
+    assert ResolutionReport.model_validate(saved).dispositions[0].reason_codes == []
+
+
 # Merge a reviewed group across unrelated source datasets and retain every approved parent link.
 def test_confirmed_equivalents_merge_with_multiple_new_paths_and_source_evidence(baseline: TaxonomyDataset) -> None:
     report = dedup([

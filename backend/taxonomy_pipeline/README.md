@@ -497,9 +497,11 @@ taxonomy-pipeline bulk-decide --merge-run merge_runs/<timestamp> --report judged
 | `--reuse-above Y` | `reuse` when the closest match (by meaning when the report has it, since a close spelling alone is unconfirmed; else by spelling) is one baseline *tag* scoring at least `Y`, linked at that same placement |
 
 - It only touches pending tags that saturation marked `REVIEW_AMBIGUOUS` and
-  that are held for nothing else. Tags in a duplicate candidate pair, tags
+  that are held for nothing else: their `resolution.json` disposition's
+  `reason_codes` is exactly `["producer_flagged"]`. Tags in a duplicate candidate pair, tags
   matching a baseline tag by name, hierarchy screening holds, Case A's review
   candidates for new tags, and tags already in `--decisions` are left as they are.
+  A merge run saved before `reason_codes` existed is read from its reason text instead.
 - The output starts with `--decisions` and every decision the merge run already
   applied (its `resolution.json` `decisions`, hierarchy decisions included), so
   applying the file alone never drops an earlier approval. A `--decisions` entry
