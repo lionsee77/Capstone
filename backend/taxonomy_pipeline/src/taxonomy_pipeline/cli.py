@@ -1,4 +1,4 @@
-"""`taxonomy-pipeline run|check-comparable|serve|case-a|case-b|merge-preview|bulk-decide|integrate`
+"""`taxonomy-pipeline run|check-comparable|serve|case-a|case-b|merge-preview|review-proposals|bulk-decide|integrate`
 
 Every command is a thin wrapper around one library function, so the CLI never
 holds logic of its own: `run` calls `pipeline.run_pipeline` - the exact same
@@ -6,8 +6,8 @@ function the FastAPI `/runs` route calls - plus optional SQLite persistence and
 a JSON report on stdout or a file. `check-comparable` calls
 `definitions.check_comparable`. The classification commands call
 `classification.case_a.run_case_a`, `classification.case_b.run_case_b`,
-`classification.runner.run_merge_preview`, `classification.bulk_decisions.draft_decisions`
-and `classification.integrate.integrate`.
+`classification.runner.run_merge_preview`, `classification.review_view.load_review_view`,
+`classification.bulk_decisions.draft_decisions` and `classification.integrate.integrate`.
 """
 from __future__ import annotations
 
@@ -187,7 +187,7 @@ def _cmd_merge_preview(args: argparse.Namespace) -> int:
             skip_case_a_handoffs=args.skip_case_a_handoffs,
             decisions=load_decisions(args.decisions) if args.decisions else [],
             semantic_matcher=SemanticMatcher(args.semantic_model) if args.semantic_model else None,
-            screening_settings=screening_settings,
+            screening_settings=screening_settings, change_log=args.change_log,
         )
     except (OSError, ValueError) as exc:
         print(f"[FAILED] merge-preview: {exc}", file=sys.stderr)
@@ -208,6 +208,22 @@ def _cmd_merge_preview(args: argparse.Namespace) -> int:
     )
     print(f"wrote {run.out_dir}/preview.csv (plus validation, deduplication and resolution JSON)")
     return 0 if run.ok else 1
+
+
+# Print the shared saved review view without altering decisions, reports or taxonomy data.
+def _cmd_review_proposals(args: argparse.Namespace) -> int:
+    from .classification.review_view import load_review_view
+
+    try:
+        view = load_review_view(
+            args.merge_run, proposal_id=args.proposal_id, level=args.level,
+            offset=args.offset, limit=1 if args.proposal_id else args.limit,
+        )
+    except (OSError, ValueError) as exc:
+        print(f"[FAILED] review-proposals: {exc}", file=sys.stderr)
+        return 1
+    print(view.model_dump_json(indent=2))
+    return 0
 
 
 def _cmd_bulk_decide(args: argparse.Namespace) -> int:
@@ -352,7 +368,7 @@ def build_parser() -> argparse.ArgumentParser:
                        help="old seven-field Case B file and its source dataset name")
     merge.add_argument("--skip-case-a-handoffs", action="store_true",
                        help="skip legacy Case A rows that only route a tag to Case B")
-    merge.add_argument("--decisions", help="JSON list of review decisions from an earlier run")
+    merge.add_argument("--decisions", help="JSON list of tag and hierarchy ReviewDecision records from an earlier run")
     merge.add_argument("--semantic-model", help="sentence model for semantic duplicate candidates")
     screening_defaults = ScreeningSettings()
     merge.add_argument("--screening-lexical", type=float, default=screening_defaults.lexical_threshold,
@@ -360,7 +376,17 @@ def build_parser() -> argparse.ArgumentParser:
     merge.add_argument("--screening-semantic", type=float, default=screening_defaults.semantic_threshold,
                        help="hierarchy semantic review threshold, 0-1 (default: %(default)s; needs --semantic-model)")
     merge.add_argument("--out-dir", help="where to write the reports (default: merge_runs/<timestamp>)")
+    merge.add_argument("--change-log", help="review change log to append new decisions to, shared across runs "
+                       "(default: <out-dir>/change_log.jsonl); decisions it already holds aren't logged again")
     merge.set_defaults(func=_cmd_merge_preview)
+
+    review = subparsers.add_parser("review-proposals", help="read saved proposals, branches, matches and decisions")
+    review.add_argument("--merge-run", required=True, help="merge-preview output folder")
+    review.add_argument("--proposal-id", help="show a single screened hierarchy proposal")
+    review.add_argument("--level", choices=["category", "speciality"])
+    review.add_argument("--offset", type=int, default=0, help="skip this many proposals after filtering")
+    review.add_argument("--limit", type=int, default=50, help="page size, 1-200 (default: 50)")
+    review.set_defaults(func=_cmd_review_proposals)
 
     bulk = subparsers.add_parser("bulk-decide", help="draft decisions for ambiguous tags by saturation similarity")
     _add_dataset_args(bulk)

@@ -246,7 +246,8 @@ Incoming categories and specialities also share a review hold when distinct
 normalised names have the same `match_key` under the same parent and would create
 new nodes. Their screening reasons list the proposal IDs in the cluster. Children
 of a held category remain held too; tag approvals cannot bypass these holds.
-Correct the producer paths to one agreed label and rerun screening. Variants that
+Reject competing proposals before approving the retained label, or correct the
+producer paths to one agreed label and rerun screening. Variants that
 already resolve to an existing node continue to reuse it.
 
 Each proposal in `resolution.json` under `screening.proposals` contains a stable
@@ -275,10 +276,9 @@ approved category or speciality. When a decision includes safe and blocked paths
 safe paths proceed while blocked paths stay in `unapproved_paths` and appear as
 `unapproved` in `preview.csv`. If every approved path is blocked, the sources stay
 pending. Review reasons retain producer, baseline-tag and hierarchy context.
-Near matches can still be accepted through explicit
-placement decisions. Hierarchy merge/relocation decisions belong to issue #57;
-until then, correct the producer placement to the intended existing branch or
-exclude/defer the affected source. No existing nodes are moved automatically.
+Near matches can still be accepted through explicit placement decisions. Issue
+#57 also supports explicit hierarchy decisions using the same `ReviewDecision`
+model and `--decisions` file as tag decisions; see below. No existing nodes move.
 
 `--semantic-model` enables hierarchy screening with the same matcher used for
 tag deduplication. Disabled checks are labelled `disabled`; a failed requested
@@ -289,6 +289,11 @@ screened again during preview/integration. A previously reviewed run can therefo
 fail to integrate when new holds appear. Rerun `merge-preview` with the original
 inputs and decisions, review new holds, then integrate the regenerated run. Reports
 with screening evidence from an older screening algorithm may also need regeneration.
+A new speciality's temporary ID (`new:speciality:<digest>`) is now derived from its
+parent category's baseline service name, so runs whose path spells the service
+differently (case or spacing) get new IDs: replaying a `resolution.json` saved
+before #57 then makes `integrate` report `introduced.resolution_mismatch`. Rerun
+`merge-preview` with the same inputs and decisions before integrating.
 `deduplication.json` also retains `screening_hierarchy`,
 including complete proposals that intake held outside eligible tag resolution.
 
@@ -299,10 +304,157 @@ src/taxonomy_pipeline/proposals/
   screening.py  # baseline candidates, parent-aware reuse and creation holds
 ```
 
-The producer contract and JSON Schema are unchanged. Synonym relationships,
-hierarchy reviewer decisions and a dedicated review API/UI are later PB06 issues.
+The producer contract and JSON Schema are unchanged. Synonym relationships (#56,
+after PB07) remain later PB06 work. The saved review API/CLI view is described below.
 See the [screening benchmark](docs/proposal-screening-benchmark.md) for full saved
 Case A/B input counts, before/after timings and semantic-run measurements.
+
+### Review category and speciality proposals (#57)
+
+Every screened proposal exposes `suggested_action`: `new` suggests `create`,
+`reuse` suggests `reuse`, and `review` suggests `defer`. These are suggestions;
+the original screening evidence stays separate from the recorded decisions.
+Reviewer labels map to the existing actions: approve = `create`, reject =
+`exclude`, merge = `reuse`, requires review = `defer`.
+
+Use the existing `ReviewDecision` format in `decisions.json`. A tag decision
+still targets `members` and uses `existing_tag_id`. A hierarchy decision targets
+one `proposal_id` from `resolution.json`'s `screening.proposals`, and uses
+`existing_concept_id` only for `reuse`. Both require a nonblank `reason`.
+Do not mix tag fields and hierarchy fields in one record. For example:
+
+```json
+[
+  {
+    "proposal_id": "<copy the proposal_id from screening.proposals>",
+    "action": "reuse",
+    "existing_concept_id": 42,
+    "reason": "Reviewed the definitions: this is the existing speciality"
+  }
+]
+```
+
+Submit tag and hierarchy decisions together using the existing command:
+
+```bash
+taxonomy-pipeline merge-preview --input case_a_output.json --input case_b_output.json \
+    --decisions decisions.json --out-dir merge_runs/reviewed
+```
+
+- A merge target must be a valid existing category or speciality at the proposal's
+  level, under the proposal's own parent. The target row and its canonical name
+  are reused; no replacement row is created. A category can only reuse an
+  existing category in the same service, so its tags never move service; its
+  children are rechecked against that category. A speciality in another category
+  requires a matching parent-category decision.
+- `create` rejects exact/name-key equivalents, unresolved incoming variants,
+  blocked parents and failed requested semantic checks. One exception: a
+  speciality whose only exact matches are specialities under *other* categories
+  can be created, the same cross-parent duplicate-name policy `integrate`
+  applies. A same-named category in another service still blocks. A near match
+  alone is evidence for review; a reviewer may approve it as distinct.
+- Decisions that resolve one of a cluster of incoming spelling variants (`reuse`,
+  `exclude`) are applied before the cluster is re-checked, so the remaining
+  variant is no longer held for it and can be created or left to resolve. Approved synonyms
+  will supply additional equivalence evidence when #56/PB07 is connected.
+- `exclude` and `defer` block dependent placements, even if a tag decision approves
+  them. They do not reject the source tag itself; use a tag decision to exclude
+  that source, or keep another proposed path. Hierarchy approval does not clear
+  independent producer or tag-duplicate holds.
+- Intake omissions (invalid rows, inconsistent source identities and ambiguous
+  paths omitted before deduplication) remain omissions. A hierarchy decision does
+  not restore missing tag evidence; correct those inputs and rerun intake.
+- Saved reports retain the original screening and the unified `decisions` list.
+  Preview and integration replay both. CSV notes show hierarchy decisions and
+  the resolved branch when it differs from the producer's supplied path.
+- Each validated decision the log doesn't already hold for this baseline appends
+  an event to `merge_runs/reviewed/change_log.jsonl`, with a UTC timestamp,
+  event/submission IDs, baseline fingerprint and the full decision including its
+  reason. Rerunning with the same `decisions.json` plus one new entry logs only
+  that entry; an edited decision (new action or reason) is logged again. Reusing
+  an output directory preserves earlier events; `--change-log PATH` keeps one log
+  across several output directories. Preview/integration replay never logs. Automatic defaults are not recorded
+  as human decisions. Invalid submissions fail before reports or events are written.
+
+The JSONL file is a **local PB09 handoff**, not the shared PB09 database integration
+or a log of applied taxonomy changes. Keep it with the run artifacts. Shared
+storage and reviewer authentication/identity remain PB09 integration work. This
+command generates a preview and does not write to the taxonomy database.
+
+```text
+src/taxonomy_pipeline/classification/
+  models.py      # shared ReviewDecision and ReviewDecisionEvent shapes
+  review.py      # validate hierarchy decisions and derive effective placements
+  change_log.py  # append submitted decisions to the run's local audit log
+```
+
+### Read the proposal review view (#58)
+
+Read a saved merge run to see each category/speciality proposal beside every
+screening match, with parent branches, concept IDs, match types, lexical and
+optional semantic scores. The CLI and API use the same `ProposalReviewReport`
+model in `classification/models.py` and the same reader in
+`classification/review_view.py`.
+
+```bash
+taxonomy-pipeline review-proposals --merge-run merge_runs/reviewed
+taxonomy-pipeline review-proposals --merge-run merge_runs/reviewed --level speciality --offset 50 --limit 50
+taxonomy-pipeline review-proposals --merge-run merge_runs/reviewed --proposal-id <proposal_id>
+```
+
+`--proposal-id` selects one proposal and can't be combined with `--level` or
+`--offset`.
+
+The CLI prints JSON to stdout. The API exposes the same response:
+
+```text
+GET /proposals?merge_run=reviewed&level=speciality&offset=0&limit=50
+GET /proposals/{proposal_id}?merge_run=reviewed
+```
+
+`TAXONOMY_MERGE_ROOT` selects the API's server-side merge directory (default:
+`backend/taxonomy_pipeline/merge_runs`, where `merge-preview` writes when run
+from `backend/taxonomy_pipeline`, whatever directory the server starts in). `merge_run` is one
+directory name beneath that root, not a filesystem path. For custom output
+locations, configure the root to their parent directory. The CLI accepts a
+local `--merge-run` path as usual. This uses existing files and does not choose
+the future governance storage being agreed in #89.
+
+- Each `proposals` item contains `proposed_path` and `proposed_parent` using
+  original labels, the full `proposal` screening evidence, the submitted
+  `decision` (or null), and its saved `resolved_node` allocation (or null).
+  `proposal.path` is the normalized identity; `proposal.variants` retains all
+  original spellings. The displayed path uses the same smallest variant as
+  screening's display name.
+- Every match retains its full existing path and path IDs, including null
+  ancestors for broken baseline paths (`reusable=false`). Matches at different
+  levels or under different parents remain visible.
+- Screening status, `suggested_action`, scores and `same_parent` describe the
+  original screening context, before reviewer remapping. `decision` records the
+  reviewer's choice separately. A temporary node ID is an allocation, not proof
+  of approval, tag readiness or database insertion.
+- The envelope includes the baseline fingerprint, screening settings,
+  `semantic_status`, skipped checks and pagination (`total`, `offset`, `limit`).
+  `total` counts proposals after filtering; pages default to 50, maximum 200.
+  All matches for each returned proposal are included. Detail requests return
+  the same envelope with one item and `limit=1`.
+- Reads do not reload the taxonomy, rerun matching, submit decisions or append
+  audit events. They show the saved run, not the current database. Submit choices
+  through #57's existing `merge-preview --decisions` and then read the new run.
+- Missing runs/proposals return HTTP 404; invalid query parameters return 422.
+  Invalid reports, mismatched fingerprints or older runs without screening
+  return 409 with an instruction to rerun `merge-preview`; they are not silently
+  re-screened. CLI errors return a nonzero exit code.
+
+The dashboard client and proxy accept these read endpoints and share matching
+Zod schemas. Review controls and screen layout remain follow-up UI work in #54.
+
+```text
+src/taxonomy_pipeline/
+  classification/review_view.py # saved evidence -> shared review response
+  classification/models.py      # ProposalReviewItem / ProposalReviewReport
+  api/proposals.py               # read-only list/detail routes under a configured root
+```
 
 ### Bulk decisions for ambiguous tags
 
@@ -325,6 +477,10 @@ taxonomy-pipeline bulk-decide --merge-run merge_runs/<timestamp> --report judged
   that are held for nothing else. Tags in a duplicate candidate pair, tags
   matching a baseline tag by name, hierarchy screening holds, Case A's review
   candidates for new tags, and tags already in `--decisions` are left as they are.
+- The output starts with `--decisions` and every decision the merge run already
+  applied (its `resolution.json` `decisions`, hierarchy decisions included), so
+  applying the file alone never drops an earlier approval. A `--decisions` entry
+  that changes one of those is refused as a conflict.
 - The output is a draft: every decision carries a `Bulk: ...` reason with the
   score and threshold, and goes through `merge-preview --decisions` like a
   hand-written one, so it appears in `preview.csv` and can be edited or removed.
@@ -1054,6 +1210,9 @@ the token, so use curl or the dashboard to call endpoints.
   `"running"` -> `"done"` or `"failed"`; once finished, the full report is
   in the response.
 - `GET /runs` - recent run history.
+- `GET /proposals?merge_run=&level=&offset=&limit=` and
+  `GET /proposals/{proposal_id}?merge_run=` - saved hierarchy proposals with
+  parent branches, matching evidence and decisions (see the #58 review view above).
 - `GET /taxonomy/search?run_id=&dataset=&q=&level=&limit=` - name search
   (case/punctuation-insensitive, via the same `normalize` `integrity` uses)
   over a dataset loaded by a past run, optionally filtered by `level`

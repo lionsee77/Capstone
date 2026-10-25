@@ -7,6 +7,20 @@ const resolve = (method: string, path: string, query = "", overrides = {}) =>
   resolveUpstream(method, path.split("/").filter(Boolean), new URLSearchParams(query), { ...env, ...overrides });
 
 describe("pipeline proxy allowlist", () => {
+  it("forwards only bounded read requests for saved proposals", () => {
+    expect(resolve("GET", "proposals", "merge_run=reviewed&level=speciality&offset=50&limit=50&extra=ignored"))
+      .toEqual({ ok: true,
+        url: "http://pipeline:8000/proposals?merge_run=reviewed&level=speciality&offset=50&limit=50" });
+    expect(resolve("GET", "proposals/proposal-1", "merge_run=reviewed"))
+      .toEqual({ ok: true, url: "http://pipeline:8000/proposals/proposal-1?merge_run=reviewed" });
+    for (const query of ["", "merge_run=../private", "merge_run=C:\\private", "merge_run=reviewed&limit=201",
+      "merge_run=reviewed&limit=0", "merge_run=reviewed&offset=-1", "merge_run=reviewed&level=tags"]) {
+      expect(resolve("GET", "proposals", query)).toMatchObject({ ok: false, status: 404 });
+    }
+    expect(resolve("GET", "proposals/..", "merge_run=reviewed")).toMatchObject({ ok: false });
+    expect(resolve("POST", "proposals/proposal-1", "merge_run=reviewed")).toMatchObject({ ok: false });
+  });
+
   it("forwards the read endpoints the dashboard uses", () => {
     expect(resolve("GET", "metrics")).toEqual({ ok: true, url: "http://pipeline:8000/metrics" });
     expect(resolve("GET", "runs", "limit=100")).toEqual({ ok: true, url: "http://pipeline:8000/runs?limit=100" });

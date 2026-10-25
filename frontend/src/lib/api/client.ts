@@ -13,6 +13,7 @@ import {
   createRunResponseSchema,
   metricCatalogueSchema,
   type PipelineConfig,
+  proposalReviewReportSchema,
   runReportSchema,
   runSummarySchema,
   taxonomyConceptDetailSchema,
@@ -68,6 +69,19 @@ async function request<T>(path: string, schema: z.ZodType<T>, init?: RequestInit
 export type TaxonomySource = { runId: string; dataset: string };
 
 export const api = {
+  // Fetch saved screening evidence through the same validated boundary as other dashboard data.
+  listProposals: (mergeRun: string, options: { level?: "category" | "speciality"; offset?: number; limit?: number } = {}) => {
+    const params = new URLSearchParams({ merge_run: mergeRun });
+    if (options.level) params.set("level", options.level);
+    if (options.offset !== undefined) params.set("offset", String(options.offset));
+    if (options.limit !== undefined) params.set("limit", String(options.limit));
+    return request(`/proposals?${params}`, proposalReviewReportSchema);
+  },
+  // Retrieve one proposal with its original suggestion and saved reviewer decision kept separate.
+  getProposal: (mergeRun: string, proposalId: string) => request(
+    `/proposals/${encodeURIComponent(proposalId)}?${new URLSearchParams({ merge_run: mergeRun })}`,
+    proposalReviewReportSchema,
+  ),
   listMetrics: () => request("/metrics", metricCatalogueSchema),
   listRuns: (limit = 50) => request(`/runs?limit=${limit}`, runSummarySchema.array()),
   getRun: (runId: string) => request(`/runs/${encodeURIComponent(runId)}`, runReportSchema),

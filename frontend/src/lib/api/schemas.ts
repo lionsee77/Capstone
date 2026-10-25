@@ -171,6 +171,7 @@ export const screenedProposalSchema = z.object({
   origins: z.array(z.tuple([z.string(), z.number().int()])),
   matches: z.array(conceptMatchSchema).default([]),
   status: z.enum(["new", "reuse", "review"]),
+  suggested_action: z.enum(["create", "reuse", "defer"]).optional(), // Absent in older saved reports.
   existing_id: z.number().int().nullable().default(null),
   blocks_creation: z.boolean().default(false),
   reason: z.string(),
@@ -189,6 +190,76 @@ export const proposalScreeningReportSchema = z.object({
   proposals: z.array(screenedProposalSchema),
 });
 export type ProposalScreeningReport = z.infer<typeof proposalScreeningReportSchema>;
+
+/** One ReviewDecision contract for tag groups and hierarchy proposals (#57). */
+const reviewTextSchema = z.string().regex(/\S/);
+const reviewIdSchema = z.number().int().positive();
+export const reviewDecisionSchema = z.object({
+  members: z.array(z.object({ source_dataset: reviewTextSchema, tag_id: reviewTextSchema })).default([]),
+  proposal_id: reviewTextSchema.nullable().default(null),
+  action: z.enum(["create", "exclude", "reuse", "defer"]),
+  reason: reviewTextSchema,
+  existing_tag_id: reviewIdSchema.nullable().default(null),
+  existing_concept_id: reviewIdSchema.nullable().default(null),
+  approved_speciality_ids: z.array(reviewIdSchema).default([]),
+  approved_paths: z.array(z.object({
+    service: z.enum(["Industry", "Function", "Subject", "Others"]),
+    category: reviewTextSchema, speciality: reviewTextSchema,
+  })).default([]),
+  canonical_name: reviewTextSchema.nullable().default(null),
+}).strict().superRefine((decision, context) => {
+  const hasLinks = decision.approved_paths.length > 0 || decision.approved_speciality_ids.length > 0;
+  const hierarchy = decision.proposal_id !== null;
+  const valid = hierarchy
+    ? decision.members.length === 0 && decision.existing_tag_id === null && !hasLinks
+      && decision.canonical_name === null
+      && (decision.action === "reuse") === (decision.existing_concept_id !== null)
+    : decision.members.length > 0 && decision.existing_concept_id === null
+      && (decision.action === "reuse") === (decision.existing_tag_id !== null)
+      && (!(decision.action === "exclude" || decision.action === "defer") || !hasLinks)
+      && (decision.action === "create" || decision.canonical_name === null);
+  if (!valid) context.addIssue({ code: "custom", message: "Decision target and fields do not match its action" });
+});
+export type ReviewDecision = z.infer<typeof reviewDecisionSchema>;
+
+export const reviewDecisionEventSchema = z.object({
+  event_id: reviewTextSchema,
+  submission_id: reviewTextSchema,
+  recorded_at: z.string().datetime({ offset: true }),
+  baseline_snapshot_id: reviewTextSchema,
+  event_type: z.literal("review_decision").default("review_decision"),
+  decision: reviewDecisionSchema,
+}).strict();
+
+export const resolvedHierarchyNodeSchema = z.object({
+  level: proposalConceptLevelSchema,
+  id: z.union([reviewIdSchema, reviewTextSchema]),
+  parent_id: z.union([reviewIdSchema, reviewTextSchema]),
+  name: reviewTextSchema,
+  path: z.array(z.string()),
+  existing: z.boolean(),
+});
+
+export const proposalReviewItemSchema = z.object({
+  proposal: screenedProposalSchema,
+  proposed_path: z.array(z.string()),
+  proposed_parent: z.array(z.string()),
+  decision: reviewDecisionSchema.nullable().default(null),
+  resolved_node: resolvedHierarchyNodeSchema.nullable().default(null),
+});
+
+/** Saved evidence and decisions returned identically by the review CLI and API (#58). */
+export const proposalReviewReportSchema = z.object({
+  baseline_snapshot_id: z.string(),
+  settings: screeningSettingsSchema,
+  semantic_status: z.enum(["disabled", "complete", "failed"]),
+  skipped_checks: z.record(z.string(), z.string()),
+  total: z.number().int().nonnegative(),
+  offset: z.number().int().nonnegative(),
+  limit: z.number().int().min(1).max(200),
+  proposals: z.array(proposalReviewItemSchema),
+});
+export type ProposalReviewReport = z.infer<typeof proposalReviewReportSchema>;
 
 export function isRunFinished(status: RunStatus): boolean {
   return status === "done" || status === "failed";

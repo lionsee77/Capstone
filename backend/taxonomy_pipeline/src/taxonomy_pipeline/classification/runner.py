@@ -21,6 +21,7 @@ from pydantic import TypeAdapter
 from ..datasets.base import TaxonomyDataset
 from ..matching import SimilarityMatcher
 from ..proposals.models import ScreeningSettings
+from .change_log import append_review_decisions
 from .deduplication import deduplicate_outputs
 from .export import export_preview_csv
 from .models import BatchValidationReport, MergePreview, ReviewDecision
@@ -107,12 +108,15 @@ def run_merge_preview(
     decisions: list[ReviewDecision] = (),
     semantic_matcher: SimilarityMatcher | None = None,
     screening_settings: ScreeningSettings | None = None,
+    change_log: str | Path | None = None,
 ) -> MergeRun:
     """Chain the stages over producer files and write validation, deduplication,
     resolution and the preview CSV to `out_dir`.
 
     `inputs` follow the nine-field contract; `legacy_case_a` and `legacy_case_b`
     (path -> source dataset name) go through the temporary intake adapters.
+    Decisions not yet in `change_log` (default `out_dir/change_log.jsonl`) are
+    appended to it; point several runs at one log to keep a reviewer's history.
     """
     legacy_case_b = {Path(path): source for path, source in (legacy_case_b or {}).items()}
     paths = [Path(path) for path in [*inputs, *legacy_case_a, *legacy_case_b]]
@@ -152,4 +156,8 @@ def run_merge_preview(
         "pending_sources": preview.counts.pending_sources,
     }
     (out_dir / "run.json").write_text(json.dumps(run_info, indent=2), encoding="utf-8")
+    append_review_decisions(
+        Path(change_log) if change_log else out_dir / "change_log.jsonl", resolution.decisions,
+        baseline_snapshot_id=resolution.baseline_snapshot_id,
+    )
     return MergeRun(out_dir=out_dir, validation=validation, preview=preview, warnings=warnings)

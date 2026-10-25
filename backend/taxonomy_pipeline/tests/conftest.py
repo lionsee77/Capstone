@@ -21,6 +21,45 @@ def _open_api(monkeypatch, tmp_path_factory):
 
 
 @pytest.fixture
+# Save a real reviewed merge run with same-name branches, scored matches and an audit event.
+def saved_proposal_run(tmp_path: Path) -> Path:
+    import json
+    from unittest.mock import Mock
+
+    import numpy as np
+
+    from taxonomy_pipeline.classification.models import ResolutionReport, ReviewDecision
+    from taxonomy_pipeline.classification.runner import run_merge_preview
+    from taxonomy_pipeline.datasets.base import TaxonomyDataset
+
+    baseline = TaxonomyDataset(
+        name="baseline", services=[{"id": 1, "name": "Subject"}, {"id": 2, "name": "Industry"}],
+        categories=[{"id": 10, "name": "Computing", "service_id": 1},
+                    {"id": 11, "name": "Computing", "service_id": 2}],
+        specialities=[{"id": 20, "name": "Data visualization", "category_id": 10},
+                      {"id": 21, "name": "Data visualization", "category_id": 11}],
+        tags=[], speciality_tags=[],
+    )
+    (tmp_path / "baseline.json").write_text(baseline.model_dump_json(), encoding="utf-8")
+    producer = tmp_path / "producer.json"
+    producer.write_text(json.dumps([{
+        "source_dataset": "feed", "tag_id": "1", "tag": "Fresh skill", "original_classification": "classified",
+        "service": "Subject", "category": "Computing", "speciality": "Data visualizatio",
+        "confidence": 0.8, "reason": "Producer suggestion",
+    }]), encoding="utf-8")
+    directory = tmp_path / "merge_runs" / "reviewed"
+    matcher = Mock(similarity=lambda names, existing: np.full((len(names), len(existing)), 0.8))
+    run_merge_preview([producer], baseline, out_dir=directory, semantic_matcher=matcher)
+    report = ResolutionReport.model_validate_json((directory / "resolution.json").read_text(encoding="utf-8"))
+    proposal = next(item for item in report.screening.proposals if item.level == "speciality")
+    run_merge_preview([producer], baseline, out_dir=directory, semantic_matcher=matcher, decisions=[
+        ReviewDecision(proposal_id=proposal.proposal_id, action="reuse", existing_concept_id=20,
+                       reason="Reviewed both branches; reuse the Subject speciality"),
+    ])
+    return directory
+
+
+@pytest.fixture
 def classification_paths(tmp_path):
     from openpyxl import Workbook
 
