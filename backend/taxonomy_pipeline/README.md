@@ -36,8 +36,9 @@ taxonomy_pipeline/
 │   │   ├── base.py                   #   TaxonomySource protocol, canonical TaxonomyDataset, its Hierarchy (parent lookups)
 │   │   ├── sql_dump.py               #   reads plain .sql dump files
 │   │   └── references/               #   classification references a taxonomy is measured against
-│   │       ├── ssic.py               #     SSIC 2025 industry classification workbook
-│   │       └── ssoc.py               #     SSOC 2024 occupation classification workbook
+│   │       ├── workbook.py           #     the shared workbook loader and reference/record base models
+│   │       ├── ssic.py               #     SSIC 2025 industry classification: levels and code rule
+│   │       └── ssoc.py               #     SSOC 2024 occupation classification: levels and code rule
 │   ├── matching/                     # anything that answers "is this the same concept?"
 │   │   ├── names.py                  #   normalize, match_key, placeholder filter, lexical score matrix
 │   │   ├── semantic.py               #   SimilarityMatcher protocol + the sentence-model SemanticMatcher
