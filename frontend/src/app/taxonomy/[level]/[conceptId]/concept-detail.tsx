@@ -7,7 +7,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import type { TaxonomySource } from "@/lib/api/client";
 import { useTaxonomyConcept } from "@/lib/api/queries";
-import { conceptLevelSchema, type TaxonomyConceptRef, type TaxonomyPath } from "@/lib/api/schemas";
+import type { ConceptLevel, TaxonomyConceptRef, TaxonomyPath } from "@/lib/api/schemas";
 
 function sourceLink(source: TaxonomySource, level: string, conceptId: string | number): string {
   const params = new URLSearchParams({ run_id: source.runId, dataset: source.dataset });
@@ -65,22 +65,14 @@ export function ConceptDetail({
   runId,
   dataset,
 }: {
-  level: string;
+  level: ConceptLevel;
   conceptId: string;
   runId: string | undefined;
   dataset: string | undefined;
 }) {
-  const parsedLevel = conceptLevelSchema.safeParse(level);
   const source: TaxonomySource | null = runId && dataset ? { runId, dataset } : null;
-  const { data: concept, isPending, error } = useTaxonomyConcept(
-    source,
-    parsedLevel.success ? parsedLevel.data : "tags",
-    conceptId,
-  );
+  const { data: concept, isPending, error } = useTaxonomyConcept(source, level, conceptId);
 
-  if (!parsedLevel.success) {
-    return <p className="text-sm text-destructive">Unknown concept level: {level}</p>;
-  }
   if (!source) {
     return (
       <p className="text-sm text-destructive">
