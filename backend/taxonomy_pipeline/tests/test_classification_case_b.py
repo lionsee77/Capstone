@@ -19,6 +19,7 @@ from taxonomy_pipeline.enrichment.case_b import (
     to_contract_records,
 )
 from taxonomy_pipeline.enrichment.models import CLASSIFICATION_OUTPUTS
+from taxonomy_pipeline.providers.skillsfuture import SkillsFutureProvider
 from taxonomy_pipeline.taxonomy.base import TaxonomyDataset
 
 PROPOSAL = {
@@ -130,7 +131,7 @@ def test_run_classifies_only_case_b_tags_and_writes_contract_records(tmp_path, w
 
     records = asyncio.run(run_case_b(
         _datasets(), saturation_report(CONCEPTS, run_id="sat-9"), baseline="original", incoming="skillsfuture",
-        unique_skills=workbook, output=output, client=client,
+        provider=SkillsFutureProvider(), context=workbook, output=output, client=client,
     ))
 
     assert [record["tag_id"] for record in records] == ["3001", "3002"]
@@ -169,7 +170,7 @@ def _answers(*tag_ids):
 def _run(report, output, client, **kwargs):
     return asyncio.run(run_case_b(
         _six_tag_datasets(), report, baseline="original", incoming="skillsfuture",
-        unique_skills=kwargs.pop("workbook"), output=output, client=client, **kwargs,
+        provider=SkillsFutureProvider(), context=kwargs.pop("workbook"), output=output, client=client, **kwargs,
     ))
 
 
@@ -259,7 +260,7 @@ def test_run_rejects_report_tags_missing_from_the_incoming_dataset(tmp_path, wor
     with pytest.raises(CaseBError, match="exist in dataset 'skillsfuture'"):
         asyncio.run(run_case_b(
             _datasets(), saturation_report(concepts), baseline="original", incoming="skillsfuture",
-            unique_skills=workbook, output=tmp_path / "out.json", client=StubClient(),
+            provider=SkillsFutureProvider(), context=workbook, output=tmp_path / "out.json", client=StubClient(),
         ))
 
 
@@ -291,7 +292,7 @@ def test_flags_ambiguous_tags_for_review_in_the_json_and_csv(tmp_path, workbook,
 
     records = asyncio.run(run_case_b(
         _datasets(), saturation_report(concepts), baseline="original", incoming="skillsfuture",
-        unique_skills=workbook, output=output, client=client,
+        provider=SkillsFutureProvider(), context=workbook, output=output, client=client,
     ))
 
     assert "needs_review" not in records[0]

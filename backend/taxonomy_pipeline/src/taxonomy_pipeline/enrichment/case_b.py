@@ -2,9 +2,10 @@
 
 Saturation marks these tags `NO_PARENT` (see `routing.py`), so there is nothing
 in their source to adapt; an LLM proposes a category and
-speciality in the baseline taxonomy instead, using the SkillsFuture workbook's
-skill descriptions as context. Tags saturation could not confirm as new
-(`REVIEW_AMBIGUOUS`) are classified too, and their records flagged for review.
+speciality in the baseline taxonomy instead, using the context the source's
+provider (`providers/`, e.g. SkillsFuture's skill descriptions) adds to each
+tag. Tags saturation could not confirm as new (`REVIEW_AMBIGUOUS`) are
+classified too, and their records flagged for review.
 
 Proposal-only: writes JSON and CSV review files and never touches a database.
 Taxonomies come from the pipeline config, the same datasets saturation and Case A
@@ -21,7 +22,7 @@ from pathlib import Path
 from typing import Any
 
 from .. import llm
-from ..providers.skillsfuture import TAG_ID_OFFSET
+from ..providers.base import SourceProvider
 from ..taxonomy.base import TaxonomyDataset
 from .models import CLASSIFICATION_OUTPUTS
 from .routing import RUN_ID_FIELD, case_b_tag_ids, load_saturation, mark_ambiguous
@@ -100,27 +101,6 @@ async def classify_batch(
     raise CaseBError(f"Model failed to return one valid proposal for every tag in batch: {sorted(expected)}")
 
 
-def source_skills(path: str | Path) -> dict[str, dict[str, str]]:
-    """Skill title, description and type by SkillsFuture skill_id, for prompt context."""
-    from openpyxl import load_workbook
-
-    workbook = load_workbook(path, read_only=True, data_only=True)
-    try:
-        rows = workbook["Unique Skills List"].iter_rows(values_only=True)
-        headers = [str(value or "").strip() for value in next(rows)]
-        result = {}
-        for values in rows:
-            row = dict(zip(headers, values, strict=False))
-            skill_id = str(row.get("skill_id") or "").strip()
-            if skill_id:
-                result[skill_id] = {
-                    field: str(row.get(f"skill_{field}") or "").strip() for field in ("title", "description", "type")
-                }
-        return result
-    finally:
-        workbook.close()
-
-
 def baseline_hierarchy(
     baseline: TaxonomyDataset,
 ) -> tuple[list[str], list[dict[str, str]], list[dict[str, str]]]:
@@ -158,10 +138,11 @@ def incoming_tags(incoming: TaxonomyDataset) -> dict[str, str]:
 
 def build_prompt(
     services: list[str], categories: list[dict[str, str]], specialities: list[dict[str, str]],
-    batch: list[dict[str, Any]],
+    batch: list[dict[str, Any]], *, source_name: str,
 ) -> str:
+    """The classification prompt for one batch; `source_name` is the provider's `display_name`."""
     return (
-        "You are classifying incoming SkillsFuture skills into Ankit's taxonomy. Follow this decision procedure "
+        f"You are classifying incoming {source_name} skills into Ankit's taxonomy. Follow this decision procedure "
         "for every tag. First, inspect the supplied service/category/speciality hierarchy and choose the single "
         "best existing placement. If a suitable existing category and speciality exist under the same service, "
         "you MUST use action=assign_existing and copy both names exactly. Use action=propose_new_speciality "
@@ -170,12 +151,12 @@ def build_prompt(
         "propose a new category or speciality merely because the skill is specialised, and never propose a node "
         "whose name already appears in the supplied hierarchy under the relevant parent. The service, category, "
         "and speciality must form one consistent parent-child path. Do not choose a category from one service "
-        "and a speciality from another. The source tag remains a SkillsFuture tag, while the placement targets "
+        f"and a speciality from another. The source tag remains a {source_name} tag, while the placement targets "
         "Ankit's taxonomy. Copy the original skill title into the tag field exactly. Return exactly one proposal "
         "per tag_id and no commentary outside JSON.\n\nAllowed Ankit services:\n" + json.dumps(services)
         + "\nAnkit categories (each includes its parent service):\n" + json.dumps(categories)
         + "\nAnkit specialities (each includes its parent service and category):\n" + json.dumps(specialities)
-        + "\nSkillsFuture skills:\n" + json.dumps(batch)
+        + f"\n{source_name} skills:\n" + json.dumps(batch)
         + "\nReturn ONLY valid JSON matching this shape (no Markdown): " + json.dumps(RESPONSE_SCHEMA)
     )
 
@@ -280,8 +261,9 @@ async def run_case_b(
     *,
     baseline: str,
     incoming: str,
-    unique_skills: str | Path,
+    provider: SourceProvider,
     output: str | Path,
+    context: str | Path | None = None,
     checkpoint: str | Path | None = None,
     batch_size: int = 5,
     model: str | None = None,
@@ -289,6 +271,9 @@ async def run_case_b(
     client: Any = None,
 ) -> list[dict[str, Any]]:
     """Classify every Case B tag and write `output` (JSON) plus a CSV next to it.
+
+    `provider` adds each tag's source context to the prompt, read from `context`
+    (default: the provider's own default file).
 
     Completed batches are checkpointed, so an interrupted run resumes where it
     stopped, with any batch size; a successful run removes the checkpoint. The
@@ -310,8 +295,7 @@ async def run_case_b(
     ambiguous = sum(tag_id in saturation.ambiguous_matches() for tag_id in input_tag_ids)
     print(f"Using {len(input_tag_ids)} Case B tag(s) from {report_path} (NO_PARENT; {ambiguous} need review)")
 
-    skills = source_skills(unique_skills)
-    tag_to_skill = {str(TAG_ID_OFFSET + index): skill_id for index, skill_id in enumerate(sorted(skills))}
+    contexts = provider.load_tag_context(context)
     services, categories, specialities = baseline_hierarchy(datasets[baseline])
     if client is None:
         client = _openai_client(debug)
@@ -330,9 +314,8 @@ async def run_case_b(
     for start in range(0, len(pending), batch_size):
         batch = []
         for tag_id in pending[start:start + batch_size]:
-            skill_id = tag_to_skill.get(tag_id)
-            batch.append({"tag_id": tag_id, "title": tags[tag_id], "skill_id": skill_id, **skills.get(skill_id, {})})
-        prompt = build_prompt(services, categories, specialities, batch)
+            batch.append({"tag_id": tag_id, "title": tags[tag_id], **provider.context_for(contexts, tag_id)})
+        prompt = build_prompt(services, categories, specialities, batch, source_name=provider.display_name)
         for proposal in await classify_batch(client, prompt, batch, model, debug=debug):
             proposals[proposal["tag_id"]] = proposal
         _save_checkpoint(checkpoint, provenance, proposals)

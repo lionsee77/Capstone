@@ -218,6 +218,15 @@ def test_case_b_fails_cleanly_for_an_unknown_dataset(tmp_path, capsys):
     assert "no taxonomy dataset named 'nope'" in capsys.readouterr().err
 
 
+def test_case_b_fails_cleanly_for_an_unknown_provider(tmp_path, capsys):
+    config_path = _write_stage_config(tmp_path)
+
+    code = main(["case-b", "--config", str(config_path), "--provider", "nope", "--report", "r.json"])
+
+    assert code == 1
+    assert "No source provider 'nope'" in capsys.readouterr().err
+
+
 def test_merge_preview_rejects_outputs_from_different_saturation_runs(tmp_path, capsys):
     config_path = _write_stage_config(tmp_path)
     row = {

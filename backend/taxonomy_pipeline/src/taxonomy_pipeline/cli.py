@@ -23,7 +23,6 @@ from .config import load_config
 from .enrichment.proposals.models import ScreeningSettings
 from .models import RunReport
 from .pipeline import load_datasets, read_report, result_labels, run_pipeline, write_report
-from .providers import skillsfuture
 from .quality.definitions import check_comparable
 from .taxonomy.base import LoadedDataset, TaxonomyDataset
 
@@ -143,11 +142,15 @@ def _cmd_case_a(args: argparse.Namespace) -> int:
 
 def _cmd_case_b(args: argparse.Namespace) -> int:
     from .enrichment.case_b import run_case_b
+    from .providers.registry import get_provider
 
     try:
+        datasets = _datasets(args, args.baseline, args.incoming)
+        provider = get_provider(args.provider or args.incoming)
         asyncio.run(run_case_b(
-            _datasets(args, args.baseline, args.incoming), args.report,
-            baseline=args.baseline, incoming=args.incoming, unique_skills=args.unique, output=args.output,
+            datasets, args.report,
+            baseline=args.baseline, incoming=args.incoming, provider=provider, context=args.context,
+            output=args.output,
             checkpoint=args.checkpoint, batch_size=args.batch_size, model=args.model, debug=args.debug_response,
         ))
     except (OSError, ValueError, RuntimeError) as exc:
@@ -337,8 +340,9 @@ def build_parser() -> argparse.ArgumentParser:
     case_b = subparsers.add_parser("case-b", help="propose placements for parentless new tags with an LLM")
     _add_dataset_args(case_b)
     case_b.add_argument("--report", default="report.json", help=report_help)
-    case_b.add_argument("--unique", default=str(skillsfuture.UNIQUE_SKILLS_WORKBOOK),
-                        help="SkillsFuture unique-skills workbook")
+    case_b.add_argument("--provider", help="source provider adding each tag's context (default: the --incoming name)")
+    case_b.add_argument("--context", "--unique", dest="context",
+                        help="the provider's context file (default: its own, e.g. the unique-skills workbook)")
     case_b.add_argument("--output", default="case_b_output.json", help="JSON output; a CSV is written next to it")
     case_b.add_argument("--checkpoint", help="checkpoint file for resuming after a failed run")
     case_b.add_argument("--batch-size", type=int, default=5)

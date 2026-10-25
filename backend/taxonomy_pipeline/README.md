@@ -55,7 +55,9 @@ taxonomy_pipeline/
 │   │   ├── definitions.py            #   METRIC_DEFINITIONS_VERSION and check_comparable (see "Official metric definitions")
 │   │   └── registry.py               #   METRICS dict - register new metrics here
 │   ├── providers/                    # what is specific to one external source
-│   │   └── skillsfuture.py           #   SkillsFuture tag-ID offset and unique-skills workbook
+│   │   ├── base.py                   #   SourceProvider ABC: per-tag context and display name for Case B
+│   │   ├── registry.py               #   PROVIDERS by name; `case-b --provider`
+│   │   └── skillsfuture.py           #   SkillsFuture: tag-ID offset, unique-skills workbook context
 │   ├── enrichment/                   # Case A/B producers and the merge stages (see "Classification workflow")
 │   │   ├── models.py                 #   ClassificationOutput contract + every stage's report model
 │   │   ├── routing.py                #   splits one saved saturation report into Case A / Case B tags
@@ -192,8 +194,11 @@ stages' rules and the review-decision format are in the
 
 `case-b` asks an OpenAI model to place each parentless new tag into the
 baseline's existing categories and specialities, or to propose a new one,
-using the SkillsFuture unique-skills workbook (`--unique`, defaults to the one
-in `backend/skillsfuture/`) for skill descriptions. Both taxonomies come from
+using the incoming source's context for each tag. That comes from the source's
+provider (`--provider`, defaulting to the `--incoming` dataset name; see
+`providers/`): for SkillsFuture, the unique-skills workbook's skill
+descriptions (`--context`, or the older `--unique`, defaulting to the one in
+`backend/skillsfuture/`). Both taxonomies come from
 the pipeline config, the same datasets saturation and Case A use. Install the
 optional dependencies and set the key in `backend/.env` (copy
 `backend/.env.example`):
@@ -1286,6 +1291,10 @@ check instead of passing it on no data.
 To add a new source type (a live MariaDB connection, a CSV export, ...):
 implement `TaxonomySource.load()` (see `taxonomy/base.py`) and register a
 builder for it in `taxonomy/__init__.py`. No other file changes.
+
+If Case B should classify tags from the new source, also add a
+`SourceProvider` (see `providers/base.py`) supplying each tag's prompt context,
+and register it in `providers/registry.py` under the source's dataset name.
 
 ## Plugging in a metric
 
