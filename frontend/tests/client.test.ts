@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { api, ApiError } from "@/lib/api/client";
 
 import { doneRunReport, metricCatalogue } from "./fixtures/reports";
+import { proposalReview } from "./fixtures/proposal-review";
 
 function mockFetch(status: number, body: unknown) {
   const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify(body), { status }));
@@ -15,6 +16,20 @@ afterEach(() => {
 });
 
 describe("api client", () => {
+  it("reads paged proposals and one proposal through the shared review response schema", async () => {
+    const fetchMock = mockFetch(200, proposalReview);
+    const result = await api.listProposals("reviewed", { level: "speciality", offset: 0, limit: 50 });
+    expect(result.proposals[0].decision?.existing_concept_id).toBe(20);
+    expect(fetchMock).toHaveBeenLastCalledWith(
+      "/api/pipeline/proposals?merge_run=reviewed&level=speciality&offset=0&limit=50", expect.anything(),
+    );
+    const detailFetch = mockFetch(200, { ...proposalReview, limit: 1 });
+    await api.getProposal("reviewed", "proposal-1");
+    expect(detailFetch).toHaveBeenLastCalledWith(
+      "/api/pipeline/proposals/proposal-1?merge_run=reviewed", expect.anything(),
+    );
+  });
+
   it("requests through the Next proxy prefix and parses the response", async () => {
     const fetchMock = mockFetch(200, metricCatalogue);
     await expect(api.listMetrics()).resolves.toEqual(metricCatalogue);

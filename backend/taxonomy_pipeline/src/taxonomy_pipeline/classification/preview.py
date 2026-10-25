@@ -13,6 +13,7 @@ from typing import Any
 
 from ..datasets.base import CONCEPTS, TaxonomyDataset
 from ..metrics.integrity import IntegrityMetric, normalize
+from ..metrics.saturation import match_key
 from ..models import MetricResult
 from .models import (
     ClassificationOutput,
@@ -24,6 +25,7 @@ from .models import (
     ValidationReport,
 )
 from .resolution import resolve_outputs, taxonomy_snapshot_id
+from .review import apply_hierarchy_decisions
 
 
 # Serialize identifiers without conflating booleans, integers, strings, or malformed values.
@@ -108,13 +110,18 @@ def _assemble(resolution: ResolutionReport, baseline: TaxonomyDataset) -> Taxono
 
 
 # Emit one row per source and normalized path while retaining evidence variants in the resolution report.
-def _placement_rows(resolution: ResolutionReport, blocked: bool) -> list[PreviewRow]:
+def _placement_rows(resolution: ResolutionReport, blocked: bool, baseline: TaxonomyDataset) -> list[PreviewRow]:
     nodes = {tuple(node.path): node for node in resolution.hierarchy}
     tags = {tag.id: tag for tag in resolution.tags}
     mappings = {(item.source.source_dataset, item.source.tag_id): item.canonical_tag_id for item in resolution.mappings}
     dispositions = {(item.source.source_dataset, item.source.tag_id): item for item in resolution.dispositions}
     links = {(link.speciality_id, link.tag_id): link for link in resolution.links}
-    screened = {tuple(item.path): item for item in resolution.screening.proposals} if resolution.screening else {}
+    effective = apply_hierarchy_decisions(resolution.screening, baseline, resolution.decisions)
+    screened = {tuple(item.path): item for item in effective.proposals}
+    decisions = {
+        decision.proposal_id: decision for decision in resolution.decisions if decision.proposal_id is not None
+    }
+    services = {row["id"]: row["name"] for row in baseline.services}
     rows = []
     for proposal in resolution.evidence.tags:
         source = proposal.source.source_dataset, proposal.source.tag_id
@@ -162,6 +169,16 @@ def _placement_rows(resolution: ResolutionReport, blocked: bool) -> list[Preview
                 row.speciality_change = "existing" if speciality.existing else "new"
                 row.tag_change = "existing" if tag.existing else "new"
                 row.link_change = "existing" if link.existing else "new"
+                resolved_path = [services[category.parent_id], category.name, speciality.name]
+                supplied = [placement.service, placement.category, placement.speciality]
+                # Only a real move: a case or spelling variant of the supplied path (match_key) isn't one.
+                if [match_key(name) for name in resolved_path] != [match_key(name) for name in supplied]:
+                    row.note += (" " if row.note else "") + "Resolved placement: " + " > ".join(resolved_path)
+            reviewed = [item for item in concepts if item.proposal_id in decisions]
+            if reviewed:
+                row.note += (" " if row.note else "") + "Hierarchy decisions: " + "; ".join(
+                    f"{item.level}: {item.reason}" for item in reviewed
+                )
             rows.append(row)
     return sorted(rows, key=lambda row: _key(row.model_dump(mode="json")))
 
@@ -204,7 +221,7 @@ def build_preview(resolution: ResolutionReport, baseline: TaxonomyDataset) -> Me
     if expected.screening:
         findings.extend(ValidationFinding(code=f"screening.{name}", message=reason)
                         for name, reason in sorted(expected.screening.skipped_checks.items()))
-    rows = _placement_rows(expected, blocked)
+    rows = _placement_rows(expected, blocked, baseline)
     linked = set() if blocked else {link.tag_id for link in expected.links}
     counts = PreviewCounts(
         added_tags=sum(not tag.existing and tag.id in linked for tag in expected.tags),

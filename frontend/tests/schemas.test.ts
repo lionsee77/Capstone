@@ -6,12 +6,56 @@ import {
   isRunFinished,
   isTaxonomyDataset,
   pipelineConfigSchema,
+  proposalReviewReportSchema,
+  reviewDecisionSchema,
+  reviewDecisionEventSchema,
   runReportSchema,
   taxonomyConceptDetailSchema,
   taxonomyConceptSummarySchema,
 } from "@/lib/api/schemas";
 
 import { doneRunReport } from "./fixtures/reports";
+import { proposalReview } from "./fixtures/proposal-review";
+
+describe("proposalReviewReportSchema", () => {
+  it("retains branch evidence, scores and a decision separately from the screening suggestion", () => {
+    const item = proposalReviewReportSchema.parse(proposalReview).proposals[0];
+    expect(item.proposed_path).toEqual(["Subject", "Computing", "Data visualizatio"]);
+    expect(item.proposal.matches).toEqual(proposalReview.proposals[0].proposal.matches);
+    expect(item.proposal.suggested_action).toBe("defer");
+    expect(item.decision?.action).toBe("reuse");
+    expect(item.resolved_node?.id).toBe(20);
+  });
+
+  it("rejects invalid match scores instead of silently accepting a drifted API payload", () => {
+    const invalid = structuredClone(proposalReview);
+    invalid.proposals[0].proposal.matches[0].semantic_score = 1.5;
+    expect(proposalReviewReportSchema.safeParse(invalid).success).toBe(false);
+  });
+});
+
+describe("reviewDecisionSchema", () => {
+  it("accepts tag and hierarchy decisions using the same action names", () => {
+    const tag = { members: [{ source_dataset: "feed", tag_id: "1" }], action: "create", reason: "Reviewed" };
+    expect(reviewDecisionSchema.parse(tag).proposal_id).toBeNull();
+    for (const action of ["create", "exclude", "reuse", "defer"]) {
+      const hierarchy = { proposal_id: "proposal", action, reason: "Reviewed",
+        existing_concept_id: action === "reuse" ? 20 : null };
+      expect(reviewDecisionSchema.parse(hierarchy).members).toEqual([]);
+      expect(reviewDecisionEventSchema.parse({ event_id: "event", submission_id: "submission",
+        recorded_at: "2026-10-18T00:00:00Z", baseline_snapshot_id: "snapshot", decision: hierarchy,
+      }).decision.action).toBe(action);
+    }
+  });
+
+  it("rejects mixed targets, missing merge IDs and blank review reasons", () => {
+    const choice = { proposal_id: "proposal", action: "create", reason: "Reviewed" };
+    for (const changes of [
+      { members: [{ source_dataset: "feed", tag_id: "1" }] }, { existing_tag_id: 30 },
+      { action: "reuse" }, { existing_concept_id: 20 }, { reason: " " },
+    ]) expect(reviewDecisionSchema.safeParse({ ...choice, ...changes }).success).toBe(false);
+  });
+});
 
 describe("proposal and taxonomy concept schemas", () => {
   it("keeps singular proposal levels and nullable IDs separate from taxonomy search results", () => {

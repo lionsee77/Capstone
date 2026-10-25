@@ -5,6 +5,7 @@ report models support validation.py; matching and preview construction remain se
 """
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Annotated, Any, Literal, Self
 
 from pydantic import (
@@ -24,7 +25,7 @@ from ..models import MetricResult
 from ..models import NonBlankText as NonBlankText
 from ..models import SourceTagRef as SourceTagRef
 from ..models import TaxonomyId as TaxonomyId
-from ..proposals.models import ProposalScreeningReport
+from ..proposals.models import ProposalScreeningReport, ScreenedProposal, ScreeningSettings
 
 Confidence = Annotated[float, Field(ge=0, le=1, allow_inf_nan=False)]
 CanonicalTagId = TaxonomyId | NonBlankText
@@ -204,14 +205,16 @@ class TaxonomyPath(BaseModel):
 
 
 class ReviewDecision(BaseModel):
-    """Group equivalence and approved links are recorded explicitly and separately."""
+    """One decision format for source-tag groups or a screened hierarchy proposal."""
 
     model_config = ConfigDict(strict=True, extra="forbid")
 
-    members: list[SourceTagRef] = Field(min_length=1)
+    members: list[SourceTagRef] = Field(default_factory=list)
+    proposal_id: NonBlankText | None = None
     action: Literal["reuse", "create", "exclude", "defer"]
     reason: NonBlankText
     existing_tag_id: TaxonomyId | None = None
+    existing_concept_id: TaxonomyId | None = None
     approved_speciality_ids: list[TaxonomyId] = Field(default_factory=list)
     approved_paths: list[TaxonomyPath] = Field(default_factory=list)
     canonical_name: NonBlankText | None = None
@@ -219,6 +222,16 @@ class ReviewDecision(BaseModel):
     @model_validator(mode="after")
     # Require an existing target only for reuse and prevent links on excluded or deferred groups.
     def check_action(self) -> Self:
+        if self.proposal_id is not None:
+            if self.members or self.existing_tag_id is not None or self.approved_paths or self.approved_speciality_ids:
+                raise ValueError("A hierarchy decision targets proposal_id only; tag fields are not allowed")
+            if self.canonical_name is not None:
+                raise ValueError("Hierarchy decisions retain the proposed or existing canonical name")
+            if (self.action == "reuse") != (self.existing_concept_id is not None):
+                raise ValueError("existing_concept_id is required only for hierarchy reuse")
+            return self
+        if not self.members or self.existing_concept_id is not None:
+            raise ValueError("A tag decision requires members and cannot set existing_concept_id")
         if (self.action == "reuse") != (self.existing_tag_id is not None):
             raise ValueError("existing_tag_id is required only for reuse")
         if self.action in {"exclude", "defer"} and (self.approved_speciality_ids or self.approved_paths):
@@ -226,6 +239,19 @@ class ReviewDecision(BaseModel):
         if self.action != "create" and self.canonical_name is not None:
             raise ValueError("canonical_name is allowed only for new tags")
         return self
+
+
+class ReviewDecisionEvent(BaseModel):
+    """Local PB09 handoff: one validated submission, not a taxonomy database mutation."""
+
+    model_config = ConfigDict(strict=True, extra="forbid")
+
+    event_id: NonBlankText
+    submission_id: NonBlankText
+    recorded_at: datetime
+    baseline_snapshot_id: NonBlankText
+    event_type: Literal["review_decision"] = "review_decision"
+    decision: ReviewDecision
 
 
 class ValidationFinding(BaseModel):
@@ -309,6 +335,31 @@ class ResolutionReport(BaseModel):
     counts: dict[str, int]
     partial: bool
     screening: ProposalScreeningReport | None = None
+
+
+class ProposalReviewItem(BaseModel):
+    """Keep original screening evidence separate from the reviewer's saved choice and resolved node."""
+
+    proposal: ScreenedProposal
+    proposed_path: list[str]
+    proposed_parent: list[str]
+    decision: ReviewDecision | None = None
+    resolved_node: ResolvedHierarchyNode | None = Field(
+        default=None, description="Saved node allocation; a temporary ID alone does not mean approval or integration.",
+    )
+
+
+class ProposalReviewReport(BaseModel):
+    """One read-only response for CLI and API, paginated by proposals but never by their matches."""
+
+    baseline_snapshot_id: str
+    settings: ScreeningSettings
+    semantic_status: Literal["disabled", "complete", "failed"]
+    skipped_checks: dict[str, str]
+    total: int = Field(ge=0)
+    offset: int = Field(ge=0)
+    limit: int = Field(ge=1, le=200)
+    proposals: list[ProposalReviewItem]
 
 
 class PreviewCounts(BaseModel):
