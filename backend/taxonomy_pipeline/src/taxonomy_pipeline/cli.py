@@ -156,32 +156,20 @@ def _cmd_case_b(args: argparse.Namespace) -> int:
     return 0
 
 
-def _legacy_case_b(values: list[str]) -> dict[str, str]:
-    pairs = {}
-    for value in values:
-        path, separator, source = value.rpartition("=")
-        if not separator or not path or not source:
-            raise ValueError(f"--legacy-case-b expects FILE=SOURCE_DATASET, got {value!r}")
-        pairs[path] = source
-    return pairs
-
-
 def _cmd_merge_preview(args: argparse.Namespace) -> int:
     from .enrichment.runner import load_decisions, run_merge_preview
     from .matching.semantic import SemanticMatcher
 
     out_dir = args.out_dir or f"merge_runs/{datetime.now():%Y%m%d-%H%M%S}"
     try:
-        if not (args.input or args.legacy_case_a or args.legacy_case_b):
-            raise ValueError("give at least one --input, --legacy-case-a or --legacy-case-b file")
+        if not args.input:
+            raise ValueError("give at least one --input file")
         screening_settings = ScreeningSettings(
             lexical_threshold=args.screening_lexical, semantic_threshold=args.screening_semantic,
         )
         baseline = _datasets(args, args.baseline)[args.baseline]
         run = run_merge_preview(
             args.input, baseline, out_dir=out_dir,
-            legacy_case_a=args.legacy_case_a, legacy_case_b=_legacy_case_b(args.legacy_case_b),
-            skip_case_a_handoffs=args.skip_case_a_handoffs,
             decisions=load_decisions(args.decisions) if args.decisions else [],
             semantic_matcher=SemanticMatcher(args.semantic_model) if args.semantic_model else None,
             screening_settings=screening_settings, change_log=args.change_log,
@@ -361,11 +349,6 @@ def build_parser() -> argparse.ArgumentParser:
     merge = subparsers.add_parser("merge-preview", help="validate, deduplicate and resolve outputs into a preview CSV")
     _add_dataset_args(merge, incoming=False)
     merge.add_argument("--input", action="append", default=[], help="nine-field contract file (repeatable)")
-    merge.add_argument("--legacy-case-a", action="append", default=[], help="old eight-field Case A file")
-    merge.add_argument("--legacy-case-b", action="append", default=[], metavar="FILE=SOURCE",
-                       help="old seven-field Case B file and its source dataset name")
-    merge.add_argument("--skip-case-a-handoffs", action="store_true",
-                       help="skip legacy Case A rows that only route a tag to Case B")
     merge.add_argument("--decisions", help="JSON list of tag and hierarchy ReviewDecision records from an earlier run")
     merge.add_argument("--semantic-model", help="sentence model for semantic duplicate candidates")
     screening_defaults = ScreeningSettings()

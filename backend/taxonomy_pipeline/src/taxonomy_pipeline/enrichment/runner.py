@@ -102,9 +102,6 @@ def run_merge_preview(
     baseline: TaxonomyDataset,
     *,
     out_dir: str | Path,
-    legacy_case_a: list[str | Path] = (),
-    legacy_case_b: dict[str | Path, str] | None = None,
-    skip_case_a_handoffs: bool = False,
     decisions: list[ReviewDecision] = (),
     semantic_matcher: SimilarityMatcher | None = None,
     screening_settings: ScreeningSettings | None = None,
@@ -113,25 +110,17 @@ def run_merge_preview(
     """Chain the stages over producer files and write validation, deduplication,
     resolution and the preview CSV to `out_dir`.
 
-    `inputs` follow the nine-field contract; `legacy_case_a` and `legacy_case_b`
-    (path -> source dataset name) go through the temporary intake adapters.
-    Decisions not yet in `change_log` (default `out_dir/change_log.jsonl`) are
+    `inputs` follow the nine-field contract. Decisions not yet in `change_log` (default `out_dir/change_log.jsonl`) are
     appended to it; point several runs at one log to keep a reviewer's history.
     """
-    legacy_case_b = {Path(path): source for path, source in (legacy_case_b or {}).items()}
-    paths = [Path(path) for path in [*inputs, *legacy_case_a, *legacy_case_b]]
+    paths = [Path(path) for path in inputs]
     if len(set(paths)) != len(paths):
         raise ValueError("Each input file may be given only once")
     names = _input_names(paths)
     payloads = {names[path]: path.read_text(encoding="utf-8") for path in paths}
     warnings = check_saturation_runs(payloads)
 
-    validation = validate_outputs(
-        payloads, baseline,
-        case_a_inputs={names[Path(path)] for path in legacy_case_a},
-        case_b_sources={names[path]: source for path, source in legacy_case_b.items()},
-        skip_case_a_handoffs=skip_case_a_handoffs,
-    )
+    validation = validate_outputs(payloads, baseline)
     deduplication = deduplicate_outputs(validation, semantic_matcher=semantic_matcher)
     resolution = resolve_outputs(
         deduplication, baseline, list(decisions), semantic_matcher=semantic_matcher,

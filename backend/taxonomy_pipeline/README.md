@@ -246,8 +246,8 @@ records, plus `valid_rate` and `review_rate`.
   (needs `.[semantic]`); without it, only name/spelling candidates are found and
   the preview is marked partial. The model loads at the revision pinned in
   `matching/embeddings.py`, as saturation and breadth do.
-- Older exports go through temporary adapters: `--legacy-case-a FILE`,
-  `--legacy-case-b FILE=SOURCE_DATASET`, and `--skip-case-a-handoffs`.
+- Inputs must follow the nine-field contract; files in the older eight- or
+  seven-field formats are reported as invalid rows, not adapted.
 - Exit code is non-zero if an input file is unreadable or the preview is
   blocked because the merge would introduce structural errors.
 

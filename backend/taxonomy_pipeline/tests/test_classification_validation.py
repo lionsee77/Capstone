@@ -27,70 +27,17 @@ def taxonomy() -> TaxonomyDataset:
     return TaxonomyDataset.model_validate_json((FIXTURES / "taxonomy.json").read_text(encoding="utf-8"))
 
 
-# Skip only the known Case A handoff and let the corresponding Case B record proceed.
-def test_legacy_batches_merge_without_handoff_conflicts(taxonomy: TaxonomyDataset) -> None:
-    before = taxonomy.model_dump()
-    a, b = load_rows("legacy_case_a.json"), load_rows("legacy_case_b.json")
-    report = validate_outputs(
-        {"a": json.dumps(a), "b": json.dumps(b)}, taxonomy,
-        case_a_inputs={"a"}, case_b_sources={"b": "skillsfuture"}, skip_case_a_handoffs=True,
-    )
-    assert report.complete
-    assert report.counts == dict(received=4, valid=3, skipped=1, review=0, duplicate=0, unresolved=0, invalid=0)
-    assert [row.tag_id for row in report.merged_outputs] == ["42", "48", "49"]
-    assert all(row.service == "Industry" for row in report.merged_outputs)
-    assert report.records[1].raw == a[1]
-    assert report.records[1].output is None
-    assert report.records[2].raw == b[0]
-    assert report.records[2].output.original_classification == "unclassified"
-    assert report.records[3].candidate["category"] == "Quantum science"
-    assert report.records[3].output.category == "Quantum science"
-    assert report.records[3].target.model_dump() == dict(service_id=2, category_id=None, speciality_id=None)
-    assert any(item.startswith("new_category:") for item in report.records[3].findings)
-    assert taxonomy.model_dump() == before
-    assert BatchValidationReport.model_validate_json(report.model_dump_json()) == report
-    assert sum(report.counts.values()) == 2 * report.counts["received"]
-
-
-# Keep handoff skipping opt-in, since producer flags must ordinarily remain review evidence.
-def test_handoffs_conflict_with_case_b_unless_explicitly_skipped(taxonomy: TaxonomyDataset) -> None:
-    report = validate_outputs(
-        {"a": json.dumps(load_rows("legacy_case_a.json")), "b": json.dumps(load_rows("legacy_case_b.json"))},
-        taxonomy, case_a_inputs={"a"}, case_b_sources={"b": "skillsfuture"},
-    )
-    for index in (1, 2):
-        assert report.records[index].status == "review"
-        assert any(item.startswith("conflicting_original_classification:") for item in report.records[index].findings)
-
-
-# A null placement without a route instruction remains unresolved rather than disappearing.
-def test_other_case_a_unresolved_rows_are_preserved(taxonomy: TaxonomyDataset) -> None:
-    row = load_rows("legacy_case_a.json")[1]
-    row["reason"] = "Needs review; uncertain classification."
-    report = validate_outputs({"a": json.dumps([row])}, taxonomy, case_a_inputs={"a"}, skip_case_a_handoffs=True)
-    assert report.records[0].status == "unresolved"
-    assert report.records[0].output.service is None
-    assert report.records[0].output.original_classification == "classified"
-
-
-# Restrict the temporary skip rule to legacy Case A records with no placement.
-def test_handoff_text_does_not_skip_populated_or_current_contract_rows(taxonomy: TaxonomyDataset) -> None:
-    legacy = load_rows("legacy_case_a.json")[0]
-    current = load_rows("unresolved.json")[0]
-    legacy["reason"] = current["reason"] = "route to Case B"
-    report = validate_outputs(
-        {"a": json.dumps([legacy]), "current": json.dumps([current])}, taxonomy,
-        case_a_inputs={"a"}, skip_case_a_handoffs=True,
-    )
-    assert [row.status for row in report.records] == ["valid", "unresolved"]
-
-
 # Accept both branches of the latest contract while retaining distinct source identities and placements.
-def test_current_contract_batches_need_no_adapter(taxonomy: TaxonomyDataset) -> None:
+def test_current_contract_batches_merge_without_changing_the_taxonomy(taxonomy: TaxonomyDataset) -> None:
+    before = taxonomy.model_dump()
     report = validate_outputs({name: json.dumps(load_rows(name)) for name in ("case_a.json", "case_b.json")}, taxonomy)
+    assert report.complete
     assert report.counts["valid"] == 8
     assert len(report.merged_outputs) == 8
     assert report.records[0].target.model_dump() == dict(service_id=1, category_id=10, speciality_id=120)
+    assert taxonomy.model_dump() == before
+    assert BatchValidationReport.model_validate_json(report.model_dump_json()) == report
+    assert sum(report.counts.values()) == 2 * report.counts["received"]
 
 
 def test_empty_input_reports_zero_counts_and_rates(taxonomy: TaxonomyDataset) -> None:
@@ -110,39 +57,30 @@ def test_empty_input_reports_zero_counts_and_rates(taxonomy: TaxonomyDataset) ->
     }
 
 
-# An explicit adapter is required so old files cannot silently masquerade as the latest contract.
-def test_legacy_files_without_adapter_are_invalid(taxonomy: TaxonomyDataset) -> None:
-    report = validate_outputs({"a": json.dumps(load_rows("legacy_case_a.json"))}, taxonomy)
+# Old eight-field files are rejected row by row rather than adapted into the contract.
+def test_previous_format_files_are_invalid(taxonomy: TaxonomyDataset) -> None:
+    report = validate_outputs({"a": json.dumps(load_rows("previous_format.json"))}, taxonomy)
     assert report.counts["invalid"] == 2
     assert report.merged_outputs == []
 
 
 @pytest.mark.parametrize("field,value", [("confidence", "0.8"), ("category", None), ("tag_id", 42)])
-# Malformed legacy rows stay visible without discarding the rest of their batch.
-def test_adapter_errors_preserve_raw_rows(taxonomy: TaxonomyDataset, field: str, value: Any) -> None:
-    good = load_rows("legacy_case_b.json")[0]
+# Malformed rows stay visible without discarding the rest of their batch.
+def test_malformed_rows_preserve_raw_rows(taxonomy: TaxonomyDataset, field: str, value: Any) -> None:
+    good = load_rows("case_b.json")[0]
     bad = {**good, field: value}
-    report = validate_outputs({"b": json.dumps([bad, good])}, taxonomy, case_b_sources={"b": "skillsfuture"})
+    report = validate_outputs({"b": json.dumps([bad, good])}, taxonomy)
     assert [row.status for row in report.records] == ["invalid", "valid"]
     assert report.records[0].raw == bad
 
 
-@pytest.mark.parametrize("filename", ["case_a.json", "case_b.json", "legacy_case_a.json", "legacy_case_b.json"])
+@pytest.mark.parametrize("filename", ["case_a.json", "case_b.json"])
 # Retain extra input evidence without changing normalized outputs or repeated-placement detection.
 def test_extra_fields_stay_in_raw_evidence_only(taxonomy: TaxonomyDataset, filename: str) -> None:
     original = load_rows(filename)[0]
     extras = {"metadata": {"scores": [0.8, None]}, "extra_flag": True, "extra_note": None}
-    case_a = {filename} if filename == "legacy_case_a.json" else set()
-    case_b = {filename: "skillsfuture"} if filename == "legacy_case_b.json" else {}
-    if case_a:
-        extras.update(tag="Ignored alias", service="Subject")
-    if case_b:
-        extras.update(source_dataset="Ignored dataset", original_classification="classified", service="Subject")
     enriched = {**original, **extras}
-    report = validate_outputs(
-        {filename: json.dumps([enriched, original])}, taxonomy,
-        case_a_inputs=case_a, case_b_sources=case_b,
-    )
+    report = validate_outputs({filename: json.dumps([enriched, original])}, taxonomy)
     first, second = report.records
     assert [first.status, second.status] == ["valid", "duplicate"]
     assert first.raw == enriched
@@ -157,35 +95,6 @@ def test_extra_fields_stay_in_raw_evidence_only(taxonomy: TaxonomyDataset, filen
     assert "metadata" not in serialized["records"][0]["output"]
 
 
-@pytest.mark.parametrize("filename", ["legacy_case_a.json", "legacy_case_b.json"])
-# Require legacy fields even when ignored keys or current-contract aliases are supplied.
-def test_legacy_extra_fields_cannot_replace_required_fields(taxonomy: TaxonomyDataset, filename: str) -> None:
-    row = load_rows(filename)[0]
-    case_a = filename == "legacy_case_a.json"
-    del row["original_tag" if case_a else "action"]
-    row.update(metadata={"action": "assign_existing"}, service="Industry")
-    if case_a:
-        row["tag"] = "Cannot replace original_tag"
-    report = validate_outputs(
-        {filename: json.dumps([row])}, taxonomy,
-        case_a_inputs={filename} if case_a else (),
-        case_b_sources={} if case_a else {filename: "skillsfuture"},
-    )
-    assert report.records[0].status == "invalid"
-    assert report.records[0].raw == row
-    assert report.merged_outputs == []
-
-
-@pytest.mark.parametrize("action", ["propose_new_category", "propose_new_speciality", "unsupported"])
-# Allow new hierarchy proposals while preserving the producer's action as evidence.
-def test_case_b_actions_are_preserved_and_enforced(taxonomy: TaxonomyDataset, action: str) -> None:
-    row = {**load_rows("legacy_case_b.json")[0], "action": action}
-    report = validate_outputs({"b": json.dumps([row])}, taxonomy, case_b_sources={"b": "skillsfuture"})
-    assert report.records[0].status == ("invalid" if action == "unsupported" else "valid")
-    assert report.records[0].raw["action"] == action
-    assert len(report.merged_outputs) == (0 if action == "unsupported" else 1)
-
-
 # Treat names under different parents as new placements without moving existing nodes.
 def test_missing_paths_are_valid_additions_under_the_supplied_parents(taxonomy: TaxonomyDataset) -> None:
     before = taxonomy.model_dump()
@@ -195,24 +104,6 @@ def test_missing_paths_are_valid_additions_under_the_supplied_parents(taxonomy: 
     assert report.records[1].target.model_dump() == dict(service_id=1, category_id=10, speciality_id=None)
     assert report.records[2].target.model_dump() == dict(service_id=3, category_id=None, speciality_id=None)
     assert taxonomy.model_dump() == before
-
-
-# Default legacy placements to Industry even when their names already form a complete Subject path.
-def test_legacy_service_default_does_not_move_existing_paths(taxonomy: TaxonomyDataset) -> None:
-    row = load_rows("legacy_case_a.json")[0]
-    first = validate_outputs({"a": json.dumps([row])}, taxonomy, case_a_inputs={"a"})
-    assert first.records[0].output.service == "Industry"
-    assert first.records[0].target.category_id is None
-    assert first.records[0].raw == row
-    assert first.records[0].findings[0].startswith("temporary_service:")
-    taxonomy.categories.append(dict(id=30, name="Data analytics", service_id=2))
-    taxonomy.specialities.append(dict(id=300, name="Data presentation", category_id=30))
-    reused = validate_outputs({"a": json.dumps([row])}, taxonomy, case_a_inputs={"a"})
-    assert reused.records[0].target.model_dump() == dict(service_id=2, category_id=30, speciality_id=300)
-    current = load_rows("case_a.json")[0]
-    explicit = validate_outputs({"current": json.dumps([current])}, taxonomy)
-    assert explicit.records[0].output.service == "Subject"
-    assert explicit.records[0].target.speciality_id == 120
 
 
 @pytest.mark.parametrize("tier", ["services", "categories", "specialities"])
@@ -237,37 +128,24 @@ def test_new_speciality_does_not_hide_ambiguous_category(taxonomy: TaxonomyDatas
     assert report.records[0].target is None
 
 
-@pytest.mark.parametrize("action", ["assign_existing", "propose_new_category", "propose_new_speciality"])
-# Keep classification proposals eligible regardless of whether their legacy action predicts reuse correctly.
-def test_case_b_actions_do_not_override_actual_path_resolution(taxonomy: TaxonomyDataset, action: str) -> None:
-    taxonomy.categories.append(dict(id=30, name="Biology", service_id=2))
-    taxonomy.specialities.append(dict(id=300, name="Zoology", category_id=30))
-    row = {**load_rows("legacy_case_b.json")[0], "action": action}
-    report = validate_outputs({"b": json.dumps([row])}, taxonomy, case_b_sources={"b": "skillsfuture"})
-    assert report.records[0].status == "valid"
-    assert report.records[0].target.speciality_id == 300
-    assert report.records[0].raw["action"] == action
-    assert not any(item.startswith("new_") for item in report.records[0].findings)
-
-
-# Unresolved Case B outputs keep every placement field null despite the temporary service default.
-def test_unresolved_case_b_output_keeps_null_service(taxonomy: TaxonomyDataset) -> None:
-    row = load_rows("legacy_case_b.json")[0]
-    row.update(category=None, speciality=None, confidence=None)
-    report = validate_outputs({"b": json.dumps([row])}, taxonomy, case_b_sources={"b": "skillsfuture"})
+# An unresolved output keeps every placement field null and its raw row as evidence.
+def test_unresolved_outputs_keep_null_placements(taxonomy: TaxonomyDataset) -> None:
+    row = load_rows("unresolved.json")[0]
+    report = validate_outputs({"current": json.dumps([row])}, taxonomy)
     assert report.records[0].status == "unresolved"
     assert report.records[0].output.service is None
+    assert report.records[0].output.original_classification == "unclassified"
     assert report.records[0].raw == row
 
 
 # Missing top-level services are taxonomy defects rather than permission to create arbitrary services.
-def test_missing_industry_service_requires_review(taxonomy: TaxonomyDataset) -> None:
-    taxonomy.services = [row for row in taxonomy.services if row["name"] != "Industry"]
-    row = load_rows("legacy_case_a.json")[0]
-    report = validate_outputs({"a": json.dumps([row])}, taxonomy, case_a_inputs={"a"})
+def test_a_missing_service_requires_review(taxonomy: TaxonomyDataset) -> None:
+    row = load_rows("case_a.json")[0]
+    taxonomy.services = [service for service in taxonomy.services if service["name"] != row["service"]]
+    report = validate_outputs({"current": json.dumps([row])}, taxonomy)
     assert report.counts["review"] == 1
     assert any(item.startswith("missing_service:") for item in report.records[0].findings)
-    assert report.records[0].output.service == "Industry"
+    assert report.records[0].output.service == row["service"]
     assert report.merged_outputs == []
 
 
@@ -365,28 +243,18 @@ def test_non_object_rows_do_not_discard_good_records(taxonomy: TaxonomyDataset) 
     assert report.counts["valid"] == 1
 
 
-@pytest.mark.parametrize("options", [
-    {"case_a_inputs": {"missing"}}, {"case_a_inputs": {"a"}, "case_b_sources": {"a": "source"}},
-    {"case_b_sources": {"a": " "}},
-])
-# Fail configuration mistakes before processing any records.
-def test_invalid_adapter_configuration_is_rejected(taxonomy: TaxonomyDataset, options: dict[str, Any]) -> None:
-    with pytest.raises(ValueError):
-        validate_outputs({"a": "[]"}, taxonomy, **options)
-
-
 # Exercise SQL loading and intake together without a database or upstream matching result.
 def test_sql_taxonomy_integration(tmp_path: Path) -> None:
     path = tmp_path / "taxonomy.sql"
     path.write_text(
-        "INSERT INTO services (id,name) VALUES (1,'Industry');\n"
+        "INSERT INTO services (id,name) VALUES (1,'Subject');\n"
         "INSERT INTO categories (id,name,service_id) VALUES (10,'Data analytics',1);\n"
         "INSERT INTO specialities (id,name,category_id) VALUES (120,'Data presentation',10);\n",
         encoding="utf-8",
     )
     taxonomy = SqlDumpSource("sql-fixture", [path]).load()
-    row = load_rows("legacy_case_a.json")[0]
-    report = validate_outputs({"a": json.dumps([row])}, taxonomy, case_a_inputs={"a"})
+    row = load_rows("case_a.json")[0]
+    report = validate_outputs({"a": json.dumps([row])}, taxonomy)
     assert report.counts["valid"] == 1
     assert report.records[0].target.speciality_id == 120
     assert ClassificationOutput.model_validate_json(report.merged_outputs[0].model_dump_json())

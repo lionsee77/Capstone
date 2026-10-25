@@ -156,17 +156,6 @@ def test_blocked_preview_fails_the_run(tmp_path, baseline):
     assert run.preview.blocked and not run.ok
 
 
-def test_legacy_exports_go_through_their_adapters(tmp_path, baseline):
-    run = run_merge_preview(
-        [], baseline, out_dir=tmp_path, legacy_case_a=[FIXTURES / "legacy_case_a.json"],
-        legacy_case_b={FIXTURES / "legacy_case_b.json": "skillsfuture"}, skip_case_a_handoffs=True,
-    )
-
-    assert run.validation.complete
-    assert run.validation.counts["skipped"] == 1
-    assert {output.source_dataset for output in run.validation.merged_outputs} >= {"skillsfuture"}
-
-
 def test_the_same_file_cannot_be_given_twice(tmp_path, baseline):
     with pytest.raises(ValueError, match="only once"):
-        run_merge_preview([PRODUCER_FILES[0]], baseline, out_dir=tmp_path, legacy_case_a=[PRODUCER_FILES[0]])
+        run_merge_preview([PRODUCER_FILES[0], PRODUCER_FILES[0]], baseline, out_dir=tmp_path)
