@@ -302,7 +302,9 @@ Every screened proposal has a derived `suggested_action`; suggestions do not
 replace reviewer decisions. Category decisions run before speciality decisions.
 Merge validates the target's level and full parent chain, reuses its existing row,
 and never moves it. A speciality merge must agree with the resolved category.
-Creating an exact/name-key equivalent raises `ValueError`. Near matches may be
+Creating an exact/name-key equivalent raises `ValueError`, except a speciality
+whose only exact matches are specialities under other categories. A category
+`reuse` must target a category in the proposal's own service. Near matches may be
 approved as distinct, but failed semantic checks and unresolved incoming variant
 clusters cannot be bypassed. Excluding a competing variant allows the retained
 proposal to be considered again. Synonym evidence depends on #56/PB07.
@@ -313,7 +315,8 @@ Intake omissions are not restored by hierarchy decisions. The original screening
 evidence is retained and the decisions are reapplied during preview/integration.
 
 `merge-preview --decisions decisions.json` accepts both kinds of entry. The runner
-appends validated submissions to `change_log.jsonl` using `ReviewDecisionEvent`
+appends validated decisions not already logged for that baseline to `change_log.jsonl`
+(or `--change-log`) using `ReviewDecisionEvent`
 (event/submission IDs, UTC timestamp, baseline fingerprint and the same decision).
 This local log is the PB09 handoff until shared audit storage is available;
 automatic defaults and pure replay do not create reviewer events. See the

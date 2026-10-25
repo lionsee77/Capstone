@@ -14,12 +14,17 @@ from ..proposals.models import Level
 
 router = APIRouter(prefix="/proposals", tags=["proposals"])
 
+# `merge-preview` writes merge_runs/<timestamp> under backend/taxonomy_pipeline when run from there, as the README
+# says. Resolved like db.py's default rather than from the server's working directory, so starting uvicorn from
+# elsewhere still finds those runs.
+DEFAULT_MERGE_ROOT = Path(__file__).resolve().parents[3] / "merge_runs"
+
 
 # Resolve one merge directory and its report strictly inside the server-configured root, including symlinks.
 def _merge_directory(merge_run: str) -> Path:
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}", merge_run):
         raise HTTPException(status_code=422, detail="merge_run must be a directory name, not a path")
-    root = Path(os.environ.get("TAXONOMY_MERGE_ROOT", "merge_runs")).resolve()
+    root = Path(os.environ.get("TAXONOMY_MERGE_ROOT") or DEFAULT_MERGE_ROOT).resolve()
     directory = (root / merge_run).resolve()
     report = (directory / "resolution.json").resolve()
     if not directory.is_relative_to(root) or not report.is_relative_to(root):

@@ -13,6 +13,7 @@ from typing import Any
 
 from ..datasets.base import CONCEPTS, TaxonomyDataset
 from ..metrics.integrity import IntegrityMetric, normalize
+from ..metrics.saturation import match_key
 from ..models import MetricResult
 from .models import (
     ClassificationOutput,
@@ -169,7 +170,9 @@ def _placement_rows(resolution: ResolutionReport, blocked: bool, baseline: Taxon
                 row.tag_change = "existing" if tag.existing else "new"
                 row.link_change = "existing" if link.existing else "new"
                 resolved_path = [services[category.parent_id], category.name, speciality.name]
-                if resolved_path != [placement.service, placement.category, placement.speciality]:
+                supplied = [placement.service, placement.category, placement.speciality]
+                # Only a real move: a case or spelling variant of the supplied path (match_key) isn't one.
+                if [match_key(name) for name in resolved_path] != [match_key(name) for name in supplied]:
                     row.note += (" " if row.note else "") + "Resolved placement: " + " > ".join(resolved_path)
             reviewed = [item for item in concepts if item.proposal_id in decisions]
             if reviewed:

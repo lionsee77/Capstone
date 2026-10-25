@@ -25,6 +25,9 @@ def build_review_view(
         raise ValueError("offset must be nonnegative and limit must be between 1 and 200")
     if level not in {None, "category", "speciality"}:
         raise ValueError("level must be category or speciality")
+    if proposal_id is not None and (offset or level is not None):
+        # Filtering or paging one proposal could only hide it; ask for one or the other.
+        raise ValueError("a proposal ID selects one proposal; don't combine it with a level or an offset")
     screening = resolution.screening
     if screening is None:
         raise ValueError("Saved run has no hierarchy screening; rerun merge-preview before review")

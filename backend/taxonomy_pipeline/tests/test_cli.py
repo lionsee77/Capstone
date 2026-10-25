@@ -59,6 +59,13 @@ def test_merge_preview_applies_and_logs_hierarchy_decisions(tmp_path: Path) -> N
     assert len(events) == 1  # Internal preview replay did not log the submission again.
     assert events[0]["decision"]["reason"] == choice["reason"]
     assert events[0]["decision"]["existing_concept_id"] == target
+    # Rerunning the same decisions, into the same folder or another sharing the log, doesn't log them again.
+    assert main([*command, "--decisions", str(decisions)]) == 0
+    rerun = ["merge-preview", "--config", str(config), "--input", str(producer), "--out-dir", str(tmp_path / "rerun"),
+             "--decisions", str(decisions), "--change-log", str(log_path)]
+    assert main(rerun) == 0
+    assert len(log_path.read_text(encoding="utf-8").splitlines()) == 1
+    assert not (tmp_path / "rerun" / "change_log.jsonl").exists()
     category = next(item for item in initial["screening"]["proposals"] if item["level"] == "category")
     decisions.write_text(json.dumps([{"proposal_id": category["proposal_id"], "action": "create",
                                       "reason": "Invalid duplicate approval"}]), encoding="utf-8")

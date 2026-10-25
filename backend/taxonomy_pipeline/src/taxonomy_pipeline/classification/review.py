@@ -3,6 +3,8 @@
 Screening stays immutable evidence. This module derives the effective hierarchy
 for resolution and replay; it neither writes taxonomy rows nor records new
 review events during preview. Category decisions precede speciality decisions.
+It reruns screening's own steps (`proposals.screening`'s public helpers) under
+the reviewed parents, so the two can't drift apart.
 """
 from __future__ import annotations
 
@@ -10,9 +12,17 @@ from collections.abc import Sequence
 
 from ..datasets.base import TaxonomyDataset
 from ..metrics.integrity import normalize
-from ..proposals.models import ProposalScreeningReport
-from ..proposals.screening import _classify, _existing_concepts, _hold_incoming_variants
+from ..proposals.models import ConceptMatch, ProposalScreeningReport, ScreenedProposal
+from ..proposals.screening import (
+    classify_proposal,
+    existing_concepts,
+    hold_incoming_variants,
+    is_same_parent,
+    service_ids_by_name,
+)
 from .models import ReviewDecision
+
+EXACT_MATCH_TYPES = {"normalized_name", "match_key"}
 
 
 # Canonicalize hierarchy decisions and reject stale proposal IDs or conflicting actions.
@@ -34,6 +44,15 @@ def prepare_hierarchy_decisions(
     return [unique[key] for key in sorted(unique)]
 
 
+# An exact match that stops `create`: anything but a same-named speciality under another category.
+def _blocks_create(proposal: ScreenedProposal, match: ConceptMatch) -> bool:
+    if not EXACT_MATCH_TYPES & set(match.match_types):
+        return False
+    cross_parent_speciality = proposal.level == "speciality" and match.concept.level == "speciality" \
+        and not match.same_parent
+    return not cross_parent_speciality
+
+
 # Reuse screening evidence to resolve reviewed parents and validate each hierarchy action.
 def apply_hierarchy_decisions(
     screening: ProposalScreeningReport, taxonomy: TaxonomyDataset, decisions: Sequence[ReviewDecision],
@@ -44,55 +63,84 @@ def apply_hierarchy_decisions(
         return effective
     by_id = {decision.proposal_id: decision for decision in prepared}
     by_path = {tuple(proposal.path): proposal for proposal in effective.proposals}
-    concepts = _existing_concepts(taxonomy)
-    targets = {(concept.level, concept.id): concept for concept in concepts if concept.reusable}
-    services = {normalize(row["name"]): row["id"] for row in taxonomy.services
-                if type(row.get("id")) is int and isinstance(row.get("name"), str)}
+    targets = {(concept.level, concept.id): concept for concept in existing_concepts(taxonomy) if concept.reusable}
+    services = service_ids_by_name(taxonomy)
     excluded = {key for key, decision in by_id.items() if decision.action == "exclude"}
+    semantic_failed = screening.semantic_status == "failed"
+
+    def service_id(proposal: ScreenedProposal) -> int | None:
+        ids = services.get(normalize(proposal.path[0]), [])
+        return ids[0] if len(ids) == 1 else None
+
+    def parent_of(proposal: ScreenedProposal) -> ScreenedProposal | None:
+        return by_path.get(tuple(proposal.path[:2])) if proposal.level == "speciality" else None
+
     for level in ("category", "speciality"):
         current = [proposal for proposal in effective.proposals if proposal.level == level]
         # Reconsider children under an explicitly selected parent, using the original scores.
         for proposal in current:
-            parent = by_path.get(tuple(proposal.path[:2])) if level == "speciality" else None
-            parent_id = parent.existing_id if parent else services.get(normalize(proposal.path[0]))
+            parent = parent_of(proposal)
+            parent_id = parent.existing_id if parent else service_id(proposal)
             for match in proposal.matches:
-                match.same_parent = (
-                    match.concept.level == level and parent_id is not None
-                    and match.concept.path_ids[-2] == parent_id
-                )
+                match.same_parent = is_same_parent(match.concept, level, parent_id)
             original_id = proposal.existing_id
             proposal.existing_id, proposal.blocks_creation, proposal.status = None, False, "new"
-            _classify(proposal, original_id, bool(parent and parent.blocks_creation),
-                      screening.semantic_status == "failed")
-        # Rejected alternatives no longer compete with a retained incoming spelling variant.
-        _hold_incoming_variants([proposal for proposal in effective.proposals if proposal.proposal_id not in excluded])
-        for proposal in current:
-            decision = by_id.get(proposal.proposal_id)
-            if decision is None:
-                continue
-            parent = by_path.get(tuple(proposal.path[:2])) if level == "speciality" else None
+            classify_proposal(proposal, original_id, bool(parent and parent.blocks_creation), semantic_failed)
+
+        # Reuse, exclude and defer first: a variant the reviewer resolved no longer holds its partner.
+        decided = [(proposal, by_id[proposal.proposal_id]) for proposal in current if proposal.proposal_id in by_id]
+        for proposal, decision in decided:
             if decision.action in {"exclude", "defer"}:
                 proposal.status, proposal.existing_id, proposal.blocks_creation = "review", None, True
-            else:
-                if parent is not None and parent.blocks_creation:
-                    raise ValueError(f"Resolve the parent before approving proposal {proposal.proposal_id}")
-                if decision.action == "create":
-                    if any({"normalized_name", "match_key"} & set(match.match_types) for match in proposal.matches):
-                        raise ValueError(
-                            f"Cannot create proposal {proposal.proposal_id}: exact/equivalent match exists",
-                        )
-                    if proposal.blocks_creation:
-                        raise ValueError(f"Cannot create proposal {proposal.proposal_id}: {proposal.reason}")
-                    proposal.status, proposal.existing_id = "new", None
-                else:
-                    target = targets.get((level, decision.existing_concept_id))
-                    if target is None:
-                        raise ValueError(f"Merge target must identify one valid existing {level}: "
-                                         f"{decision.existing_concept_id}")
-                    if parent is not None and target.path_ids[-2] != parent.existing_id:
-                        raise ValueError(f"Merge target {target.id} belongs to a different category; "
-                                         "reuse its parent category first")
-                    proposal.status, proposal.existing_id = "reuse", target.id
+            elif decision.action == "reuse":
+                _require_parent_resolved(proposal, parent_of(proposal))
+                proposal.status, proposal.existing_id = "reuse", _reuse_target(
+                    proposal, decision, parent_of(proposal), service_id(proposal), targets,
+                )
                 proposal.blocks_creation = False
+        # Rejected alternatives no longer compete with a retained incoming spelling variant.
+        held = hold_incoming_variants(
+            [proposal for proposal in effective.proposals if proposal.proposal_id not in excluded],
+        )
+        for proposal, decision in decided:
+            if decision.action == "create":
+                _require_parent_resolved(proposal, parent_of(proposal))
+                _check_create(proposal, held, semantic_failed)
+                proposal.status, proposal.existing_id, proposal.blocks_creation = "new", None, False
             proposal.reason = f"Reviewer {decision.action}: {decision.reason}"
     return effective
+
+
+def _require_parent_resolved(proposal: ScreenedProposal, parent: ScreenedProposal | None) -> None:
+    if parent is not None and parent.blocks_creation:
+        raise ValueError(f"Resolve the parent before approving proposal {proposal.proposal_id}")
+
+
+def _check_create(proposal: ScreenedProposal, held: set[str], semantic_failed: bool) -> None:
+    """`create` is refused for an exact equivalent in the same parent or level, an unresolved incoming
+    spelling variant, or a failed requested semantic check. A same-named speciality under another category
+    doesn't stop it: `integrate` allows cross-parent duplicate names too."""
+    if any(_blocks_create(proposal, match) for match in proposal.matches):
+        raise ValueError(f"Cannot create proposal {proposal.proposal_id}: exact/equivalent match exists")
+    if proposal.proposal_id in held:
+        raise ValueError(f"Cannot create proposal {proposal.proposal_id}: {proposal.reason}")
+    if semantic_failed:
+        raise ValueError(f"Cannot create proposal {proposal.proposal_id}: requested semantic screening failed; "
+                         "rerun merge-preview")
+
+
+def _reuse_target(
+    proposal: ScreenedProposal, decision: ReviewDecision, parent: ScreenedProposal | None,
+    service_id: int | None, targets: dict,
+) -> int:
+    """The existing node a `reuse` points at, which must sit under the proposal's own parent."""
+    target = targets.get((proposal.level, decision.existing_concept_id))
+    if target is None:
+        raise ValueError(f"Merge target must identify one valid existing {proposal.level}: "
+                         f"{decision.existing_concept_id}")
+    if parent is not None and target.path_ids[-2] != parent.existing_id:
+        raise ValueError(f"Merge target {target.id} belongs to a different category; reuse its parent category first")
+    if proposal.level == "category" and target.path_ids[0] != service_id:
+        raise ValueError(f"Merge target {target.id} belongs to a different service than {proposal.path[0]!r}; "
+                         "a category can only be reused within its own service")
+    return target.id

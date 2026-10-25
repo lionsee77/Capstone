@@ -88,6 +88,17 @@ def test_hierarchy_decisions_are_preserved_and_resolved_holds_do_not_block_bulk_
     assert choice in draft.decisions
     assert len(draft.drafted) == 1 and draft.drafted[0].members[0].tag_id == "11"
 
+    # Without --decisions the draft still carries the saved hierarchy approval, so applying it alone works.
+    alone = draft_decisions(reviewed, saturation, baseline, create_below=0.5)
+    assert alone.decisions == [choice, *alone.drafted] and alone.drafted == draft.drafted
+    applied = run_merge_preview([path], baseline, out_dir=tmp_path / "applied", decisions=alone.decisions)
+    assert applied.preview.resolution.counts["pending_sources"] == 0
+
+    # A supplied decision that changes a saved one is a conflict, not silently merged.
+    changed = choice.model_copy(update={"action": "defer", "existing_concept_id": None, "reason": "Not sure"})
+    with pytest.raises(ValueError, match="changes a decision this merge run already applied"):
+        draft_decisions(reviewed, saturation, baseline, create_below=0.5, existing=[changed])
+
 
 def test_creates_loose_matches_and_reuses_near_certain_tags(baseline, merge):
     report, run = merge

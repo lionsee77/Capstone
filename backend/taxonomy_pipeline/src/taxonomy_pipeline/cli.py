@@ -131,7 +131,7 @@ def _cmd_merge_preview(args: argparse.Namespace) -> int:
             skip_case_a_handoffs=args.skip_case_a_handoffs,
             decisions=load_decisions(args.decisions) if args.decisions else [],
             semantic_matcher=SemanticMatcher(args.semantic_model) if args.semantic_model else None,
-            screening_settings=screening_settings,
+            screening_settings=screening_settings, change_log=args.change_log,
         )
     except (OSError, ValueError) as exc:
         print(f"[FAILED] merge-preview: {exc}", file=sys.stderr)
@@ -310,6 +310,8 @@ def build_parser() -> argparse.ArgumentParser:
     merge.add_argument("--screening-semantic", type=float, default=screening_defaults.semantic_threshold,
                        help="hierarchy semantic review threshold, 0-1 (default: %(default)s; needs --semantic-model)")
     merge.add_argument("--out-dir", help="where to write the reports (default: merge_runs/<timestamp>)")
+    merge.add_argument("--change-log", help="review change log to append new decisions to, shared across runs "
+                       "(default: <out-dir>/change_log.jsonl); decisions it already holds aren't logged again")
     merge.set_defaults(func=_cmd_merge_preview)
 
     review = subparsers.add_parser("review-proposals", help="read saved proposals, branches, matches and decisions")

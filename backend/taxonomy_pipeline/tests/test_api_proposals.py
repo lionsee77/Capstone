@@ -76,3 +76,16 @@ def test_proposal_api_rejects_resolved_paths_outside_root(tmp_path: Path, monkey
     with pytest.raises(HTTPException) as error:
         _merge_directory("linked")
     assert error.value.status_code == 404
+
+
+# Unset, the root is the package's merge_runs folder (where merge-preview writes from backend/taxonomy_pipeline),
+# not wherever the server happened to start.
+def test_the_default_merge_root_does_not_depend_on_the_server_working_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from taxonomy_pipeline.api import proposals
+
+    monkeypatch.delenv("TAXONOMY_MERGE_ROOT", raising=False)
+    monkeypatch.chdir(tmp_path)
+    assert _merge_directory("reviewed") == proposals.DEFAULT_MERGE_ROOT.resolve() / "reviewed"
+    assert proposals.DEFAULT_MERGE_ROOT == Path(__file__).resolve().parents[1] / "merge_runs"

@@ -79,3 +79,11 @@ def test_review_rejects_unusable_saved_screening(saved_proposal_run: Path, probl
 def test_review_rejects_invalid_pagination(saved_proposal_run: Path, offset: int, limit: int) -> None:
     with pytest.raises(ValueError, match="offset"):
         load_review_view(saved_proposal_run, offset=offset, limit=limit)
+
+
+@pytest.mark.parametrize("paging", [{"offset": 3}, {"level": "speciality"}])
+# One proposal by ID can't also be filtered or paged: that could only return an empty page instead of it.
+def test_review_rejects_a_proposal_id_combined_with_a_level_or_offset(saved_proposal_run: Path, paging) -> None:
+    category = load_review_view(saved_proposal_run, level="category").proposals[0].proposal.proposal_id
+    with pytest.raises(ValueError, match="don't combine it with a level or an offset"):
+        load_review_view(saved_proposal_run, proposal_id=category, limit=1, **paging)

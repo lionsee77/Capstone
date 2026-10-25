@@ -92,6 +92,31 @@ def _baseline_tag_id(taxonomy: TaxonomyDataset, name: str | None) -> Any:
     return matches[0] if len(matches) == 1 else None
 
 
+def _with_saved(saved: list[ReviewDecision], supplied: list[ReviewDecision]) -> list[ReviewDecision]:
+    """`supplied`, then every decision the merge run already applied that it doesn't repeat.
+
+    The draft must carry the run's saved decisions (hierarchy approvals especially, which may be what unlocks
+    a drafted tag), or applying it alone would drop them. A supplied decision on the same tag or hierarchy
+    proposal as a saved one, but different, is a conflict: say which one wins instead of guessing.
+    """
+    def targets(decision: ReviewDecision) -> set[tuple[str, ...]]:
+        if decision.proposal_id is not None:
+            return {("proposal", decision.proposal_id)}
+        return {("tag", member.source_dataset, member.tag_id) for member in decision.members}
+
+    supplied_targets = {target: decision for decision in supplied for target in targets(decision)}
+    merged = list(supplied)
+    for decision in saved:
+        if decision in supplied:
+            continue
+        clash = next((supplied_targets[target] for target in targets(decision) if target in supplied_targets), None)
+        if clash is not None:
+            raise ValueError(f"--decisions changes a decision this merge run already applied ({clash.reason!r} vs "
+                             f"{decision.reason!r}); rerun merge-preview with the decisions you want, then bulk-decide")
+        merged.append(decision)
+    return merged
+
+
 def draft_decisions(
     resolution: ResolutionReport,
     saturation: SaturationReport,
@@ -110,7 +135,7 @@ def draft_decisions(
         raise ValueError("create_below must not be above reuse_at_or_above")
     if taxonomy_snapshot_id(baseline) != resolution.baseline_snapshot_id:
         raise ValueError("The baseline changed since this merge run; rerun merge-preview against the current baseline")
-    existing = list(existing or [])
+    existing = _with_saved(resolution.decisions, list(existing or []))
     decided = {(member.source_dataset, member.tag_id) for decision in existing for member in decision.members}
     paired = {(ref.source_dataset, ref.tag_id) for pair in resolution.evidence.candidates
               for ref in (pair.left, pair.right)}

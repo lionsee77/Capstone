@@ -114,11 +114,14 @@ def _resolve_hierarchy(
             raise ValueError(f"Baseline path changed; rerun validation and deduplication: {key}")
         existing_id = screened[key].existing_id
         parent_id = target.service_id if size == 2 else nodes[key[:2]].id
-        # Parent spelling variants that reuse one category must share any new child node as well.
-        identity = key if size == 2 else (
-            next(row["name"] for row in taxonomy.services if row["id"] == nodes[key[:2]].parent_id),
-            normalize(nodes[key[:2]].name), key[2],
-        )
+        # Parent spelling variants that reuse one category must share any new child node as well. The
+        # category's real service names the identity, so a reused category in the baseline keeps one ID.
+        identity = key
+        if size == 3:
+            service = next((row["name"] for row in taxonomy.services if row["id"] == nodes[key[:2]].parent_id), None)
+            if not isinstance(service, str):
+                raise ValueError(f"Category {nodes[key[:2]].id} has no named baseline service; check the baseline")
+            identity = (service, normalize(nodes[key[:2]].name), key[2])
         if existing_id is not None:
             rows = taxonomy.categories if size == 2 else taxonomy.specialities
             existing = next(row for row in rows if row["id"] == existing_id)

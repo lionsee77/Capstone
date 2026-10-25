@@ -15,16 +15,31 @@ def test_change_log_appends_tag_and_hierarchy_decisions_without_overwriting(tmp_
                        action="exclude", reason="Out of scope"),
         ReviewDecision(proposal_id="proposal", action="reuse", existing_concept_id=42, reason="Same concept"),
     ]
-    append_review_decisions(path, choices, baseline_snapshot_id="snapshot")
+    assert append_review_decisions(path, choices, baseline_snapshot_id="snapshot") == 2
     first = path.read_bytes()
-    append_review_decisions(path, [choices[1]], baseline_snapshot_id="snapshot")
+    edited = choices[1].model_copy(update={"reason": "Same concept, confirmed with the client"})
+    assert append_review_decisions(path, [edited], baseline_snapshot_id="snapshot") == 1
     assert path.read_bytes().startswith(first)
     events = [ReviewDecisionEvent.model_validate_json(line) for line in path.read_text().splitlines()]
-    assert [event.decision for event in events] == [*choices, choices[1]]
+    assert [event.decision for event in events] == [*choices, edited]
     assert len({event.event_id for event in events}) == 3
     assert events[0].submission_id == events[1].submission_id != events[2].submission_id
     assert all(event.recorded_at.utcoffset().total_seconds() == 0 for event in events)
     assert all(event.baseline_snapshot_id == "snapshot" for event in events)
+
+
+# Rerunning merge-preview with a decisions file plus one new decision logs only the new one.
+def test_replayed_decisions_are_not_logged_again(tmp_path: Path) -> None:
+    path = tmp_path / "change_log.jsonl"
+    earlier = [ReviewDecision(proposal_id=f"p{index}", action="defer", reason="Later") for index in range(3)]
+    append_review_decisions(path, earlier, baseline_snapshot_id="snapshot")
+    added = ReviewDecision(proposal_id="p9", action="exclude", reason="Not a speciality")
+
+    assert append_review_decisions(path, [*earlier, added], baseline_snapshot_id="snapshot") == 1
+    assert append_review_decisions(path, [*earlier, added], baseline_snapshot_id="snapshot") == 0
+    # Against another baseline the same decisions are a new submission.
+    assert append_review_decisions(path, earlier, baseline_snapshot_id="other") == 3
+    assert len(path.read_text().splitlines()) == 3 + 1 + 3
 
 
 # Screening without a reviewer submission must not create misleading decision events.

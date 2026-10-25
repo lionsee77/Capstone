@@ -4,6 +4,10 @@ Exact spelling variants can reuse one node under the same parent. Other matches
 remain evidence for review; neither a score nor a cross-level name match permits
 moving a node. Saved semantic evidence can be replayed without loading a model.
 Incoming spelling variants under the same parent are held before creating nodes.
+
+`existing_concepts`, `service_ids_by_name`, `is_same_parent`, `classify_proposal`
+and `hold_incoming_variants` are public so `classification.review` reapplies
+the same steps under a reviewer's decisions instead of keeping a second copy.
 """
 from __future__ import annotations
 
@@ -46,7 +50,7 @@ def _index(rows: list[dict[str, Any]]) -> dict[int, dict[str, Any]]:
 
 
 # Preserve each named baseline candidate and its full branch, marking broken paths as non-reusable.
-def _existing_concepts(taxonomy: TaxonomyDataset) -> list[ExistingConcept]:
+def existing_concepts(taxonomy: TaxonomyDataset) -> list[ExistingConcept]:
     services, categories = _index(taxonomy.services), _index(taxonomy.categories)
     concepts = []
     for level, rows in (("category", taxonomy.categories), ("speciality", taxonomy.specialities)):
@@ -97,8 +101,21 @@ def _semantic_scores(
         return None, "failed", {"semantic": f"Semantic screening failed: {type(exc).__name__}: {exc}"}
 
 
+# Baseline service IDs by normalized name, over valid rows only; a name with several IDs is ambiguous.
+def service_ids_by_name(taxonomy: TaxonomyDataset) -> dict[str, list[int]]:
+    services: dict[str, list[int]] = defaultdict(list)
+    for identifier, row in _index(taxonomy.services).items():
+        services[normalize(row["name"])].append(identifier)
+    return services
+
+
+# A candidate shares the proposal's parent when it is at the same level directly under `parent_id`.
+def is_same_parent(concept: ExistingConcept, level: str, parent_id: int | None) -> bool:
+    return concept.level == level and parent_id is not None and concept.path_ids[-2] == parent_id
+
+
 # Prefer proven reuse within the parent and otherwise retain uncertain additions for review.
-def _classify(
+def classify_proposal(
     proposal: ScreenedProposal, original_id: int | None, parent_blocked: bool, semantic_failed: bool,
 ) -> None:
     exact = [match for match in proposal.matches if {"normalized_name", "match_key"} & set(match.match_types)]
@@ -125,7 +142,9 @@ def _classify(
 
 
 # Hold incoming spelling variants within one parent before any dependent placements can proceed.
-def _hold_incoming_variants(proposals: list[ScreenedProposal]) -> None:
+# Returns the IDs of the proposals held as spelling variants.
+def hold_incoming_variants(proposals: list[ScreenedProposal]) -> set[str]:
+    held: set[str] = set()
     by_path = {tuple(proposal.path): proposal for proposal in proposals}
     for level in ("category", "speciality"):
         clusters: dict[tuple[str, str], list[ScreenedProposal]] = defaultdict(list)
@@ -155,6 +174,8 @@ def _hold_incoming_variants(proposals: list[ScreenedProposal]) -> None:
                     "Incoming proposals share a match_key within the same parent; "
                     f"resolve the spelling variants before creating a concept. Proposal IDs: {identifiers}"
                 )
+                held.add(proposal.proposal_id)
+    return held
 
 
 # Screen every hierarchy path, retaining duplicate IDs and cross-branch evidence without collapsing them.
@@ -168,7 +189,7 @@ def screen_proposals(
             raise ValueError("Screening replay requires its original baseline and no new semantic matcher")
         settings = replay.settings
     settings = ScreeningSettings.model_validate_json((settings or ScreeningSettings()).model_dump_json())
-    proposals, concepts = collect_proposals(groups), _existing_concepts(taxonomy)
+    proposals, concepts = collect_proposals(groups), existing_concepts(taxonomy)
     names, existing_names = [normalize(item.name) for item in proposals], [normalize(item.name) for item in concepts]
     keys, existing_keys = [match_key(item.name) for item in proposals], [match_key(item.name) for item in concepts]
     exact_columns: dict[str, set[int]] = defaultdict(set)
@@ -177,9 +198,7 @@ def screen_proposals(
         exact_columns[name].add(column)
         if key:
             key_columns[key].add(column)
-    services_by_name: dict[str, list[int]] = defaultdict(list)
-    for identifier, row in _index(taxonomy.services).items():
-        services_by_name[normalize(row["name"])].append(identifier)
+    services_by_name = service_ids_by_name(taxonomy)
     for name in sorted({normalize(proposal.path[0]) for proposal in proposals}):
         if len(services_by_name[name]) > 1:
             raise ValueError(f"Ambiguous baseline service name {name!r}: IDs {sorted(services_by_name[name])}")
@@ -202,7 +221,7 @@ def screen_proposals(
     by_path: dict[tuple[str, ...], ScreenedProposal] = {}
     for index, proposal in enumerate(proposals):
         parent = by_path.get(tuple(proposal.path[:2])) if proposal.level == "speciality" else None
-        service_ids = services_by_name[normalize(proposal.path[0])]
+        service_ids = services_by_name.get(normalize(proposal.path[0]), [])
         parent_id = parent.existing_id if parent else service_ids[0] if len(service_ids) == 1 else None
         exact = exact_columns.get(names[index], set())
         key_matches = key_columns.get(keys[index], set())
@@ -231,13 +250,12 @@ def screen_proposals(
             if kinds:
                 proposal.matches.append(ConceptMatch(
                     concept=concept, match_types=kinds, lexical_score=score, semantic_score=meaning,
-                    same_parent=concept.level == proposal.level and parent_id is not None
-                    and concept.path_ids[-2] == parent_id,
+                    same_parent=is_same_parent(concept, proposal.level, parent_id),
                 ))
-        _classify(proposal, existing_ids[tuple(proposal.path)], bool(parent and parent.blocks_creation),
+        classify_proposal(proposal, existing_ids[tuple(proposal.path)], bool(parent and parent.blocks_creation),
                   semantic_status == "failed")
         by_path[tuple(proposal.path)] = proposal
-    _hold_incoming_variants(proposals)
+    hold_incoming_variants(proposals)
     report = ProposalScreeningReport(
         baseline_snapshot_id=baseline_snapshot_id, settings=settings, semantic_status=semantic_status,
         skipped_checks=skipped, proposals=proposals,

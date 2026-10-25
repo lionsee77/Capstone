@@ -12,6 +12,7 @@ from taxonomy_pipeline.classification.deduplication import deduplicate_outputs
 from taxonomy_pipeline.classification.models import ResolutionReport, ReviewDecision, TaxonomyPath
 from taxonomy_pipeline.classification.preview import build_preview
 from taxonomy_pipeline.classification.resolution import resolve_outputs
+from taxonomy_pipeline.classification.review import apply_hierarchy_decisions
 from taxonomy_pipeline.classification.validation import validate_outputs
 from taxonomy_pipeline.datasets.base import TaxonomyDataset
 
@@ -82,6 +83,19 @@ def test_approval_of_an_exact_equivalent_is_rejected(baseline: TaxonomyDataset, 
         resolve_outputs(original.evidence, baseline, [decision(original, level)])
 
 
+# A case-only difference from the baseline spelling isn't a move, so it gets no "Resolved placement" note.
+def test_a_case_only_difference_is_not_noted_as_a_resolved_placement(baseline: TaxonomyDataset) -> None:
+    original = screened(baseline, category="computing", speciality="Data visualizatio")
+    result = resolve_outputs(original.evidence, baseline, [decision(original, action="reuse", existing_concept_id=20)])
+    note = next(row.note for row in build_preview(result, baseline).rows if row.row_type == "placement")
+
+    assert "Hierarchy decisions" in note and "Resolved placement: Subject > Computing > Data visualization" in note
+    result = resolve_outputs(screened(baseline, category="computing", speciality="data visualization").evidence,
+                             baseline)
+    note = next(row.note for row in build_preview(result, baseline).rows if row.row_type == "placement")
+    assert "Resolved placement" not in note
+
+
 @pytest.mark.parametrize("action", ["exclude", "defer"])
 # A tag approval cannot bypass a rejected or deferred hierarchy proposal.
 def test_hierarchy_rejection_and_deferral_hold_dependent_tag_placements(
@@ -102,19 +116,13 @@ def test_hierarchy_rejection_and_deferral_hold_dependent_tag_placements(
     assert build_preview(result, baseline).taxonomy == baseline
 
 
-# Selecting a category in another service preserves its real parent and rechecks child reuse there.
-def test_category_merge_rechecks_children_and_preserves_existing_parent(baseline: TaxonomyDataset) -> None:
+# A category reuse must stay in the proposal's service, or every tag under it would move service silently.
+def test_category_reuse_is_rejected_when_the_target_is_in_another_service(baseline: TaxonomyDataset) -> None:
     original = screened(baseline, service="Industry")
-    result = resolve_outputs(original.evidence, baseline, [
-        decision(original, "category", action="reuse", existing_concept_id=10),
-        decision(original, action="reuse", existing_concept_id=20),
-    ])
-    preview = build_preview(result, baseline)
-    assert preview.taxonomy.categories == baseline.categories
-    assert preview.taxonomy.specialities == baseline.specialities
-    assert preview.counts.added_categories == preview.counts.added_specialities == 0
-    assert {node.level: node.parent_id for node in result.hierarchy} == {"category": 1, "speciality": 10}
-    assert preview.counts.pending_sources == 0
+    with pytest.raises(ValueError, match="belongs to a different service than 'Industry'"):
+        resolve_outputs(original.evidence, baseline, [
+            decision(original, "category", action="reuse", existing_concept_id=10),
+        ])
 
 
 # A selected parent can make an exact child safely reusable without a separate child decision.
@@ -168,6 +176,53 @@ def test_rejecting_a_competing_variant_allows_one_new_category(baseline: Taxonom
     preview = build_preview(result, baseline)
     assert not preview.blocked and preview.counts.added_categories == 1
     assert preview.counts.pending_sources == 1  # Rejecting a placement does not discard its source tag.
+
+
+def _variant_categories(baseline: TaxonomyDataset) -> tuple[Any, list[Any]]:
+    template = screened(baseline).evidence.tags[0].placements[0].model_dump()
+    rows = [dict(template, tag_id=str(index), tag=tag, category=category, speciality="Astrophysics")
+            for index, (tag, category) in enumerate([
+                ("Fire prevention", "Task organization"), ("Payroll management", "Task organisation"),
+            ])]
+    report = deduplicate_outputs(validate_outputs({"cases.json": json.dumps(rows)}, baseline))
+    proposals = [item for item in resolve_outputs(report, baseline).screening.proposals if item.level == "category"]
+    return report, proposals
+
+
+# Reusing one incoming spelling variant resolves the cluster, so its partner is no longer held for it.
+def test_reusing_one_variant_releases_its_partner(baseline: TaxonomyDataset) -> None:
+    report, proposals = _variant_categories(baseline)
+    reuse = ReviewDecision(proposal_id=proposals[0].proposal_id, action="reuse", existing_concept_id=10,
+                           reason="Same as Computing")
+
+    undecided = resolve_outputs(report, baseline, [reuse])
+    partner = next(item for item in undecided.screening.proposals if item.proposal_id == proposals[1].proposal_id)
+    assert partner.blocks_creation  # The saved screening is unchanged evidence...
+    effective = apply_hierarchy_decisions(undecided.screening, baseline, undecided.decisions)
+    released = next(item for item in effective.proposals if item.proposal_id == proposals[1].proposal_id)
+    assert not released.blocks_creation and "share a match_key" not in released.reason  # ...the hold is gone.
+
+    create = ReviewDecision(proposal_id=proposals[1].proposal_id, action="create", reason="Distinct label")
+    preview = build_preview(resolve_outputs(report, baseline, [reuse, create]), baseline)
+    assert preview.counts.added_categories == 1 and preview.counts.pending_sources == 0
+
+
+# A same-named speciality under another category doesn't stop create, matching integrate's duplicate policy.
+def test_a_speciality_named_like_one_in_another_category_can_be_created(baseline: TaxonomyDataset) -> None:
+    original = screened(baseline, category="Design", speciality="Data visualization")
+    proposal = next(item for item in original.screening.proposals if item.level == "speciality")
+    assert proposal.blocks_creation and not any(match.same_parent for match in proposal.matches)
+
+    preview = build_preview(resolve_outputs(original.evidence, baseline, [decision(original)]), baseline)
+
+    assert preview.counts.added_specialities == 1 and preview.counts.pending_sources == 0
+
+
+# The same allowance doesn't extend to categories: an exact category name in another service still blocks.
+def test_a_category_named_like_one_in_another_service_still_cannot_be_created(baseline: TaxonomyDataset) -> None:
+    original = screened(baseline, service="Industry")
+    with pytest.raises(ValueError, match="exact/equivalent"):
+        resolve_outputs(original.evidence, baseline, [decision(original, "category")])
 
 
 @pytest.mark.parametrize("target", [999, 10])

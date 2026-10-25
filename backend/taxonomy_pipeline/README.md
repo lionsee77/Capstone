@@ -281,6 +281,11 @@ screened again during preview/integration. A previously reviewed run can therefo
 fail to integrate when new holds appear. Rerun `merge-preview` with the original
 inputs and decisions, review new holds, then integrate the regenerated run. Reports
 with screening evidence from an older screening algorithm may also need regeneration.
+A new speciality's temporary ID (`new:speciality:<digest>`) is now derived from its
+parent category's baseline service name, so runs whose path spells the service
+differently (case or spacing) get new IDs: replaying a `resolution.json` saved
+before #57 then makes `integrate` report `introduced.resolution_mismatch`. Rerun
+`merge-preview` with the same inputs and decisions before integrating.
 `deduplication.json` also retains `screening_hierarchy`,
 including complete proposals that intake held outside eligible tag resolution.
 
@@ -329,13 +334,20 @@ taxonomy-pipeline merge-preview --input case_a_output.json --input case_b_output
 ```
 
 - A merge target must be a valid existing category or speciality at the proposal's
-  level. The target row and its canonical name are reused; no replacement row is
-  created. A category may reuse an existing category in another service. Its
-  children are rechecked against that category, without moving any baseline row.
-  A speciality in another category requires a matching parent-category decision.
+  level, under the proposal's own parent. The target row and its canonical name
+  are reused; no replacement row is created. A category can only reuse an
+  existing category in the same service, so its tags never move service; its
+  children are rechecked against that category. A speciality in another category
+  requires a matching parent-category decision.
 - `create` rejects exact/name-key equivalents, unresolved incoming variants,
-  blocked parents and failed requested semantic checks. A near match alone is
-  evidence for review; a reviewer may approve it as distinct. Approved synonyms
+  blocked parents and failed requested semantic checks. One exception: a
+  speciality whose only exact matches are specialities under *other* categories
+  can be created, the same cross-parent duplicate-name policy `integrate`
+  applies. A same-named category in another service still blocks. A near match
+  alone is evidence for review; a reviewer may approve it as distinct.
+- Decisions that resolve one of a cluster of incoming spelling variants (`reuse`,
+  `exclude`) are applied before the cluster is re-checked, so the remaining
+  variant is no longer held for it and can be created or left to resolve. Approved synonyms
   will supply additional equivalence evidence when #56/PB07 is connected.
 - `exclude` and `defer` block dependent placements, even if a tag decision approves
   them. They do not reject the source tag itself; use a tag decision to exclude
@@ -347,11 +359,13 @@ taxonomy-pipeline merge-preview --input case_a_output.json --input case_b_output
 - Saved reports retain the original screening and the unified `decisions` list.
   Preview and integration replay both. CSV notes show hierarchy decisions and
   the resolved branch when it differs from the producer's supplied path.
-- Each validated, submitted decision appends an event to
-  `merge_runs/reviewed/change_log.jsonl`, with a UTC timestamp, event/submission IDs,
-  baseline fingerprint and the full decision including its reason. Reusing an
-  output directory preserves earlier events. Resubmitting creates another event;
-  pure preview/integration replay does not. Automatic defaults are not recorded
+- Each validated decision the log doesn't already hold for this baseline appends
+  an event to `merge_runs/reviewed/change_log.jsonl`, with a UTC timestamp,
+  event/submission IDs, baseline fingerprint and the full decision including its
+  reason. Rerunning with the same `decisions.json` plus one new entry logs only
+  that entry; an edited decision (new action or reason) is logged again. Reusing
+  an output directory preserves earlier events; `--change-log PATH` keeps one log
+  across several output directories. Preview/integration replay never logs. Automatic defaults are not recorded
   as human decisions. Invalid submissions fail before reports or events are written.
 
 The JSONL file is a **local PB09 handoff**, not the shared PB09 database integration
@@ -380,6 +394,9 @@ taxonomy-pipeline review-proposals --merge-run merge_runs/reviewed --level speci
 taxonomy-pipeline review-proposals --merge-run merge_runs/reviewed --proposal-id <proposal_id>
 ```
 
+`--proposal-id` selects one proposal and can't be combined with `--level` or
+`--offset`.
+
 The CLI prints JSON to stdout. The API exposes the same response:
 
 ```text
@@ -388,7 +405,8 @@ GET /proposals/{proposal_id}?merge_run=reviewed
 ```
 
 `TAXONOMY_MERGE_ROOT` selects the API's server-side merge directory (default:
-`merge_runs` relative to the server's working directory). `merge_run` is one
+`backend/taxonomy_pipeline/merge_runs`, where `merge-preview` writes when run
+from `backend/taxonomy_pipeline`, whatever directory the server starts in). `merge_run` is one
 directory name beneath that root, not a filesystem path. For custom output
 locations, configure the root to their parent directory. The CLI accepts a
 local `--merge-run` path as usual. This uses existing files and does not choose
@@ -451,6 +469,10 @@ taxonomy-pipeline bulk-decide --merge-run merge_runs/<timestamp> --report judged
   that are held for nothing else. Tags in a duplicate candidate pair, tags
   matching a baseline tag by name, hierarchy screening holds, Case A's review
   candidates for new tags, and tags already in `--decisions` are left as they are.
+- The output starts with `--decisions` and every decision the merge run already
+  applied (its `resolution.json` `decisions`, hierarchy decisions included), so
+  applying the file alone never drops an earlier approval. A `--decisions` entry
+  that changes one of those is refused as a conflict.
 - The output is a draft: every decision carries a `Bulk: ...` reason with the
   score and threshold, and goes through `merge-preview --decisions` like a
   hand-written one, so it appears in `preview.csv` and can be edited or removed.
