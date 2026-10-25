@@ -54,7 +54,7 @@ metrics:
       dataset: original
 
   # Semantic matching with sentence-transformers/all-MiniLM-L6-v2, pinned in code
-  # to revision 1110a243fdf4706b3f48f1d95db1a4f5529b4d41 (metrics/embeddings.py).
+  # to revision 1110a243fdf4706b3f48f1d95db1a4f5529b4d41 (matching/embeddings.py).
   # The lexical-only params (threshold, preprocessing) are not used in this mode.
   - id: breadth
     params:

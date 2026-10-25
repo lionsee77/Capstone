@@ -1402,7 +1402,9 @@ kind) so metric tests don't depend on the real taxonomy data staying stable
 shape-wise. `tests/conftest.py`'s `isolated_db` fixture points `db.py` at a
 throwaway SQLite file per test - use it in any test that calls `db.save_run`
 or hits the API, so runs don't leak into your real `taxonomy_pipeline.sqlite3`
-or across tests.
+or across tests. Helpers several test modules share (e.g. `breadth_datasets`,
+`review_candidate_file`) also live in `conftest.py`; a test module never imports
+another test module.
 
 Ruff linting and the test suite run in CI (see the root
 `.github/workflows/ci.yml`).
