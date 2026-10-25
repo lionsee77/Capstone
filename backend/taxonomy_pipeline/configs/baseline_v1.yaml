@@ -1,0 +1,87 @@
+# Baseline of record for metric definitions v1: scores Ankit's original
+# taxonomy with the team's official settings (README, "Official metric
+# definitions"). Every setting that changes a result is written out instead of
+# left to a default, the model revision is pinned, and the run fails if the code
+# implements another definitions version, so this config reproduces the stored
+# baseline (baselines/baseline_v1.json.gz) or says why it can't.
+#
+# Don't change a setting here. Changing a method, threshold or model is a new
+# definitions version: bump METRIC_DEFINITIONS_VERSION, add baseline_v2.yaml and
+# re-score. Score an enriched snapshot the same way with
+# `taxonomy-pipeline integrate --config configs/baseline_v1.yaml ...`, then
+# compare the two runs with `taxonomy-pipeline check-comparable`.
+#
+# Paths are resolved relative to this file.
+metric_definitions_version: 1
+
+datasets:
+  - name: original
+    type: sql_dump
+    paths:
+      - ../../sql-files-nus/services.sql
+      - ../../sql-files-nus/categories.sql
+      - ../../sql-files-nus/specialities.sql
+      - ../../sql-files-nus/tags.sql
+      - ../../sql-files-nus/speciality_tags.sql
+
+  # Saturation's incoming source: what the new-items rate is measured against.
+  - name: skillsfuture
+    type: sql_dump
+    paths:
+      - ../../skillsfuture/skillsfuture_taxonomy.sql
+    table_map:
+      categories: sf_categories
+      specialities: sf_specialities
+      tags: sf_tags
+      speciality_tags: sf_speciality_tags
+
+  - name: ssic
+    type: ssic
+    paths: [../../reference_data/ssic/ssic2025-classification-structure.xlsx]
+
+  - name: ssoc
+    type: ssoc
+    paths: [../../reference_data/ssoc/ssoc2024-classification-structure.xlsx]
+
+metrics:
+  - id: integrity
+    params:
+      dataset: original
+      fuzzy_threshold: 85
+
+  - id: depth
+    params:
+      dataset: original
+
+  # Semantic matching with sentence-transformers/all-MiniLM-L6-v2, pinned in code
+  # to revision 1110a243fdf4706b3f48f1d95db1a4f5529b4d41 (metrics/embeddings.py).
+  # The lexical-only params (threshold, preprocessing) are not used in this mode.
+  - id: breadth
+    params:
+      target: original
+      ssic_reference: ssic
+      ssoc_reference: ssoc
+      industry_level: division
+      occupational_level: minor_group
+      industry_service_id: 1
+      matching_method: semantic
+      semantic_threshold: 0.60  # provisional and uncalibrated (#47)
+      top_k: 5
+
+  - id: saturation
+    params:
+      baseline: original
+      incoming: [skillsfuture]
+      threshold: 90
+      semantic_model: sentence-transformers/all-MiniLM-L6-v2
+      semantic_model_revision: 1110a243fdf4706b3f48f1d95db1a4f5529b4d41
+      semantic_threshold: 0.70
+      semantic_threshold_by_level:
+        specialities: 0.80
+      add_candidate_lexical_threshold: 60
+      add_candidate_semantic_threshold: 0.50
+      cross_level: true
+      # Off for scoring: an LLM in public beta can't reproduce a baseline, and
+      # judged and unjudged ambiguous counts aren't comparable. Classification
+      # rounds still run it from original_vs_skillsfuture.yaml.
+      judge: null

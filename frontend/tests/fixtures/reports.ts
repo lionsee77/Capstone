@@ -4,6 +4,7 @@ export const doneRunReport = {
   created_at: "2026-10-04T10:00:00Z",
   finished_at: "2026-10-04T10:00:05Z",
   status: "done",
+  metric_definitions_version: 1,
   datasets: [{ name: "original", counts: { categories: 110, specialities: 900 } }],
   results: [
     {

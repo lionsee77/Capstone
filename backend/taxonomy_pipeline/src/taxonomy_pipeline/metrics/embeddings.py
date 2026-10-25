@@ -10,12 +10,21 @@ import numpy as np
 MODEL_ID = "sentence-transformers/all-MiniLM-L6-v2"
 MODEL_REVISION = "1110a243fdf4706b3f48f1d95db1a4f5529b4d41"
 TEXT_PROFILE = "semantic_labels_v1"
+# The one place a model's version is pinned. Saturation's `SemanticMatcher` (and so Case A and merge-preview)
+# loads a model named here at this revision unless told otherwise, so runs naming the model by its short or
+# full id score with the same weights as breadth.
+PINNED_REVISIONS = {MODEL_ID: MODEL_REVISION, MODEL_ID.removeprefix("sentence-transformers/"): MODEL_REVISION}
 _model = None
 _model_lock = threading.Lock()
 
 
 def semantic_text(label: str | None) -> str:
     return re.sub(r"\s+", " ", unicodedata.normalize("NFKC", label or "")).strip()
+
+
+def pinned_revision(model_name: str) -> str | None:
+    """The revision this package pins `model_name` to, or None for a model it doesn't pin."""
+    return PINNED_REVISIONS.get(model_name.strip())
 
 
 def _get_model():

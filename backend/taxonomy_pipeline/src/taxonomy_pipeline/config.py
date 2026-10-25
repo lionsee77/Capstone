@@ -41,8 +41,16 @@ class MetricConfig(BaseModel):
 
 
 class PipelineConfig(BaseModel):
-    """A full pipeline run: datasets to load and metrics to run against them."""
+    """A full pipeline run: datasets to load and metrics to run against them.
 
+    `metric_definitions_version` optionally pins the metric definitions (see
+    `definitions.py`) the config was written for. A run of a pinned config
+    fails instead of scoring with other formulas or defaults, so a baseline
+    config either reproduces its baseline or says why it can't. Omit it to
+    score with whatever the code currently implements.
+    """
+
+    metric_definitions_version: int | None = Field(default=None, ge=1)
     datasets: list[DatasetConfig]
     metrics: list[MetricConfig]
 

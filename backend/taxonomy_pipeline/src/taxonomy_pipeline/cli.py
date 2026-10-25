@@ -1,12 +1,13 @@
-"""`taxonomy-pipeline run|serve|case-a|case-b|merge-preview|review-proposals|bulk-decide|integrate`
+"""`taxonomy-pipeline run|check-comparable|serve|case-a|case-b|merge-preview|review-proposals|bulk-decide|integrate`
 
 Every command is a thin wrapper around one library function, so the CLI never
 holds logic of its own: `run` calls `pipeline.run_pipeline` - the exact same
 function the FastAPI `/runs` route calls - plus optional SQLite persistence and
-a JSON report on stdout or a file. The classification commands call
+a JSON report on stdout or a file. `check-comparable` calls
+`definitions.check_comparable`. The classification commands call
 `classification.case_a.run_case_a`, `classification.case_b.run_case_b`,
-`classification.runner.run_merge_preview`, `classification.bulk_decisions.draft_decisions`
-and `classification.integrate.integrate`.
+`classification.runner.run_merge_preview`, `classification.review_view.load_review_view`,
+`classification.bulk_decisions.draft_decisions` and `classification.integrate.integrate`.
 """
 from __future__ import annotations
 
@@ -20,7 +21,9 @@ from pathlib import Path
 from . import db
 from .config import load_config
 from .datasets.base import LoadedDataset, TaxonomyDataset
-from .pipeline import load_datasets, result_labels, run_pipeline
+from .definitions import check_comparable
+from .models import RunReport
+from .pipeline import load_datasets, read_report, result_labels, run_pipeline, write_report
 from .proposals.models import ScreeningSettings
 
 SKILLSFUTURE_WORKBOOK = (
@@ -35,12 +38,11 @@ def _cmd_run(args: argparse.Namespace) -> int:
     if not args.no_save:
         db.save_run(report, config_json=config.model_dump_json())
 
-    output = report.model_dump_json(indent=2)
     if args.output:
-        Path(args.output).write_text(output)
+        write_report(report, args.output)
         print(f"wrote report to {args.output}")
     else:
-        print(output)
+        print(report.model_dump_json(indent=2))
 
     for result, label in zip(report.results, result_labels(report.results), strict=True):
         print(f"[{result.status.upper()}] {label}: {result.summary}", file=sys.stderr)
@@ -51,6 +53,55 @@ def _cmd_run(args: argparse.Namespace) -> int:
     # every metric in it succeeded, so a CI gate needs both checked.
     any_metric_errors = any(result.status == "error" for result in report.results)
     return 0 if report.status == "done" and not any_metric_errors else 1
+
+
+def _load_report(source: str) -> RunReport:
+    """A saved report file (`run --output`, `.json` or `.json.gz`), else a run ID from SQLite run history.
+
+    Read-only: a mistyped path fails as a missing file, and run history is only queried when it exists, so a
+    check never creates the database.
+    """
+    path = Path(source)
+    if path.is_file():
+        return read_report(path)
+    if "/" in source or "\\" in source or path.suffix in {".json", ".gz"}:
+        raise ValueError(f"report file {source} does not exist")
+    if not db.DEFAULT_DB_PATH.is_file():
+        raise ValueError(f"{source!r} is not a report file, and there is no run history at {db.DEFAULT_DB_PATH}")
+    record = db.get_run(source)
+    if record is None:
+        raise ValueError(f"{source!r} is neither a report file nor a run ID in run history")
+    return RunReport.model_validate_json(record.report_json)
+
+
+def _cmd_check_comparable(args: argparse.Namespace) -> int:
+    try:
+        before, after = _load_report(args.before), _load_report(args.after)
+        check = check_comparable(before, after, before_subject=args.before_subject, after_subject=args.after_subject)
+    except (OSError, ValueError) as exc:
+        print(f"[FAILED] check-comparable: {exc}", file=sys.stderr)
+        return 1
+
+    for issue in check.issues:
+        print(f"[FLAGGED] {issue.message}")
+    labels = {"before": result_labels(before.results), "after": result_labels(after.results)}
+    for metric in check.metrics:
+        label = (labels["before"][metric.before_index] if metric.before_index is not None
+                 else labels["after"][metric.after_index])
+        if not metric.issues:
+            print(f"[OK] {label}")
+        for issue in metric.issues:
+            print(f"[FLAGGED] {label}: {issue.message}")
+    runs = [
+        f"{run_id[:8]} ({subject or 'no scored taxonomy'}, "
+        + (f"definitions v{version})" if version is not None else "definitions unknown)")
+        for run_id, subject, version in (
+            (check.before_run_id, check.before_subject, check.before_definitions_version),
+            (check.after_run_id, check.after_subject, check.after_definitions_version),
+        )
+    ]
+    print(f"{'comparable' if check.comparable else 'NOT comparable'}: before {runs[0]}, after {runs[1]}")
+    return 0 if check.comparable else 1
 
 
 def _cmd_serve(args: argparse.Namespace) -> int:
@@ -265,9 +316,19 @@ def build_parser() -> argparse.ArgumentParser:
 
     run_parser = subparsers.add_parser("run", help="run a pipeline config once")
     run_parser.add_argument("--config", required=True, help="path to a YAML pipeline config")
-    run_parser.add_argument("--output", help="write the JSON report here instead of stdout")
+    run_parser.add_argument("--output", help="write the JSON report here instead of stdout (gzipped if it ends in .gz)")
     run_parser.add_argument("--no-save", action="store_true", help="don't persist this run to SQLite")
     run_parser.set_defaults(func=_cmd_run)
+
+    check = subparsers.add_parser(
+        "check-comparable", help="check two runs were scored with the same metric definitions and settings",
+    )
+    report_source = "report file (.json or .json.gz) or run ID from run history"
+    check.add_argument("before", help=f"the earlier run, e.g. the baseline of record: {report_source}")
+    check.add_argument("after", help=f"the later run, e.g. the enriched snapshot's: {report_source}")
+    check.add_argument("--before-subject", help="taxonomy the before run scores (needed if it scores several)")
+    check.add_argument("--after-subject", help="taxonomy the after run scores (needed if it scores several)")
+    check.set_defaults(func=_cmd_check_comparable)
 
     serve_parser = subparsers.add_parser("serve", help="run the FastAPI app")
     serve_parser.add_argument("--host", default="127.0.0.1")

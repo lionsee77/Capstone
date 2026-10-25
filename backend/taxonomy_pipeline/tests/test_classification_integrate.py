@@ -275,6 +275,17 @@ def test_enriched_config_falls_back_to_integrity_and_depth_without_scoring_metri
     assert [d.name for d in config.datasets] == ["enriched"]
 
 
+@pytest.mark.parametrize("pin", [1, None])
+def test_the_enriched_config_keeps_the_round_configs_metric_definitions_pin(tmp_path, baseline, pin):
+    # A pinned round config (configs/baseline_v<N>.yaml) holds the snapshot's scoring to the same version.
+    scoring = PipelineConfig(metric_definitions_version=pin, datasets=[baseline], metrics=[
+        MetricConfig(id="integrity", params={"dataset": baseline.name}),
+    ])
+    integrate(_resolution(tmp_path, baseline), baseline, out_dir=tmp_path / "out", scoring_config=scoring)
+
+    assert load_config(tmp_path / "out" / "enriched.yaml").metric_definitions_version == pin
+
+
 def test_the_snapshot_never_shares_a_name_with_a_dataset_its_metrics_read(tmp_path, baseline):
     # The round compares against an earlier snapshot that is itself called "enriched".
     earlier = DatasetConfig(name="enriched", paths=baseline.paths)

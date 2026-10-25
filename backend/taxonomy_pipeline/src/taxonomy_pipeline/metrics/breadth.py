@@ -108,6 +108,16 @@ class BreadthMetric(Metric):
         "matching_method": "semantic", "semantic_threshold": 0.60, "top_k": 5,
     }
 
+    def definition(self) -> dict[str, Any]:
+        # The sentence model and its text profile are fixed in code, not params.
+        return {
+            **super().definition(),
+            "embedding": {
+                "model": embeddings.MODEL_ID, "revision": embeddings.MODEL_REVISION,
+                "text_profile": embeddings.TEXT_PROFILE,
+            },
+        }
+
     def run(self, datasets: dict[str, LoadedDataset], params: dict[str, Any]) -> MetricResult:
         p = self.resolve_params(params)
         if "reference" in p:
