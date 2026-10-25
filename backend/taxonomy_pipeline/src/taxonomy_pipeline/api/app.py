@@ -62,6 +62,25 @@ def _require_absolute_dataset_paths(config: PipelineConfig) -> None:
         )
 
 
+def _require_no_judge(config: PipelineConfig) -> None:
+    """Reject LLM judge settings: a judged run spends OpenAI credits and reads/writes its cache file
+    wherever the config points, outside the data-root check. Judged scoring runs from the CLI."""
+    judged = [
+        {"metric_index": index, "metric_id": metric.id}
+        for index, metric in enumerate(config.metrics)
+        if metric.params.get("judge") is not None
+    ]
+    if judged:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "message": "The LLM judge can't be enabled through the API: it spends OpenAI credits and "
+                           "writes its cache file on the server. Run judged scoring from the CLI.",
+                "judged_metrics": judged,
+            },
+        )
+
+
 def _require_allowed_dataset_paths(config: PipelineConfig) -> None:
     """Reject paths outside the data roots, so a run can't be used to read arbitrary server files."""
     outside = disallowed_paths(config)
@@ -89,6 +108,7 @@ def list_metrics() -> dict:
 def create_run(config: PipelineConfig, background_tasks: BackgroundTasks) -> dict:
     _require_absolute_dataset_paths(config)
     _require_allowed_dataset_paths(config)
+    _require_no_judge(config)
     report = RunReport(status="queued")
     db.save_run(report, config_json=config.model_dump_json())
     background_tasks.add_task(_execute_and_save, report, config)

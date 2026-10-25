@@ -6,10 +6,11 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
+from taxonomy_pipeline import db
 from taxonomy_pipeline.api.app import app
-from taxonomy_pipeline.api.security import DEFAULT_DATA_ROOT, data_roots
-from tests.conftest import FIXTURES
+from taxonomy_pipeline.api.security import DEFAULT_DATA_ROOT, PLACEHOLDER_TOKENS, data_roots
 
+FIXTURES = Path(__file__).parent / "fixtures"
 TOKEN = "test-token"
 
 
@@ -49,8 +50,23 @@ def test_requests_with_the_configured_token_are_served(secured: TestClient) -> N
 
 
 def test_every_route_needs_the_token_not_just_run_creation(secured: TestClient, isolated_db) -> None:
-    for path in ("/runs", "/runs/abc", "/taxonomy/search?run_id=a&dataset=b", "/taxonomy/tags/1?run_id=a&dataset=b"):
+    for path in (
+        "/runs", "/runs/abc", "/taxonomy/search?run_id=a&dataset=b", "/taxonomy/tags/1?run_id=a&dataset=b",
+        "/proposals?merge_run=x", "/proposals/p1?merge_run=x",  # routers added later are covered too
+    ):
         assert secured.get(path).status_code == 401, path
+
+
+@pytest.mark.parametrize("placeholder", sorted(PLACEHOLDER_TOKENS))
+def test_the_env_example_placeholder_is_not_accepted_as_a_token(
+    monkeypatch: pytest.MonkeyPatch, placeholder: str,
+) -> None:
+    monkeypatch.delenv("TAXONOMY_API_AUTH")
+    monkeypatch.setenv("TAXONOMY_API_TOKEN", placeholder)
+
+    response = TestClient(app).get("/metrics", headers=_auth(placeholder))
+
+    assert response.status_code == 401
 
 
 def test_an_unconfigured_token_refuses_every_request_instead_of_opening_the_api(
@@ -131,3 +147,26 @@ def test_data_roots_default_to_the_backend_directory(monkeypatch: pytest.MonkeyP
 
     assert data_roots() == [DEFAULT_DATA_ROOT]
     assert (DEFAULT_DATA_ROOT / "sql-files-nus").is_dir()
+
+
+def test_runs_cannot_enable_the_llm_judge_through_the_api(secured: TestClient, isolated_db) -> None:
+    payload = _payload(FIXTURES / "mini_original.sql")
+    payload["metrics"].append({"id": "saturation", "params": {
+        "baseline": "original", "incoming": ["original"], "semantic_model": "m",
+        "judge": {"model": "gpt-x", "cache": "/tmp/anywhere/judge_cache.json"},
+    }})
+
+    response = secured.post("/runs", json=payload, headers=_auth())
+
+    assert response.status_code == 422
+    assert response.json()["detail"]["judged_metrics"] == [{"metric_index": 1, "metric_id": "saturation"}]
+    assert db.list_runs() == []  # refused before anything was queued
+
+
+def test_runs_with_the_judge_explicitly_off_are_accepted(secured: TestClient, isolated_db) -> None:
+    payload = _payload(FIXTURES / "mini_original.sql")
+    payload["metrics"].append({"id": "saturation", "params": {
+        "baseline": "original", "incoming": ["original"], "judge": None,
+    }})
+
+    assert secured.post("/runs", json=payload, headers=_auth()).status_code == 202

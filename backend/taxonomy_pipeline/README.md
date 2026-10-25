@@ -1174,7 +1174,7 @@ directly skips the file, so export the variables yourself in that case.)
 
 | Env var | Default | Meaning |
 |---|---|---|
-| `TAXONOMY_API_TOKEN` | *(none)* | The token every request must send. With no token set, **every request gets 401**, so a forgotten setting can't leave the API open. |
+| `TAXONOMY_API_TOKEN` | *(none)* | The token every request must send. With no token set, **every request gets 401**, so a forgotten setting can't leave the API open. The `.env.example` placeholder (`change-me`) counts as no token: replace it. |
 | `TAXONOMY_API_AUTH` | *(on)* | Set to `off` to skip the token check, for local development on your own machine only. |
 | `TAXONOMY_DATA_ROOTS` | `backend/` | Directories (separated by `:` on macOS/Linux) that `POST /runs` may read dataset files from. Paths are resolved first, so `..` and symlinks can't escape. The default covers the bundled SQL dumps, SkillsFuture data, reference workbooks and `integrations/` snapshots, but only when the package is installed in editable mode (`pip install -e .`); otherwise set it explicitly. |
 
@@ -1203,9 +1203,12 @@ the token, so use curl or the dashboard to call endpoints.
 - `GET /metrics` - self-describing catalogue of what's runnable.
 - `POST /runs` - body is a `PipelineConfig` (the same schema as the YAML
   configs, as JSON); dataset paths must be absolute paths on the server,
-  inside `TAXONOMY_DATA_ROOTS` (anything else is rejected with 422). It
-  returns `{run_id, status: "queued"}` immediately and runs the pipeline in
-  the background.
+  inside `TAXONOMY_DATA_ROOTS` (anything else is rejected with 422). A config
+  that enables the LLM judge (any metric's `judge` param) is also rejected
+  with 422: a judged run spends OpenAI credits and writes its cache file on
+  the server, so run judged scoring from the CLI. It returns
+  `{run_id, status: "queued"}` immediately and runs the pipeline in the
+  background.
 - `GET /runs/{run_id}` - poll for status, which moves `"queued"` ->
   `"running"` -> `"done"` or `"failed"`; once finished, the full report is
   in the response.
