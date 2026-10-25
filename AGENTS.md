@@ -20,6 +20,14 @@ new work should follow the same shape unless there's a good reason not to.
 - Shared result/data shapes (what gets printed, persisted, and returned
   over HTTP) live in one `models.py` using Pydantic - one shape everywhere,
   not a CLI-specific and an API-specific version.
+- Inside a subproject that grows several concerns, group modules by
+  bounded context rather than by kind (see `backend/taxonomy_pipeline`:
+  `taxonomy/`, `matching/`, `quality/`, `providers/`, `enrichment/`). Each
+  context exposes public names; never import another context's `_private`
+  names, and import only contexts below yours (taxonomy_pipeline:
+  `enrichment -> quality -> matching -> taxonomy`, with `providers` used
+  by `enrichment` only). Code specific to one external source lives in
+  `providers/`, not in generic modules.
 
 ## Frontend
 
@@ -36,7 +44,7 @@ new work should follow the same shape unless there's a good reason not to.
   over `typing.Dict`/`Optional`.
 - Type-hint function signatures, including return types.
 - Module and class docstrings explain *why* a thing exists and how it's
-  meant to be extended, not just what it does (see `metrics/base.py`,
+  meant to be extended, not just what it does (see `quality/base.py`,
   `models.py` for the pattern).
 - Lint with `ruff`, `select = ["E", "F", "I", "UP", "B"]`, `line-length =
   120`. Run `ruff check .` clean before opening a PR.

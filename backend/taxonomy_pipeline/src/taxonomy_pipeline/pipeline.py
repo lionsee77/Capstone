@@ -12,11 +12,11 @@ from pathlib import Path
 from typing import Any
 
 from .config import PipelineConfig
-from .datasets import load_dataset
-from .datasets.base import LoadedDataset
-from .definitions import METRIC_DEFINITIONS_VERSION
-from .metrics.registry import get_metric
 from .models import DatasetSummary, MetricResult, RunReport, utcnow
+from .quality.definitions import METRIC_DEFINITIONS_VERSION
+from .quality.registry import get_metric
+from .taxonomy import load_dataset
+from .taxonomy.base import LoadedDataset
 
 
 def load_datasets(config: PipelineConfig) -> dict[str, LoadedDataset]:

@@ -6,14 +6,14 @@ from pathlib import Path
 
 import pytest
 
-from taxonomy_pipeline.classification import integrate as integrate_module
-from taxonomy_pipeline.classification.integrate import IntegrationError, _additions_sql, integrate
-from taxonomy_pipeline.classification.models import ResolutionReport, ReviewDecision, TaxonomyPath
-from taxonomy_pipeline.classification.runner import load_decisions, run_merge_preview
 from taxonomy_pipeline.config import DatasetConfig, MetricConfig, PipelineConfig, load_config
-from taxonomy_pipeline.datasets.base import CONCEPTS, TaxonomyDataset
-from taxonomy_pipeline.datasets.sql_dump import SqlDumpSource, iter_insert_statements
+from taxonomy_pipeline.enrichment import integrate as integrate_module
+from taxonomy_pipeline.enrichment.integrate import IntegrationError, _additions_sql, integrate
+from taxonomy_pipeline.enrichment.models import PlacementPath, ResolutionReport, ReviewDecision
+from taxonomy_pipeline.enrichment.runner import load_decisions, run_merge_preview
 from taxonomy_pipeline.pipeline import load_datasets
+from taxonomy_pipeline.taxonomy.base import CONCEPTS, TaxonomyDataset
+from taxonomy_pipeline.taxonomy.sql_dump import SqlDumpSource, iter_insert_statements
 
 FIXTURES = Path(__file__).parent / "fixtures" / "classification"
 PRODUCER_FILES = [FIXTURES / "case_a.json", FIXTURES / "case_b.json"]
@@ -246,7 +246,7 @@ def test_a_reviewer_can_map_an_ambiguous_tag_onto_the_existing_tag_it_resembles(
     taxonomy = SqlDumpSource(baseline.name, baseline.paths).load()
     reuse_sql = ReviewDecision(
         members=[{"source_dataset": "skillsfuture", "tag_id": "77"}], action="reuse", existing_tag_id=200,
-        approved_paths=[TaxonomyPath(service="Subject", category="Data analytics", speciality="Data presentation")],
+        approved_paths=[PlacementPath(service="Subject", category="Data analytics", speciality="Data presentation")],
         reason="Same skill as SQL.",
     )
 

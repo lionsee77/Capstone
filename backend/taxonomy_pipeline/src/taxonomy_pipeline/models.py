@@ -7,37 +7,10 @@ from datetime import UTC, datetime
 from typing import Annotated, Any, Literal
 from uuid import uuid4
 
-from pydantic import BaseModel, ConfigDict, Field, StringConstraints, computed_field
+from pydantic import BaseModel, Field, StringConstraints, computed_field
 
 NonBlankText = Annotated[str, StringConstraints(pattern=r"\S")]
 TaxonomyId = Annotated[int, Field(gt=0)]
-
-
-class InputLocation(BaseModel):
-    """Locate original evidence even after repeated placements are collapsed."""
-
-    input_name: str
-    row_index: int
-
-
-class SourceTagRef(BaseModel):
-    """Keep equal tag IDs from different datasets distinct."""
-
-    model_config = ConfigDict(strict=True, extra="forbid")
-
-    source_dataset: NonBlankText
-    tag_id: NonBlankText
-
-
-class HierarchyGroup(BaseModel):
-    """Share parent-scoped evidence between classification and proposal screening."""
-
-    level: Literal["category", "speciality"]
-    path: list[str]
-    variants: list[list[str]]
-    existing_id: TaxonomyId | None
-    members: list[SourceTagRef]
-    origins: list[InputLocation]
 
 
 def utcnow() -> datetime:
@@ -77,7 +50,7 @@ class RunReport(BaseModel):
     created_at: datetime = Field(default_factory=utcnow)
     finished_at: datetime | None = None
     status: Literal["queued", "running", "done", "failed"] = "queued"
-    # The metric definitions (formulas and defaults, see `definitions.py`) the
+    # The metric definitions (formulas and defaults, see `quality/definitions.py`) the
     # results were scored with. Set by `pipeline.run_pipeline`; None on reports
     # saved before runs were stamped, so their definitions are unknown rather
     # than assumed current.

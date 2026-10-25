@@ -11,14 +11,14 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from taxonomy_pipeline.classification.deduplication import deduplicate_outputs
-from taxonomy_pipeline.classification.models import DeduplicationReport, ResolutionReport, ReviewDecision, TaxonomyPath
-from taxonomy_pipeline.classification.preview import build_preview
-from taxonomy_pipeline.classification.resolution import resolve_outputs
-from taxonomy_pipeline.classification.validation import validate_outputs
-from taxonomy_pipeline.datasets.base import TaxonomyDataset
-from taxonomy_pipeline.proposals import screening
-from taxonomy_pipeline.proposals.models import ScreenedProposal, ScreeningSettings
+from taxonomy_pipeline.enrichment.deduplication import deduplicate_outputs
+from taxonomy_pipeline.enrichment.models import DeduplicationReport, PlacementPath, ResolutionReport, ReviewDecision
+from taxonomy_pipeline.enrichment.preview import build_preview
+from taxonomy_pipeline.enrichment.proposals import screening
+from taxonomy_pipeline.enrichment.proposals.models import ScreenedProposal, ScreeningSettings
+from taxonomy_pipeline.enrichment.resolution import resolve_outputs
+from taxonomy_pipeline.enrichment.validation import validate_outputs
+from taxonomy_pipeline.taxonomy.base import TaxonomyDataset
 
 
 @pytest.fixture
@@ -50,7 +50,7 @@ def review(report: DeduplicationReport, action: str = "create") -> ReviewDecisio
     return ReviewDecision(
         members=[tag.source], action=action, reason="Reviewed concept and placement",
         existing_tag_id=501 if action == "reuse" else None,
-        approved_paths=[TaxonomyPath(service=row.service, category=row.category, speciality=row.speciality)
+        approved_paths=[PlacementPath(service=row.service, category=row.category, speciality=row.speciality)
                         for row in tag.placements] if action in {"create", "reuse"} else [],
     )
 
@@ -195,7 +195,7 @@ def test_new_incoming_variants_hold_both_proposals_for_review(
                    if proposal.level == "category")
     decisions = [ReviewDecision(
         members=[tag.source], action="create", reason="Approve proposed placement",
-        approved_paths=[TaxonomyPath(service=row.service, category=row.category, speciality=row.speciality)
+        approved_paths=[PlacementPath(service=row.service, category=row.category, speciality=row.speciality)
                         for row in tag.placements],
     ) for tag in report.tags]
     approved = resolve_outputs(report, baseline, decisions, screening=result.screening)
@@ -394,7 +394,7 @@ def test_mixed_path_decisions_accept_safe_paths_and_flag_blocked_paths(
     result = resolve_outputs(report, baseline, [review(report, action)])
     disposition = result.dispositions[0]
     assert disposition.status == "accepted"
-    assert disposition.unapproved_paths == [TaxonomyPath(
+    assert disposition.unapproved_paths == [PlacementPath(
         service="Industry", category="Computing", speciality="Orbital navigation",
     )]
     assert "Hierarchy screening blocked approved paths: Industry > computing > orbital navigation" in disposition.reason

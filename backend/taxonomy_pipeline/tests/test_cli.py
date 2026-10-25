@@ -7,7 +7,7 @@ import pytest
 import yaml
 
 from taxonomy_pipeline.cli import main
-from taxonomy_pipeline.definitions import METRIC_DEFINITIONS_VERSION
+from taxonomy_pipeline.quality.definitions import METRIC_DEFINITIONS_VERSION
 from tests.conftest import FIXTURES
 
 

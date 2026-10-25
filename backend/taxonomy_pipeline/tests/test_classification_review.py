@@ -8,13 +8,13 @@ from unittest.mock import Mock
 import pytest
 from pydantic import ValidationError
 
-from taxonomy_pipeline.classification.deduplication import deduplicate_outputs
-from taxonomy_pipeline.classification.models import ResolutionReport, ReviewDecision, TaxonomyPath
-from taxonomy_pipeline.classification.preview import build_preview
-from taxonomy_pipeline.classification.resolution import resolve_outputs
-from taxonomy_pipeline.classification.review import apply_hierarchy_decisions
-from taxonomy_pipeline.classification.validation import validate_outputs
-from taxonomy_pipeline.datasets.base import TaxonomyDataset
+from taxonomy_pipeline.enrichment.deduplication import deduplicate_outputs
+from taxonomy_pipeline.enrichment.models import PlacementPath, ResolutionReport, ReviewDecision
+from taxonomy_pipeline.enrichment.preview import build_preview
+from taxonomy_pipeline.enrichment.resolution import resolve_outputs
+from taxonomy_pipeline.enrichment.review import apply_hierarchy_decisions
+from taxonomy_pipeline.enrichment.validation import validate_outputs
+from taxonomy_pipeline.taxonomy.base import TaxonomyDataset
 
 
 @pytest.fixture
@@ -106,7 +106,7 @@ def test_hierarchy_rejection_and_deferral_hold_dependent_tag_placements(
     placement = tag.placements[0]
     tag_choice = ReviewDecision(
         members=[tag.source], action="create", reason="Approve tag",
-        approved_paths=[TaxonomyPath(service=placement.service, category=placement.category,
+        approved_paths=[PlacementPath(service=placement.service, category=placement.category,
                                      speciality=placement.speciality)],
     )
     choice = decision(original, action=action)

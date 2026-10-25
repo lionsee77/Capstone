@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from taxonomy_pipeline.datasets.sql_dump import SqlDumpSource, iter_created_tables, iter_insert_statements
+from taxonomy_pipeline.taxonomy.sql_dump import SqlDumpSource, iter_created_tables, iter_insert_statements
 from tests.conftest import FIXTURES
 
 

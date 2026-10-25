@@ -6,9 +6,9 @@ from typing import Any
 import pytest
 
 from taxonomy_pipeline.config import DatasetConfig, MetricConfig, PipelineConfig
-from taxonomy_pipeline.definitions import METRIC_DEFINITIONS_VERSION
 from taxonomy_pipeline.models import MetricResult, RunReport
 from taxonomy_pipeline.pipeline import read_report, result_labels, run_pipeline, write_report
+from taxonomy_pipeline.quality.definitions import METRIC_DEFINITIONS_VERSION
 from tests.conftest import FIXTURES
 
 

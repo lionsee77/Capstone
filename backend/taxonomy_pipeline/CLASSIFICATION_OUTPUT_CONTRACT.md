@@ -134,7 +134,7 @@ Resolution accepts unflagged classifications and applies explicit review decisio
 the combined snapshot and exports a CSV for review.
 
 - [JSON Schema](schemas/classification_output.schema.json)
-- [Python validator](src/taxonomy_pipeline/classification/models.py): `CLASSIFICATION_OUTPUTS.validate_json(payload)`
+- [Python validator](src/taxonomy_pipeline/enrichment/models.py): `CLASSIFICATION_OUTPUTS.validate_json(payload)`
 - [Case A fixture](tests/fixtures/classification/case_a.json)
 - [Case B fixture](tests/fixtures/classification/case_b.json)
 - [All fixture scenarios](tests/fixtures/classification/README.md)
@@ -146,7 +146,7 @@ stage does on its own.
 
 ## Temporary intake for current exports
 
-Use [validate_outputs](src/taxonomy_pipeline/classification/validation.py) to combine
+Use [validate_outputs](src/taxonomy_pipeline/enrichment/validation.py) to combine
 named JSON batches. Without adapter options, inputs must follow the nine-field contract.
 
 - `case_a_inputs`: legacy eight-field files; maps `original_tag` to `tag`.
@@ -183,7 +183,7 @@ The same call in Python:
 ```python
 from pathlib import Path
 
-from taxonomy_pipeline.classification.validation import validate_outputs
+from taxonomy_pipeline.enrichment.validation import validate_outputs
 from taxonomy_pipeline.config import load_config
 from taxonomy_pipeline.pipeline import load_datasets
 
@@ -221,7 +221,7 @@ nodes or write to the database.
 Pass the intake report to `deduplicate_outputs`:
 
 ```python
-from taxonomy_pipeline.classification.deduplication import deduplicate_outputs
+from taxonomy_pipeline.enrichment.deduplication import deduplicate_outputs
 
 deduplication = deduplicate_outputs(report)
 Path("deduplication.json").write_text(deduplication.model_dump_json(indent=2), encoding="utf-8")
@@ -245,7 +245,7 @@ The candidate's `similarity` is the largest available name score, not a probabil
 or approval; inspect the separate scores and placement context.
 
 Semantic checks are optional at runtime. Supply an existing
-`taxonomy_pipeline.metrics.saturation.SemanticMatcher` as `semantic_matcher` to use
+`taxonomy_pipeline.matching.semantic.SemanticMatcher` as `semantic_matcher` to use
 the shared embedding implementation. Without a matcher, name/lexical checks run and
 `skipped_checks.semantic` explains the omission. Matcher failures likewise retain
 name-based results with an explicit finding. `complete` requires readable input files
@@ -255,7 +255,7 @@ are resolved. No baseline tag comparison, database writes, or preview constructi
 ## Resolve reviewed tags and links
 
 Use `resolve_outputs(deduplication, taxonomy, decisions)` from
-`taxonomy_pipeline.classification.resolution`. This consumes the shared deduplication
+`taxonomy_pipeline.enrichment.resolution`. This consumes the shared deduplication
 report, independent of producer filenames, branch formats, and source dataset names.
 The nine-field producer contract is unchanged.
 
@@ -340,8 +340,8 @@ to empty. Automatic acceptance includes all supplied paths for unflagged tags. `
 cannot approve links. Reuse preserves the baseline label.
 
 ```python
-from taxonomy_pipeline.classification.models import ReviewDecision, TaxonomyPath
-from taxonomy_pipeline.classification.resolution import resolve_outputs
+from taxonomy_pipeline.enrichment.models import ReviewDecision, TaxonomyPath
+from taxonomy_pipeline.enrichment.resolution import resolve_outputs
 
 # Example approval for a source identity present in the deduplication report.
 decision = ReviewDecision(
@@ -384,8 +384,8 @@ This stage returns proposed changes without modifying the baseline or writing to
 Build the preview from resolution and the same baseline, then export it:
 
 ```python
-from taxonomy_pipeline.classification.preview import build_preview
-from taxonomy_pipeline.classification.export import export_preview_csv
+from taxonomy_pipeline.enrichment.preview import build_preview
+from taxonomy_pipeline.enrichment.export import export_preview_csv
 
 preview = build_preview(resolution, taxonomy)
 export_preview_csv(preview, "preview.csv")

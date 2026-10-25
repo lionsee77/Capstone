@@ -4,7 +4,7 @@
 
 This directory contains the evaluator for saved Case B model outputs. The
 runtime prompt is defined in
-`src/taxonomy_pipeline/classification/case_b.py`; this directory does not keep
+`src/taxonomy_pipeline/enrichment/case_b.py`; this directory does not keep
 separate prompt copies. Generated model outputs and evaluation summaries are
 ignored because they are paid-run artifacts.
 

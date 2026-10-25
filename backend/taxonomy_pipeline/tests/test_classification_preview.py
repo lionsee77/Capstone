@@ -7,12 +7,12 @@ from typing import Any
 
 import pytest
 
-from taxonomy_pipeline.classification.deduplication import deduplicate_outputs
-from taxonomy_pipeline.classification.models import MergePreview, ResolutionReport, ReviewDecision, TaxonomyPath
-from taxonomy_pipeline.classification.preview import build_preview
-from taxonomy_pipeline.classification.resolution import resolve_outputs
-from taxonomy_pipeline.classification.validation import validate_outputs
-from taxonomy_pipeline.datasets.base import TaxonomyDataset
+from taxonomy_pipeline.enrichment.deduplication import deduplicate_outputs
+from taxonomy_pipeline.enrichment.models import MergePreview, PlacementPath, ResolutionReport, ReviewDecision
+from taxonomy_pipeline.enrichment.preview import build_preview
+from taxonomy_pipeline.enrichment.resolution import resolve_outputs
+from taxonomy_pipeline.enrichment.validation import validate_outputs
+from taxonomy_pipeline.taxonomy.base import TaxonomyDataset
 
 FIXTURES = Path(__file__).parent / "fixtures" / "classification"
 
@@ -36,7 +36,7 @@ def approve(rows: list[dict[str, Any]], **changes: Any) -> ReviewDecision:
     members = {(row["source_dataset"], row["tag_id"]) for row in rows}
     return ReviewDecision(
         members=[{"source_dataset": source, "tag_id": identifier} for source, identifier in sorted(members)],
-        reason="Reviewed", **(dict(action="create", approved_paths=[TaxonomyPath(
+        reason="Reviewed", **(dict(action="create", approved_paths=[PlacementPath(
             service=row["service"], category=row["category"], speciality=row["speciality"],
         ) for row in rows]) | changes),
     )

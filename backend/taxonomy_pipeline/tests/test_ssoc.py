@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 from openpyxl import Workbook
 
-from taxonomy_pipeline.datasets.ssoc import HEADERS, SHEET, SsocSource
+from taxonomy_pipeline.taxonomy.references.ssoc import HEADERS, SHEET, SsocSource
 
 
 def write_workbook(tmp_path, rows, sheet=SHEET, headers=HEADERS):

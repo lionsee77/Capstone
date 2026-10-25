@@ -3,9 +3,9 @@ from __future__ import annotations
 
 import pytest
 
-from taxonomy_pipeline.classification.case_a import CaseAError, run_case_a
-from taxonomy_pipeline.classification.models import CLASSIFICATION_OUTPUTS
-from taxonomy_pipeline.datasets.base import TaxonomyDataset
+from taxonomy_pipeline.enrichment.case_a import CaseAError, run_case_a
+from taxonomy_pipeline.enrichment.models import CLASSIFICATION_OUTPUTS
+from taxonomy_pipeline.taxonomy.base import TaxonomyDataset
 
 
 def _datasets() -> dict[str, TaxonomyDataset]:

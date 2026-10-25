@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 from experiments.golden_run import StubModel, compare
-from taxonomy_pipeline.classification.case_b import build_prompt, classify_batch
+from taxonomy_pipeline.enrichment.case_b import build_prompt, classify_batch
 
 
 def test_the_stub_model_answers_every_tag_in_a_real_case_b_prompt_the_same_way_each_time() -> None:

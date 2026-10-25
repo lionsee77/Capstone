@@ -9,8 +9,8 @@ from types import SimpleNamespace
 import pytest
 from openpyxl import Workbook
 
-from taxonomy_pipeline.classification import case_b
-from taxonomy_pipeline.classification.case_b import (
+from taxonomy_pipeline.enrichment import case_b
+from taxonomy_pipeline.enrichment.case_b import (
     CaseBError,
     baseline_hierarchy,
     classify_batch,
@@ -18,8 +18,8 @@ from taxonomy_pipeline.classification.case_b import (
     run_case_b,
     to_contract_records,
 )
-from taxonomy_pipeline.classification.models import CLASSIFICATION_OUTPUTS
-from taxonomy_pipeline.datasets.base import TaxonomyDataset
+from taxonomy_pipeline.enrichment.models import CLASSIFICATION_OUTPUTS
+from taxonomy_pipeline.taxonomy.base import TaxonomyDataset
 
 PROPOSAL = {
     "tag": "Skill", "tag_id": "3001", "action": "assign_existing", "service": "Industry", "category": "Banking",

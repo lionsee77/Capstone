@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from taxonomy_pipeline.classification.models import (
+from taxonomy_pipeline.enrichment.models import (
     CLASSIFICATION_OUTPUTS,
     CanonicalMapping,
     ClassificationOutput,
@@ -23,7 +23,7 @@ from taxonomy_pipeline.classification.models import (
     ValidationFinding,
     ValidationReport,
 )
-from taxonomy_pipeline.datasets.base import TaxonomyDataset
+from taxonomy_pipeline.taxonomy.base import TaxonomyDataset
 
 FIXTURES = Path(__file__).parent / "fixtures" / "classification"
 

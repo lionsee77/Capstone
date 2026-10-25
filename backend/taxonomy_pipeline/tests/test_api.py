@@ -5,7 +5,7 @@ import time
 from fastapi.testclient import TestClient
 
 from taxonomy_pipeline.api.app import app
-from taxonomy_pipeline.definitions import METRIC_DEFINITIONS_VERSION
+from taxonomy_pipeline.quality.definitions import METRIC_DEFINITIONS_VERSION
 from tests.conftest import FIXTURES
 
 
@@ -25,8 +25,13 @@ def test_list_metrics_is_self_describing():
     response = client.get("/metrics")
     assert response.status_code == 200
     body = response.json()
-    assert {"integrity", "depth", "breadth", "saturation"} <= body.keys()
+    assert body.keys() == {"integrity", "depth", "breadth", "saturation"}
     assert "description" in body["integrity"]
+
+
+def test_case_as_placement_step_is_not_listed_as_a_metric():
+    # It places tags rather than scoring a taxonomy; case-a calls it directly.
+    assert "category_adaptation" not in TestClient(app).get("/metrics").json()
 
 
 def test_create_and_poll_a_run(isolated_db):

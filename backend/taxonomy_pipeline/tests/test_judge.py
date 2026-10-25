@@ -5,7 +5,7 @@ from typing import Any
 
 import pytest
 
-from taxonomy_pipeline.metrics.judge import (
+from taxonomy_pipeline.matching.judge import (
     NONE_CHOICE,
     QUESTION_NAME,
     DecisionsJudge,
@@ -163,7 +163,7 @@ def test_an_unreadable_cache_is_refused(tmp_path: Path) -> None:
 
 
 def test_a_missing_key_is_a_clear_error(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    from taxonomy_pipeline.metrics import judge
+    from taxonomy_pipeline.matching import judge
 
     monkeypatch.setattr(judge, "ENV_FILE", tmp_path / "missing.env")
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)

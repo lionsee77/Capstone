@@ -4,8 +4,8 @@ from fastapi.testclient import TestClient
 
 from taxonomy_pipeline.api.app import app
 from taxonomy_pipeline.config import DatasetConfig, load_config
-from taxonomy_pipeline.datasets import load_dataset
 from taxonomy_pipeline.pipeline import run_pipeline
+from taxonomy_pipeline.taxonomy import load_dataset
 from tests.conftest import FIXTURES
 
 
