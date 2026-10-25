@@ -17,22 +17,23 @@ taxonomy-pipeline case-b --report report.json \
   --checkpoint experiments/results/case_b_v1.checkpoint.json
 
 python experiments/evaluate_case_b.py \
-  --baseline ../sql-files-nus \
   --report report.json \
-  --skillsfuture-sql ../skillsfuture/skillsfuture_taxonomy.sql \
   --output v1=experiments/results/case_b_v1.json \
   --output v2=experiments/results/case_b_v2.json \
   --summary experiments/results/comparison.json
 ```
 
-The evaluator reads the expected Case B IDs from `report.json`, then evaluates
-each saved output independently through the original
-`backend/skillsfuture/validate_classification_proposals.py`. Its
-`classification_validator` section contains validation errors, warnings,
-records needing review, and the validator output. No other validation pipeline
-is run by this evaluator. The summary does not compare prompts automatically;
-compare the per-version metrics manually, especially `error_count`,
-`records_needing_review`, `warning_count`, and the individual error messages.
+The evaluator reads the expected Case B IDs from `report.json`, then passes
+each saved output independently through the pipeline's own intake validation
+(`enrichment/validation.py`, the first stage of `merge-preview`), against the
+baseline dataset in `--config` (default `configs/original_vs_skillsfuture.yaml`,
+dataset `--baseline original`). Its `classification_validator` section holds
+validation's per-status `counts`, `findings_by_code`, `records_needing_review`,
+and `action_mismatches`: records whose Case B `action` disagrees with the path
+validation resolved (e.g. `assign_existing` for a speciality that doesn't
+exist). The summary does not compare prompts automatically; compare the
+per-version metrics manually, especially `action_mismatch_count`,
+`records_needing_review` and the finding codes.
 
 Confidence remains the model's estimate and is not treated as a calibrated
 probability. Never reuse a checkpoint after changing a prompt.
