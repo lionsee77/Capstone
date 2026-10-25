@@ -33,7 +33,7 @@ taxonomy_pipeline/
 ├── src/taxonomy_pipeline/            # laid out by bounded context; each imports only the ones below it
 │   ├── taxonomy/                     # the taxonomy model and its pluggable sources
 │   │   ├── __init__.py               #   source registry - register new `type:` values here
-│   │   ├── base.py                   #   TaxonomySource protocol, canonical TaxonomyDataset
+│   │   ├── base.py                   #   TaxonomySource protocol, canonical TaxonomyDataset, its Hierarchy (parent lookups)
 │   │   ├── sql_dump.py               #   reads plain .sql dump files
 │   │   └── references/               #   classification references a taxonomy is measured against
 │   │       ├── ssic.py               #     SSIC 2025 industry classification workbook

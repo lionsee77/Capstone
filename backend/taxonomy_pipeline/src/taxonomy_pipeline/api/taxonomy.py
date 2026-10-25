@@ -83,27 +83,13 @@ def search(
 
 def _tag_paths(dataset: TaxonomyDataset, tag_id: Any) -> list[TaxonomyPath]:
     """Every (service, category, speciality) chain this tag is linked to -
-    one per speciality, since a tag can sit under several."""
-    specialities_by_id = {row.get("id"): row for row in dataset.specialities}
-    categories_by_id = {row.get("id"): row for row in dataset.categories}
-    services_by_id = {row.get("id"): row for row in dataset.services}
-    paths = []
-    seen_speciality_ids: set[Any] = set()
-    for link in dataset.speciality_tags:
-        if link.get("tag_id") != tag_id:
-            continue
-        speciality_id = link.get("speciality_id")
-        speciality = specialities_by_id.get(speciality_id)
-        if speciality is None or speciality_id in seen_speciality_ids:
-            # A dangling link (no such speciality) carries no real path to
-            # show - same rows integrity.py counts as dangling_links rather
-            # than treating as a real relationship.
-            continue
-        seen_speciality_ids.add(speciality_id)
-        category = categories_by_id.get(speciality.get("category_id"))
-        service = services_by_id.get(category.get("service_id")) if category else None
-        paths.append(TaxonomyPath(service=_ref(service), category=_ref(category), speciality=_ref(speciality)))
-    return paths
+    one per speciality, since a tag can sit under several. A dangling link (no
+    such speciality) carries no real path to show - same rows integrity.py
+    counts as dangling_links rather than treating as a real relationship."""
+    return [
+        TaxonomyPath(service=_ref(path.service), category=_ref(path.category), speciality=_ref(path.speciality))
+        for path in dataset.hierarchy().tag_paths(tag_id)
+    ]
 
 
 def detail(dataset: TaxonomyDataset, level: ConceptLevel, concept_id: str) -> TaxonomyConceptDetail:
@@ -119,21 +105,18 @@ def detail(dataset: TaxonomyDataset, level: ConceptLevel, concept_id: str) -> Ta
             paths=_tag_paths(dataset, row.get("id")),
         )
 
-    categories_by_id = {r.get("id"): r for r in dataset.categories}
-    services_by_id = {r.get("id"): r for r in dataset.services}
+    hierarchy = dataset.hierarchy()
     if level == "services":
         path = TaxonomyPath(service=_ref(row))
         children = [_ref(c) for c in dataset.categories if c.get("service_id") == row.get("id")]
         tags: list[TaxonomyConceptRef] = []
     elif level == "categories":
-        service = services_by_id.get(row.get("service_id"))
-        path = TaxonomyPath(service=_ref(service), category=_ref(row))
+        path = TaxonomyPath(service=_ref(hierarchy.service_of(row)), category=_ref(row))
         children = [_ref(s) for s in dataset.specialities if s.get("category_id") == row.get("id")]
         tags = []
     else:  # specialities
-        category = categories_by_id.get(row.get("category_id"))
-        service = services_by_id.get(category.get("service_id")) if category else None
-        path = TaxonomyPath(service=_ref(service), category=_ref(category), speciality=_ref(row))
+        category = hierarchy.category_of(row)
+        path = TaxonomyPath(service=_ref(hierarchy.service_of(category)), category=_ref(category), speciality=_ref(row))
         speciality_id = row.get("id")
         tag_ids = {link.get("tag_id") for link in dataset.speciality_tags if link.get("speciality_id") == speciality_id}
         children = []
