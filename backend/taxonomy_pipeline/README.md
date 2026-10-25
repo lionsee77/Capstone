@@ -30,46 +30,64 @@ taxonomy_pipeline/
 ├── experiments/
 │   ├── evaluate_case_b.py            # compare saved Case B outputs across prompt versions
 │   └── golden_run.py                 # record every stage on the real data; diff two recordings (refactor check)
-├── src/taxonomy_pipeline/
-│   ├── datasets/                     # pluggable taxonomy and reference sources
+├── src/taxonomy_pipeline/            # laid out by bounded context; each imports only the ones below it
+│   ├── taxonomy/                     # the taxonomy model and its pluggable sources
 │   │   ├── __init__.py               #   source registry - register new `type:` values here
 │   │   ├── base.py                   #   TaxonomySource protocol, canonical TaxonomyDataset
 │   │   ├── sql_dump.py               #   reads plain .sql dump files
-│   │   ├── ssic.py                   #   SSIC 2025 industry classification workbook
-│   │   └── ssoc.py                   #   SSOC 2024 occupation classification workbook
-│   ├── metrics/                      # pluggable quality checks
+│   │   └── references/               #   classification references a taxonomy is measured against
+│   │       ├── ssic.py               #     SSIC 2025 industry classification workbook
+│   │       └── ssoc.py               #     SSOC 2024 occupation classification workbook
+│   ├── matching/                     # anything that answers "is this the same concept?"
+│   │   ├── names.py                  #   normalize, match_key, placeholder filter, lexical score matrix
+│   │   ├── semantic.py               #   SimilarityMatcher protocol + the sentence-model SemanticMatcher
+│   │   ├── embeddings.py             #   pinned sentence-model loader (one revision pin for every matcher)
+│   │   ├── preprocessing.py          #   breadth's label normalisation profiles
+│   │   ├── judge.py                  #   optional LLM judge (OpenAI Decisions API) for saturation's ambiguous concepts
+│   │   └── engine.py                 #   the comparison engine saturation and Case A share
+│   ├── quality/                      # pluggable quality checks that score one taxonomy
 │   │   ├── base.py                   #   Metric ABC
 │   │   ├── integrity.py              #   duplicates, orphans, dead ends
 │   │   ├── depth.py                  #   branching factor
 │   │   ├── breadth.py                #   coverage vs. a reference dataset
 │   │   ├── saturation.py             #   new-items curve across ordered incoming sources
-│   │   ├── judge.py                  #   optional LLM judge (OpenAI Decisions API) for saturation's ambiguous concepts
-│   │   ├── category_adaptation.py    #   Case A: place new tags by content, else via their source category (see below)
+│   │   ├── definitions.py            #   METRIC_DEFINITIONS_VERSION and check_comparable (see "Official metric definitions")
 │   │   └── registry.py               #   METRICS dict - register new metrics here
-│   ├── classification/               # Case A/B producers and the merge stages (see "Classification workflow")
+│   ├── providers/                    # what is specific to one external source
+│   │   └── skillsfuture.py           #   SkillsFuture tag-ID offset and unique-skills workbook
+│   ├── enrichment/                   # Case A/B producers and the merge stages (see "Classification workflow")
 │   │   ├── models.py                 #   ClassificationOutput contract + every stage's report model
 │   │   ├── routing.py                #   splits one saved saturation report into Case A / Case B tags
 │   │   ├── case_a.py                 #   Case A: category_adaptation -> contract records
+│   │   ├── category_adaptation.py    #   Case A: place new tags by content, else via their source category (see below)
 │   │   ├── from_category_adaptation.py #  serializes category_adaptation's placements into the contract
 │   │   ├── case_b.py                 #   Case B: LLM placement for tags with no source category
 │   │   ├── validation.py             #   merge 1: combine producer files, check paths against the baseline
 │   │   ├── deduplication.py          #   merge 2: group hierarchy paths, suggest duplicate tag pairs
 │   │   ├── resolution.py             #   merge 3: apply review decisions, assign temporary IDs
+│   │   ├── review.py                 #   hierarchy decisions applied to screened proposals
+│   │   ├── review_view.py            #   saved proposal review view behind `review-proposals` and /proposals
+│   │   ├── change_log.py             #   append submitted decisions to the run's local audit log
 │   │   ├── preview.py                #   merge 4: assemble and structurally check the combined taxonomy
 │   │   ├── export.py                 #   merge 5: preview -> CSV
 │   │   ├── runner.py                 #   chains merge 1-5 for `merge-preview`
 │   │   ├── bulk_decisions.py         #   `bulk-decide`: draft decisions for ambiguous tags by similarity
-│   │   └── integrate.py              #   reviewed merge run -> enriched snapshot (real IDs, additions.sql)
+│   │   ├── integrate.py              #   reviewed merge run -> enriched snapshot (real IDs, additions.sql)
+│   │   └── proposals/                #   proposed categories and specialities, until governance (PB06)
+│   │       ├── intake.py             #     collect proposed hierarchy paths
+│   │       ├── screening.py          #     screen them against the baseline's categories and specialities
+│   │       └── models.py             #     screening report shapes
 │   ├── config.py                     # YAML/JSON pipeline config (datasets + metrics + optional definitions pin)
-│   ├── models.py                     # shared reports, comparability checks, hierarchy groups, evidence references
-│   ├── matching.py                   # shared optional similarity protocol for merge and screening
-│   ├── definitions.py                # METRIC_DEFINITIONS_VERSION and check_comparable (see "Official metric definitions")
+│   ├── models.py                     # shared run reports and comparability checks
 │   ├── pipeline.py                   # run_pipeline(config) -> RunReport; reading/writing saved reports
 │   ├── db.py                         # SQLite run history
+│   ├── env.py                        # loads backend/.env for `serve`
 │   ├── api/
-│   │   ├── app.py                    #   FastAPI: /metrics, /runs, /taxonomy
+│   │   ├── app.py                    #   FastAPI: /metrics, /runs, /taxonomy, /proposals
+│   │   ├── proposals.py              #   /proposals: saved merge runs' proposal review view
+│   │   ├── security.py               #   API token and allowed data directories
 │   │   └── taxonomy.py               #   dataset resolution + search/detail queries behind /taxonomy
-│   └── cli.py                        # `taxonomy-pipeline run|check-comparable|serve|case-a|case-b|merge-preview|bulk-decide|integrate`
+│   └── cli.py                        # `taxonomy-pipeline run|check-comparable|serve|case-a|case-b|merge-preview|review-proposals|bulk-decide|integrate`
 ├── schemas/
 │   └── classification_output.schema.json # JSON Schema for the producer contract
 └── tests/
@@ -97,7 +115,7 @@ taxonomy snapshot. Nothing here writes to a database.
 
 ```text
 taxonomy-pipeline run --output judged_report.json   # saturation + judge, ONCE per round
-        │  ADD_CANDIDATE + REVIEW_AMBIGUOUS tags, split by parent_status (classification/routing.py)
+        │  ADD_CANDIDATE + REVIEW_AMBIGUOUS tags, split by parent_status (enrichment/routing.py)
         ├── HAS_PARENT ─► taxonomy-pipeline case-a ─► case_a_output.json
         └── NO_PARENT ──► taxonomy-pipeline case-b ─► case_b_output.json
                                       │
@@ -163,7 +181,7 @@ omitted when false, and resolution keeps such a tag pending until a reviewer
 decides. Extra fields (Case B's `action`, the `saturation_run_id` stamp) are
 allowed and ignored by the merge stages. Parse an array with
 `CLASSIFICATION_OUTPUTS.validate_json(payload)` from
-`taxonomy_pipeline.classification.models`; the published schema is
+`taxonomy_pipeline.enrichment.models`; the published schema is
 `schemas/classification_output.schema.json`. Field definitions, the merge
 stages' rules and the review-decision format are in the
 [classification output contract](CLASSIFICATION_OUTPUT_CONTRACT.md).
@@ -225,7 +243,7 @@ records, plus `valid_rate` and `review_rate`.
 - `--semantic-model all-MiniLM-L6-v2` adds meaning-based duplicate candidates
   (needs `.[semantic]`); without it, only name/spelling candidates are found and
   the preview is marked partial. The model loads at the revision pinned in
-  `metrics/embeddings.py`, as saturation and breadth do.
+  `matching/embeddings.py`, as saturation and breadth do.
 - Older exports go through temporary adapters: `--legacy-case-a FILE`,
   `--legacy-case-b FILE=SOURCE_DATASET`, and `--skip-case-a-handoffs`.
 - Exit code is non-zero if an input file is unreadable or the preview is
@@ -301,7 +319,7 @@ before #57 then makes `integrate` report `introduced.resolution_mismatch`. Rerun
 including complete proposals that intake held outside eligible tag resolution.
 
 ```text
-src/taxonomy_pipeline/proposals/
+src/taxonomy_pipeline/enrichment/proposals/
   models.py     # persisted proposal, match and screening shapes
   intake.py     # existing hierarchy groups -> stable proposal identities
   screening.py  # baseline candidates, parent-aware reuse and creation holds
@@ -385,7 +403,7 @@ storage and reviewer authentication/identity remain PB09 integration work. This
 command generates a preview and does not write to the taxonomy database.
 
 ```text
-src/taxonomy_pipeline/classification/
+src/taxonomy_pipeline/enrichment/
   models.py      # shared ReviewDecision and ReviewDecisionEvent shapes
   review.py      # validate hierarchy decisions and derive effective placements
   change_log.py  # append submitted decisions to the run's local audit log
@@ -396,8 +414,8 @@ src/taxonomy_pipeline/classification/
 Read a saved merge run to see each category/speciality proposal beside every
 screening match, with parent branches, concept IDs, match types, lexical and
 optional semantic scores. The CLI and API use the same `ProposalReviewReport`
-model in `classification/models.py` and the same reader in
-`classification/review_view.py`.
+model in `enrichment/models.py` and the same reader in
+`enrichment/review_view.py`.
 
 ```bash
 taxonomy-pipeline review-proposals --merge-run merge_runs/reviewed
@@ -454,9 +472,9 @@ Zod schemas. Review controls and screen layout remain follow-up UI work in #54.
 
 ```text
 src/taxonomy_pipeline/
-  classification/review_view.py # saved evidence -> shared review response
-  classification/models.py      # ProposalReviewItem / ProposalReviewReport
-  api/proposals.py               # read-only list/detail routes under a configured root
+  enrichment/review_view.py    # saved evidence -> shared review response
+  enrichment/models.py         # ProposalReviewItem / ProposalReviewReport
+  api/proposals.py             # read-only list/detail routes under a configured root
 ```
 
 ### Bulk decisions for ambiguous tags
@@ -621,11 +639,11 @@ neither taxonomy changed. A before/after comparison of an enriched taxonomy
 the pipeline makes that checkable:
 
 - **Every report records `metric_definitions_version`**, the version of every
-  scoring metric's formulas and defaults (`definitions.py`). Reports saved
+  scoring metric's formulas and defaults (`quality/definitions.py`). Reports saved
   before versioning have `null`: unknown, never assumed current.
 - **`configs/baseline_v1.yaml` pins the official settings.** Every setting that
   changes a result is written out, saturation's sentence model is pinned to a
-  revision (the one in `metrics/embeddings.py`'s `PINNED_REVISIONS`, which breadth
+  revision (the one in `matching/embeddings.py`'s `PINNED_REVISIONS`, which breadth
   also uses; a test fails if the config's copy drifts from it), and `metric_definitions_version: 1` makes a run fail if the code
   implements another version.
 - **The baseline of record is stored** in `baselines/baseline_v1.json.gz`. Run
@@ -711,7 +729,7 @@ Any change to how a scoring metric scores is a new definitions version. That
 includes a formula, a normalisation step, a matching tier, a default, or a
 pinned model or text profile.
 
-1. Bump `METRIC_DEFINITIONS_VERSION` in `definitions.py`.
+1. Bump `METRIC_DEFINITIONS_VERSION` in `quality/definitions.py`.
 2. Pin the new `definitions_snapshot()` in `tests/test_definitions.py` under
    the new number. That test fails on any changed default or pinned constant
    until you do. Formula changes have no such tripwire, so call them out in
@@ -815,7 +833,7 @@ inactive (`status='0'`) rows are counted in `matched_inactive`.
 ### Saturation settings
 
 Defaults come from `SaturationMetric.default_params`
-(`src/taxonomy_pipeline/metrics/saturation.py`); the last column is what
+(`src/taxonomy_pipeline/quality/saturation.py`); the last column is what
 `configs/original_vs_skillsfuture.yaml` uses.
 
 | Param | Default | Meaning | SkillsFuture config |
@@ -824,7 +842,7 @@ Defaults come from `SaturationMetric.default_params`
 | `incoming` | - | One dataset name or an ordered list; each is one point on the curve | `[skillsfuture]` |
 | `threshold` | 90 | RapidFuzz score (0-100) for a "close spelling"; never enough on its own | 90 |
 | `semantic_model` | none | Optional sentence-transformers model; without it only exact/spelling evidence is used | `all-MiniLM-L6-v2` |
-| `semantic_model_revision` | none | Hugging Face commit, branch or tag to load `semantic_model` at. Unset, a model pinned in `metrics/embeddings.py` (`all-MiniLM-L6-v2`, by its short or full id) loads at that pin, the same one breadth uses; any other model follows its default branch, which can move. The revision loaded is recorded in `details` | none (`configs/baseline_v1.yaml` writes the pin out) |
+| `semantic_model_revision` | none | Hugging Face commit, branch or tag to load `semantic_model` at. Unset, a model pinned in `matching/embeddings.py` (`all-MiniLM-L6-v2`, by its short or full id) loads at that pin, the same one breadth uses; any other model follows its default branch, which can move. The revision loaded is recorded in `details` | none (`configs/baseline_v1.yaml` writes the pin out) |
 | `semantic_threshold` | 0.70 | Cosine similarity for a meaning match; also used by the parent check | 0.70 |
 | `semantic_threshold_by_level` | `{}` | Per incoming level override of `semantic_threshold` for concept matching | `{specialities: 0.80}` |
 | `add_candidate_lexical_threshold` | 60 | `ADD_CANDIDATE` needs the best spelling score at every level below this | 60 |
@@ -1001,7 +1019,7 @@ from another. None matches an existing speciality by name: being
 ### Params
 
 Defaults come from `CategoryAdaptationMetric.default_params`
-(`src/taxonomy_pipeline/metrics/category_adaptation.py`).
+(`src/taxonomy_pipeline/enrichment/category_adaptation.py`).
 
 | Param | Default | Meaning |
 |---|---|---|
@@ -1052,10 +1070,10 @@ and a review candidate from its candidate category (`candidate_category_*`,
 `taxonomy-pipeline case-a` reads the tag IDs from a saved saturation report
 (`ADD_CANDIDATE` or `REVIEW_AMBIGUOUS`, + `HAS_PARENT`; see [Classification workflow](#classification-workflow)),
 runs `category_adaptation` on them, serializes the placements via
-`classification.from_category_adaptation.build_classification_outputs`, and
+`enrichment.from_category_adaptation.build_classification_outputs`, and
 validates the result against the contract before writing it out
 (`case_a_output.json` by default). `--semantic-model ''` runs it lexically only;
-a model pinned in `metrics/embeddings.py` loads at that pin.
+a model pinned in `matching/embeddings.py` loads at that pin.
 
 ```bash
 taxonomy-pipeline run --config configs/original_vs_skillsfuture.yaml --output judged_report.json
@@ -1262,13 +1280,13 @@ reported as absent (`TaxonomyDataset.has_table()`), so metrics can skip a
 check instead of passing it on no data.
 
 To add a new source type (a live MariaDB connection, a CSV export, ...):
-implement `TaxonomySource.load()` (see `datasets/base.py`) and register a
-builder for it in `datasets/__init__.py`. No other file changes.
+implement `TaxonomySource.load()` (see `taxonomy/base.py`) and register a
+builder for it in `taxonomy/__init__.py`. No other file changes.
 
 ## Plugging in a metric
 
-Subclass `Metric` (see `metrics/base.py`), implement `run(datasets, params)
--> MetricResult`, and add one line to `metrics/registry.py`. It's then
+Subclass `Metric` (see `quality/base.py`), implement `run(datasets, params)
+-> MetricResult`, and add one line to `quality/registry.py`. It's then
 runnable by `id` from any config and shows up in `GET /metrics`.
 
 Two things worth reusing rather than reimplementing when you do:

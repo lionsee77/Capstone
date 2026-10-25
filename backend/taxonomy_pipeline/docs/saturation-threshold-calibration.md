@@ -1,7 +1,7 @@
 # Saturation: calibrating the matching thresholds
 
 Reference notes for future work, not a description of current behaviour. The
-`saturation` metric's thresholds (`src/taxonomy_pipeline/metrics/saturation.py`,
+`saturation` metric's thresholds (`src/taxonomy_pipeline/quality/saturation.py`,
 `configs/original_vs_skillsfuture.yaml`) were set by judgement. These notes
 describe how to choose them from evidence instead: hand-label a sample of
 concept pairs, then pick each threshold for its measured accuracy.

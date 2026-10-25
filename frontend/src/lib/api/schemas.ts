@@ -65,7 +65,7 @@ export const metricComparisonSchema = z.object({
 export type MetricComparison = z.infer<typeof metricComparisonSchema>;
 
 /**
- * Mirrors `Comparability` (`definitions.check_comparable`): whether two runs were scored alike. A
+ * Mirrors `Comparability` (`quality.definitions.check_comparable`): whether two runs were scored alike. A
  * version comparison (#69) shows deltas only for pairs without issues, and none when `issues` isn't empty.
  */
 export const comparabilitySchema = z.object({
@@ -96,11 +96,11 @@ export const metricCatalogueSchema = z.record(
 );
 export type MetricCatalogue = z.infer<typeof metricCatalogueSchema>;
 
-/** Source types registered in `datasets/__init__.py`. */
+/** Source types registered in `taxonomy/__init__.py`. */
 export const datasetTypeSchema = z.enum(["sql_dump", "ssic", "ssoc"]);
 export type DatasetType = z.infer<typeof datasetTypeSchema>;
 
-/** Reference classifications load from a single workbook (`datasets/__init__.py`). */
+/** Reference classifications load from a single workbook (`taxonomy/__init__.py`). */
 const SINGLE_PATH_TYPES: ReadonlySet<DatasetType> = new Set(["ssic", "ssoc"]);
 
 export const datasetConfigSchema = z
@@ -139,7 +139,7 @@ export const createRunResponseSchema = z.object({
   status: z.literal("queued"),
 });
 
-/** Mirrors proposals/models.py; persisted as resolution.json's optional `screening` field. */
+/** Mirrors enrichment/proposals/models.py; persisted as resolution.json's optional `screening` field. */
 const proposalConceptLevelSchema = z.enum(["category", "speciality"]);
 const proposalConceptIdSchema = z.union([z.number().int(), z.string()]).nullable();
 
@@ -274,7 +274,7 @@ export function isTaxonomyDataset(dataset: DatasetSummary): boolean {
   return TAXONOMY_CONCEPT_KEYS.every((key) => key in dataset.counts);
 }
 
-/** Matches `datasets/base.py`'s CONCEPTS, minus `speciality_tags` (a join table, not a level). */
+/** Matches `taxonomy/base.py`'s CONCEPTS, minus `speciality_tags` (a join table, not a level). */
 export const conceptLevelSchema = z.enum(["services", "categories", "specialities", "tags"]);
 export type ConceptLevel = z.infer<typeof conceptLevelSchema>;
 
