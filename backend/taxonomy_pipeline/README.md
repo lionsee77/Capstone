@@ -419,7 +419,7 @@ pip install -e ".[dev]"
 `pip install -e .` makes the package importable and gives you the
 `taxonomy-pipeline` console command; `[dev]` additionally pulls in `pytest`,
 `httpx` (for the FastAPI test client) and `ruff`. Running Case B also needs
-the `[llm]` extra (`openai`, `python-dotenv`).
+the `[llm]` extra (`openai`).
 
 The supplied SkillsFuture comparison also enables optional semantic matching.
 Install it once with `pip install -e ".[dev,semantic]"`. The first semantic
@@ -1011,8 +1011,10 @@ taxonomy-pipeline serve --reload
 ```
 
 Every request needs the API token configured for that server, sent in an
-`Authorization: Bearer <token>` header. Set it in `backend/.env` (or the
-server's environment):
+`Authorization: Bearer <token>` header. Set it in `backend/.env`, which
+`taxonomy-pipeline serve` loads at startup, or in the server's environment,
+which wins over the file. (Starting `uvicorn taxonomy_pipeline.api.app:app`
+directly skips the file, so export the variables yourself in that case.)
 
 | Env var | Default | Meaning |
 |---|---|---|

@@ -107,6 +107,11 @@ def _cmd_check_comparable(args: argparse.Namespace) -> int:
 def _cmd_serve(args: argparse.Namespace) -> int:
     import uvicorn
 
+    from .env import load_env
+
+    # The API reads its token and data roots from the environment; load backend/.env first so settings
+    # written there apply. The --reload worker inherits this environment.
+    load_env()
     uvicorn.run("taxonomy_pipeline.api.app:app", host=args.host, port=args.port, reload=args.reload)
     return 0
 
