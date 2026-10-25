@@ -8,8 +8,8 @@ skill descriptions as context. Tags saturation could not confirm as new
 
 Proposal-only: writes JSON and CSV review files and never touches a database.
 Taxonomies come from the pipeline config, the same datasets saturation and Case A
-use. The OpenAI client is an optional dependency (`pip install -e ".[llm]"`) and
-is imported only when a run needs it, so this module imports without it.
+use. The OpenAI client comes from `llm.py`; the SDK is an optional dependency
+(`pip install -e ".[llm]"`) imported only when a run needs it, so this module imports without it.
 
 """
 from __future__ import annotations
@@ -20,6 +20,7 @@ import os
 from pathlib import Path
 from typing import Any
 
+from .. import llm
 from ..providers.skillsfuture import TAG_ID_OFFSET
 from ..taxonomy.base import TaxonomyDataset
 from .models import CLASSIFICATION_OUTPUTS
@@ -44,8 +45,6 @@ RESPONSE_SCHEMA = {
     }, "required": list(PROPOSAL_FIELDS), "additionalProperties": False}}},
     "required": ["proposals"], "additionalProperties": False,
 }
-# The tag IDs the SkillsFuture generator assigns: 3000 + position in the sorted unique-skills list.
-ENV_FILE = Path(__file__).resolve().parents[4] / ".env"
 
 
 class CaseBError(RuntimeError):
@@ -216,19 +215,13 @@ def write_outputs(records: list[dict[str, Any]], output: Path) -> None:
 
 def _openai_client(debug: bool) -> Any:
     try:
-        from dotenv import load_dotenv
-        from openai import AsyncOpenAI
-    except ImportError as exc:
-        raise CaseBError('Case B needs the optional LLM dependencies: pip install -e ".[llm]"') from exc
-    load_dotenv(ENV_FILE)
-    api_key = (os.getenv("OPENAI_API_KEY") or "").strip()
-    if not api_key or api_key in {"your-openai-api-key", "your-api-key"}:
-        raise CaseBError(f"Set a real OPENAI_API_KEY in {ENV_FILE}.")
-    base_url = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1").strip()
+        client = llm.openai_client("Case B", async_client=True)
+    except llm.LLMError as exc:
+        raise CaseBError(str(exc)) from exc
     if debug:
-        print(f"OpenAI endpoint: {base_url}")
+        print(f"OpenAI endpoint: {llm.base_url()}")
         print("API key loaded: yes")
-    return AsyncOpenAI(api_key=api_key, base_url=base_url)
+    return client
 
 
 def _load_checkpoint(path: Path, provenance: dict[str, Any]) -> dict[str, dict[str, Any]]:

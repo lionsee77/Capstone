@@ -14,8 +14,8 @@ which answers a `choice` question with a probability per option. Another judge
 
 Verdicts are cached on disk, keyed by the exact request, so rerunning a report
 gives the same numbers without paying again; a changed model, prompt or
-candidate list is a different key. The OpenAI SDK is the optional `llm` extra and
-is imported only when a `DecisionsJudge` builds its own client.
+candidate list is a different key. The client comes from `llm.py`, which imports the
+optional OpenAI SDK only when a `DecisionsJudge` builds its own client.
 """
 from __future__ import annotations
 
@@ -27,8 +27,8 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
 
-# backend/.env, the same file Case B reads its key from.
-ENV_FILE = Path(__file__).resolve().parents[4] / ".env"
+from .. import llm
+
 QUESTION_NAME = "same_concept"
 NONE_CHOICE = "none"
 # Bump when the wording below changes, so cached verdicts for the old wording are not reused.
@@ -135,20 +135,9 @@ def parse_response(response: Any, request: dict[str, Any]) -> JudgeVerdict:
 
 def _openai_client(max_retries: int) -> Any:
     try:
-        from dotenv import load_dotenv
-    except ImportError:
-        pass  # without python-dotenv the key can still come from the environment
-    else:
-        load_dotenv(ENV_FILE)
-    api_key = (os.getenv("OPENAI_API_KEY") or "").strip()
-    if not api_key or api_key in {"your-openai-api-key", "your-api-key"}:
-        raise JudgeError(f"the saturation judge needs a real OPENAI_API_KEY in {ENV_FILE} or the environment")
-    try:
-        from openai import OpenAI
-    except ImportError as exc:
-        raise JudgeError('the saturation judge needs the optional LLM dependencies: pip install -e ".[llm]"') from exc
-    base_url = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1").strip()
-    return OpenAI(api_key=api_key, base_url=base_url, max_retries=max_retries)
+        return llm.openai_client("the saturation judge", max_retries=max_retries)
+    except llm.LLMError as exc:
+        raise JudgeError(str(exc)) from exc
 
 
 class DecisionsJudge:

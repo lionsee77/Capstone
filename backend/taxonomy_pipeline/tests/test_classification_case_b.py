@@ -267,9 +267,10 @@ def test_missing_llm_dependencies_explain_the_extra(monkeypatch):
     import builtins
 
     real_import = builtins.__import__
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
 
     def without_openai(name, *args, **kwargs):
-        if name in {"openai", "dotenv"}:
+        if name == "openai":
             raise ImportError(name)
         return real_import(name, *args, **kwargs)
 

@@ -7,8 +7,8 @@ ignored and every request refused. Variables already set in the shell win over
 the file, so a one-off `TAXONOMY_API_AUTH=off taxonomy-pipeline serve` still
 works.
 
-Case B and the saturation judge still load the same file through their own
-`ENV_FILE` constants; folding them in here belongs to the #104 refactor.
+Case B and the saturation judge load it too, through `llm.py`, so this is the
+only place that knows where the file lives.
 """
 from __future__ import annotations
 

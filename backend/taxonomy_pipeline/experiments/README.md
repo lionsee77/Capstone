@@ -71,6 +71,6 @@ Everything else must match exactly, including each command's exit code and
 printed output (`commands.json`). It exits non-zero and prints the first
 difference in each file that changed.
 
-`golden_run.py` installs the stub by replacing `case_b._openai_client`. If a
-refactor moves the OpenAI client setup, update that one line in the same
-change.
+`golden_run.py` installs the stub by replacing `case_b._openai_client`, Case B's
+thin wrapper around `llm.openai_client`. If a refactor renames or removes that
+wrapper, update that one line in the same change.

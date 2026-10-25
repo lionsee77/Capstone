@@ -81,7 +81,8 @@ taxonomy_pipeline/
 │   ├── models.py                     # shared run reports and comparability checks
 │   ├── pipeline.py                   # run_pipeline(config) -> RunReport; reading/writing saved reports
 │   ├── db.py                         # SQLite run history
-│   ├── env.py                        # loads backend/.env for `serve`
+│   ├── env.py                        # loads backend/.env for `serve` and llm.py
+│   ├── llm.py                        # the one OpenAI client setup (judge + Case B): key check, base URL
 │   ├── api/
 │   │   ├── app.py                    #   FastAPI: /metrics, /runs, /taxonomy, /proposals
 │   │   ├── proposals.py              #   /proposals: saved merge runs' proposal review view

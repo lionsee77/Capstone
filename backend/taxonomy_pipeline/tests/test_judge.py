@@ -163,9 +163,9 @@ def test_an_unreadable_cache_is_refused(tmp_path: Path) -> None:
 
 
 def test_a_missing_key_is_a_clear_error(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    from taxonomy_pipeline.matching import judge
+    from taxonomy_pipeline import env
 
-    monkeypatch.setattr(judge, "ENV_FILE", tmp_path / "missing.env")
+    monkeypatch.setattr(env, "ENV_FILE", tmp_path / "missing.env")
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     with pytest.raises(JudgeError, match="OPENAI_API_KEY"):
         DecisionsJudge("m")
