@@ -20,6 +20,7 @@ from .models import (
     CanonicalTag,
     DeduplicationReport,
     PlacementPath,
+    ReasonCode,
     ResolutionReport,
     ResolvedHierarchyNode,
     ResolvedLink,
@@ -202,18 +203,29 @@ def _producer_review_reasons(tags: dict[SourceKey, TagProposal]) -> dict[SourceK
 # Retain every hierarchy, baseline and producer reason instead of overwriting earlier review context.
 def _combined_review_reasons(
     tags: dict[SourceKey, TagProposal], taxonomy: TaxonomyDataset, screening: ProposalScreeningReport,
-) -> dict[SourceKey, str]:
+) -> tuple[dict[SourceKey, str], dict[SourceKey, list[ReasonCode]]]:
+    """Each flagged tag's reason text, and the matching reason codes in the same order."""
     reasons: dict[SourceKey, list[str]] = {}
+    codes: dict[SourceKey, list[ReasonCode]] = {}
     for proposal in screening.proposals:
         if proposal.status == "review":
             reason = (f"Hierarchy screening: {' > '.join(proposal.path)}: {proposal.reason}. "
                       "See resolution.screening for candidates and scores.")
             for source in proposal.source_tags:
                 reasons.setdefault(source, []).append(reason)
-    for additional in (_baseline_match_reasons(tags, taxonomy), _producer_review_reasons(tags)):
-        for source, reason in additional.items():
+                codes.setdefault(source, []).append("hierarchy_review")
+    additional: tuple[tuple[ReasonCode, dict[SourceKey, str]], ...] = (
+        ("baseline_name_match", _baseline_match_reasons(tags, taxonomy)),
+        ("producer_flagged", _producer_review_reasons(tags)),
+    )
+    for code, found in additional:
+        for source, reason in found.items():
             reasons.setdefault(source, []).append(reason)
-    return {source: " ".join(dict.fromkeys(items)) for source, items in reasons.items()}
+            codes.setdefault(source, []).append(code)
+    return (
+        {source: " ".join(dict.fromkeys(items)) for source, items in reasons.items()},
+        {source: list(dict.fromkeys(items)) for source, items in codes.items()},
+    )
 
 
 # Accept supplied placements only when nothing flags the source: no incoming duplicate candidate, no
@@ -322,7 +334,8 @@ def resolve_outputs(
     effective = apply_hierarchy_decisions(screening, taxonomy, hierarchy_decisions)
     nodes = _resolve_hierarchy(report, taxonomy, tags, effective)
     blocked_paths = {tuple(proposal.path) for proposal in effective.proposals if proposal.blocks_creation}
-    flagged_reasons = _combined_review_reasons(tags, taxonomy, effective)
+    flagged_reasons, flagged_codes = _combined_review_reasons(tags, taxonomy, effective)
+    paired = {_source_key(ref) for pair in report.candidates for ref in (pair.left, pair.right)}
     defaults = _default_decisions(report, tags, prepared, flagged_reasons)
     canonical: dict[int | str, CanonicalTag] = {}
     mappings: list[CanonicalMapping] = []
@@ -346,6 +359,8 @@ def resolve_outputs(
             for member in decision.members:
                 key = _source_key(member)
                 flagged_reasons[key] = " ".join(filter(None, (flagged_reasons.get(key), reason)))
+                if "hierarchy_blocked" not in flagged_codes.setdefault(key, []):
+                    flagged_codes[key].append("hierarchy_blocked")
             if not approved:
                 continue
         if accepted:
@@ -366,6 +381,7 @@ def resolve_outputs(
                 source=source,
                 status="accepted" if accepted else "excluded" if decision.action == "exclude" else "deferred",
                 reason=f"{decision.reason} {flagged_reasons[key]}" if blocked else decision.reason,
+                reason_codes=list(flagged_codes[key]) if blocked else [],
                 unapproved_paths=[paths[path] for path in sorted(paths.keys() - approved)],
             )
     for key in sorted(tags.keys() - dispositions.keys()):
@@ -375,6 +391,7 @@ def resolve_outputs(
             reason=flagged_reasons.get(
                 key, "Potential duplicate: review whether to merge or keep this source tag separate",
             ),
+            reason_codes=[*flagged_codes.get(key, []), *(["duplicate_candidate"] if key in paired else [])],
             unapproved_paths=[paths[path] for path in sorted(paths)],
         )
     for tag in canonical.values():

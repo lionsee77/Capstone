@@ -60,6 +60,33 @@ def path(**changes: str) -> PlacementPath:
     return PlacementPath(**(dict(service="Subject", category="Computing", speciality="Languages") | changes))
 
 
+# Each pending tag records why it is held as codes, matching its reason text, so callers need not parse it.
+def test_dispositions_carry_a_reason_code_for_each_hold(baseline: TaxonomyDataset) -> None:
+    report = dedup([
+        row("name", "SQL"),
+        row("pair-1", "Payroll"), row("pair-2", "payroll!"),
+        row("flagged", "Fire prevention", needs_review=True),
+        row("plain", "Glassblowing"),
+    ], baseline)
+    result = resolve_outputs(report, baseline, [])
+    by_tag = {item.source.tag_id: item for item in result.dispositions}
+    assert by_tag["name"].reason_codes == ["baseline_name_match"]
+    assert by_tag["name"].reason.startswith("Potential duplicate: normalized name matches baseline tags")
+    assert by_tag["pair-1"].reason_codes == by_tag["pair-2"].reason_codes == ["duplicate_candidate"]
+    assert by_tag["flagged"].reason_codes == ["producer_flagged"]
+    assert by_tag["flagged"].reason.startswith("Producer requested review")
+    assert by_tag["plain"].status == "accepted" and by_tag["plain"].reason_codes == []
+
+
+# A merge run saved before reason codes still loads, with no codes.
+def test_a_disposition_saved_without_reason_codes_still_loads(baseline: TaxonomyDataset) -> None:
+    result = resolve_outputs(dedup([row("x", "Glassblowing")], baseline), baseline, [])
+    saved = json.loads(result.model_dump_json())
+    for item in saved["dispositions"]:
+        del item["reason_codes"]
+    assert ResolutionReport.model_validate(saved).dispositions[0].reason_codes == []
+
+
 # Merge a reviewed group across unrelated source datasets and retain every approved parent link.
 def test_confirmed_equivalents_merge_with_multiple_new_paths_and_source_evidence(baseline: TaxonomyDataset) -> None:
     report = dedup([
@@ -304,47 +331,6 @@ def test_invalid_review_extensions_are_rejected(action: str) -> None:
     if action != "reuse":
         with pytest.raises(ValidationError):
             decision(action=action, approved_paths=[path()])
-
-
-# Apply the same screening to legacy and current outputs, including the legacy Industry default's conflicts.
-def test_legacy_adapter_reports_use_the_same_resolution_entry_point() -> None:
-    baseline = TaxonomyDataset.model_validate_json((FIXTURES / "taxonomy.json").read_text(encoding="utf-8"))
-    intake = validate_outputs(
-        {name: (FIXTURES / name).read_text(encoding="utf-8") for name in ("legacy_case_a.json", "legacy_case_b.json")},
-        baseline, case_a_inputs={"legacy_case_a.json"}, case_b_sources={"legacy_case_b.json": "skillsfuture"},
-        skip_case_a_handoffs=True,
-    )
-    report = deduplicate_outputs(intake)
-    decisions = [ReviewDecision(
-        members=[tag.source], action="create", reason="Reviewed separately", approved_paths=[
-            PlacementPath(service=p.service, category=p.category, speciality=p.speciality) for p in tag.placements
-        ],
-    ) for tag in report.tags]
-    result = resolve_outputs(report, baseline, decisions)
-    assert [tag.name for tag in result.tags] == ["Quantum analysis"]
-    assert result.counts["omitted_input_records"] == 1
-    assert {item.source.tag_id: item.status for item in result.dispositions} == {
-        "42": "pending", "48": "pending", "49": "accepted",
-    }
-    assert all(node.path[0] == "Industry" for node in result.hierarchy)
-    assert {node.name for node in result.hierarchy} == {"Quantum science", "Quantum computing"}
-    blocked_categories = [
-        proposal for proposal in result.screening.proposals
-        if proposal.level == "category" and proposal.blocks_creation
-    ]
-    assert {proposal.name for proposal in blocked_categories} == {"Data analytics", "Biology"}
-    assert all(
-        any(match.concept.path[0] == "Subject" and not match.same_parent
-            and "normalized_name" in match.match_types for match in proposal.matches)
-        for proposal in blocked_categories
-    )
-    current = deduplicate_outputs(validate_outputs({
-        "current": json.dumps([output.model_dump() for output in intake.merged_outputs]),
-    }, baseline))
-    current_result = resolve_outputs(current, baseline, decisions)
-    assert current_result.tags == result.tags
-    assert current_result.hierarchy == result.hierarchy
-    assert current_result.dispositions == result.dispositions
 
 
 # Resolve the published current-contract fixture and review file through the full downstream sequence.

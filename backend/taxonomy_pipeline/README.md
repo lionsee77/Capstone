@@ -11,9 +11,10 @@ saturation run finds into the existing taxonomy (Case A and Case B) and
 merges both results into one reviewable preview - see
 [Classification workflow](#classification-workflow).
 
-The CLI and the API call the exact same `pipeline.run_pipeline` - there is
+The CLI and the API call the exact same `app.scoring.run_pipeline` - there is
 one implementation of "what a run does," not two. Every CLI command is a thin
-wrapper around one library function in the same way.
+wrapper around one use case in `app/` in the same way: the use case does the
+loading, checks and writes, and the CLI only parses flags and prints.
 
 ## Project structure
 
@@ -33,13 +34,14 @@ taxonomy_pipeline/
 ├── src/taxonomy_pipeline/            # laid out by bounded context; each imports only the ones below it
 │   ├── taxonomy/                     # the taxonomy model and its pluggable sources
 │   │   ├── __init__.py               #   source registry - register new `type:` values here
-│   │   ├── base.py                   #   TaxonomySource protocol, canonical TaxonomyDataset
+│   │   ├── base.py                   #   TaxonomySource protocol, canonical TaxonomyDataset, its Hierarchy (parent lookups)
 │   │   ├── sql_dump.py               #   reads plain .sql dump files
 │   │   └── references/               #   classification references a taxonomy is measured against
-│   │       ├── ssic.py               #     SSIC 2025 industry classification workbook
-│   │       └── ssoc.py               #     SSOC 2024 occupation classification workbook
+│   │       ├── workbook.py           #     the shared workbook loader and reference/record base models
+│   │       ├── ssic.py               #     SSIC 2025 industry classification: levels and code rule
+│   │       └── ssoc.py               #     SSOC 2024 occupation classification: levels and code rule
 │   ├── matching/                     # anything that answers "is this the same concept?"
-│   │   ├── names.py                  #   normalize, match_key, placeholder filter, lexical score matrix
+│   │   ├── names.py                  #   normalize, match_key, collation_key (which stage uses which), lexical scores
 │   │   ├── semantic.py               #   SimilarityMatcher protocol + the sentence-model SemanticMatcher
 │   │   ├── embeddings.py             #   pinned sentence-model loader (one revision pin for every matcher)
 │   │   ├── preprocessing.py          #   breadth's label normalisation profiles
@@ -54,7 +56,9 @@ taxonomy_pipeline/
 │   │   ├── definitions.py            #   METRIC_DEFINITIONS_VERSION and check_comparable (see "Official metric definitions")
 │   │   └── registry.py               #   METRICS dict - register new metrics here
 │   ├── providers/                    # what is specific to one external source
-│   │   └── skillsfuture.py           #   SkillsFuture tag-ID offset and unique-skills workbook
+│   │   ├── base.py                   #   SourceProvider ABC: per-tag context and display name for Case B
+│   │   ├── registry.py               #   PROVIDERS by name; `case-b --provider`
+│   │   └── skillsfuture.py           #   SkillsFuture: tag-ID offset, unique-skills workbook context
 │   ├── enrichment/                   # Case A/B producers and the merge stages (see "Classification workflow")
 │   │   ├── models.py                 #   ClassificationOutput contract + every stage's report model
 │   │   ├── routing.py                #   splits one saved saturation report into Case A / Case B tags
@@ -77,16 +81,19 @@ taxonomy_pipeline/
 │   │       ├── intake.py             #     collect proposed hierarchy paths
 │   │       ├── screening.py          #     screen them against the baseline's categories and specialities
 │   │       └── models.py             #     screening report shapes
+│   ├── app/                          # use cases: what every CLI command and API route calls
+│   │   ├── scoring.py                #   run_pipeline(config) -> RunReport; dataset/report I/O; check_runs; run history
+│   │   ├── enrichment.py             #   case_a, case_b, merge_preview, review_proposals, bulk_decide, integrate
+│   │   └── browse.py                 #   taxonomy search/detail over a past run's dataset (/taxonomy)
 │   ├── config.py                     # YAML/JSON pipeline config (datasets + metrics + optional definitions pin)
-│   ├── models.py                     # shared run reports and comparability checks
-│   ├── pipeline.py                   # run_pipeline(config) -> RunReport; reading/writing saved reports
+│   ├── models.py                     # shared run reports, comparability checks, API response shapes
 │   ├── db.py                         # SQLite run history
-│   ├── env.py                        # loads backend/.env for `serve`
+│   ├── env.py                        # loads backend/.env for `serve` and llm.py
+│   ├── llm.py                        # the one OpenAI client setup (judge + Case B): key check, base URL
 │   ├── api/
-│   │   ├── app.py                    #   FastAPI: /metrics, /runs, /taxonomy, /proposals
-│   │   ├── proposals.py              #   /proposals: saved merge runs' proposal review view
-│   │   ├── security.py               #   API token and allowed data directories
-│   │   └── taxonomy.py               #   dataset resolution + search/detail queries behind /taxonomy
+│   │   ├── app.py                    #   FastAPI: /metrics, /runs, /taxonomy routes over app/
+│   │   ├── proposals.py              #   /proposals: which merge runs a request may read, over app.enrichment
+│   │   └── security.py               #   API token and allowed data directories
 │   └── cli.py                        # `taxonomy-pipeline run|check-comparable|serve|case-a|case-b|merge-preview|review-proposals|bulk-decide|integrate`
 ├── schemas/
 │   └── classification_output.schema.json # JSON Schema for the producer contract
@@ -94,6 +101,83 @@ taxonomy_pipeline/
     └── fixtures/                     # tiny synthetic SQL dumps used by the tests
         └── classification/           #   synthetic producer outputs, taxonomy and review decisions
 ```
+
+## Moved in the bounded-context refactor (#104)
+
+The package was reorganised in two PRs: #110 moved files into the context
+folders above, and #111 added the interfaces (`app/`, `llm.py`, `providers/`
+adapters, the hierarchy helper). Pipeline outputs did not change - a golden run
+(`experiments/golden_run.py`) on the code before #110 and after #111 matches on
+every file, command output and Case B prompt, except the new `reason_codes`
+field in `resolution.json`. Paths below are under `src/taxonomy_pipeline/`.
+
+**Files**
+
+| Before | After |
+|---|---|
+| `datasets/__init__.py`, `base.py`, `sql_dump.py` | `taxonomy/` (same names) |
+| `datasets/ssic.py`, `ssoc.py` | `taxonomy/references/ssic.py`, `ssoc.py`, sharing the new `workbook.py` loader |
+| `metrics/base.py`, `registry.py`, `integrity.py`, `depth.py`, `breadth.py` | `quality/` (same names) |
+| `definitions.py` | `quality/definitions.py` |
+| `metrics/saturation.py` | split: `matching/engine.py` (comparison engine), `matching/names.py` (name keys, lexical scores), `quality/saturation.py` (the metric) |
+| `metrics/embeddings.py`, `judge.py`, `preprocessing.py` | `matching/` (same names) |
+| `matching.py` | `matching/semantic.py` |
+| `metrics/category_adaptation.py` | `enrichment/category_adaptation.py` (no longer a registered metric) |
+| `classification/*.py` | `enrichment/*.py` (same names) |
+| `proposals/` | `enrichment/proposals/` |
+| `pipeline.py` | `app/scoring.py` |
+| `api/taxonomy.py` | `app/browse.py` |
+
+**Logic**
+
+| What | Before | After |
+|---|---|---|
+| What a CLI command does (checks, file writes, warnings) | inside `cli.py` | `app/scoring.py`, `app/enrichment.py`; `cli.py` and `api/` only translate input/output |
+| OpenAI client setup, placeholder-key check | `metrics/judge.py` and `classification/case_b.py` | `llm.py` |
+| Loading `backend/.env` | three places | `env.py` only (via `llm.py` for the LLM) |
+| Service/category/speciality id lookups | rebuilt in saturation, Case A, `/taxonomy`, Case B | `TaxonomyDataset.hierarchy()` in `taxonomy/base.py` |
+| Name normalisation | `integrity.normalize`, `saturation.match_key`, `integrate._collation_key` | `matching/names.py` (`normalize`, `match_key`, `collation_key`; its docstring says which stage uses which) |
+| SkillsFuture specifics (`TAG_ID_OFFSET`, unique-skills workbook) | `classification/case_b.py`, `cli.py` | `providers/skillsfuture.py`, behind `providers/base.py` + `registry.py` |
+| `InputLocation`, `SourceTagRef`, `HierarchyGroup` | root `models.py` | `enrichment/models.py` |
+| Classification placement path | `TaxonomyPath` in `classification/models.py` | `PlacementPath` in `enrichment/models.py` (the API's `TaxonomyPath` keeps its name) |
+| Why a tag is pending | text prefix "Producer requested review" | `SourceDisposition.reason_codes` |
+| Reading a merge run's `run.json` | parsed by hand in `cli.py` | `MergeRunInfo` + `enrichment.runner.load_merge_run()` |
+| `GET /metrics`, `POST /runs`, `GET /runs` responses | plain dicts | `MetricInfo`, `RunCreated`, `RunSummary` in `models.py` |
+| Case B progress output | `print` | logging (`taxonomy_pipeline.enrichment.case_b`); the CLI shows it |
+
+**After pulling**, delete the old package folders git leaves behind (they hold only
+`__pycache__`, but let Python import the old names as empty packages):
+`rm -rf src/taxonomy_pipeline/{datasets,metrics,classification,proposals}`.
+
+**Import paths** - there are no compatibility shims, so update imports:
+
+```text
+taxonomy_pipeline.datasets[.x]        -> taxonomy_pipeline.taxonomy[.x]  (ssic/ssoc: taxonomy.references.x)
+taxonomy_pipeline.metrics.<metric>    -> taxonomy_pipeline.quality.<metric>
+taxonomy_pipeline.metrics.<embeddings|judge|preprocessing> -> taxonomy_pipeline.matching.<same>
+taxonomy_pipeline.matching            -> taxonomy_pipeline.matching.semantic
+taxonomy_pipeline.definitions         -> taxonomy_pipeline.quality.definitions
+taxonomy_pipeline.classification.x    -> taxonomy_pipeline.enrichment.x
+taxonomy_pipeline.proposals.x         -> taxonomy_pipeline.enrichment.proposals.x
+taxonomy_pipeline.pipeline            -> taxonomy_pipeline.app.scoring
+```
+
+**Removed**
+
+- The legacy Case A/B intake adapters (`LegacyClassificationOutput`,
+  `merge-preview --legacy-case-a/--legacy-case-b/--skip-case-a-handoffs`);
+  old-format files are now reported as invalid rows.
+- `backend/skillsfuture/validate_classification_proposals.py` -
+  `experiments/evaluate_case_b.py` uses `enrichment/validation.py` instead.
+- The `jsonschema` dependency, and `category_adaptation` from `GET /metrics`.
+
+**Changed calls**
+
+- `case-b` takes `--provider` (default: the `--incoming` dataset name) and
+  `--context` (`--unique` still works); `run_case_b(provider=..., context=...)`
+  replaces `unique_skills=...`.
+- `experiments/evaluate_case_b.py` takes `--config` and `--baseline <dataset
+  name>` instead of a SQL directory and `--skillsfuture-sql`.
 
 ## Classification workflow
 
@@ -190,8 +274,11 @@ stages' rules and the review-decision format are in the
 
 `case-b` asks an OpenAI model to place each parentless new tag into the
 baseline's existing categories and specialities, or to propose a new one,
-using the SkillsFuture unique-skills workbook (`--unique`, defaults to the one
-in `backend/skillsfuture/`) for skill descriptions. Both taxonomies come from
+using the incoming source's context for each tag. That comes from the source's
+provider (`--provider`, defaulting to the `--incoming` dataset name; see
+`providers/`): for SkillsFuture, the unique-skills workbook's skill
+descriptions (`--context`, or the older `--unique`, defaulting to the one in
+`backend/skillsfuture/`). Both taxonomies come from
 the pipeline config, the same datasets saturation and Case A use. Install the
 optional dependencies and set the key in `backend/.env` (copy
 `backend/.env.example`):
@@ -205,7 +292,9 @@ OPENAI_API_KEY=your-openai-api-key
 OPENAI_MODEL=gpt-4o-mini
 ```
 
-Options: `--batch-size` (default 5), `--model`, `--debug-response`,
+Options: `--batch-size` (default 5), `--model`, `--debug-response` (also
+shows the endpoint, model and each raw response; Case B logs its progress to
+the `taxonomy_pipeline.enrichment.case_b` logger, which the CLI prints),
 `--checkpoint`, `--output` (default `case_b_output.json`; a CSV is written next
 to it). Completed batches are checkpointed to a hidden file next to the output,
 so an interrupted run resumes without paying for finished tags, even with a
@@ -244,8 +333,8 @@ records, plus `valid_rate` and `review_rate`.
   (needs `.[semantic]`); without it, only name/spelling candidates are found and
   the preview is marked partial. The model loads at the revision pinned in
   `matching/embeddings.py`, as saturation and breadth do.
-- Older exports go through temporary adapters: `--legacy-case-a FILE`,
-  `--legacy-case-b FILE=SOURCE_DATASET`, and `--skip-case-a-handoffs`.
+- Inputs must follow the nine-field contract; files in the older eight- or
+  seven-field formats are reported as invalid rows, not adapted.
 - Exit code is non-zero if an input file is unreadable or the preview is
   blocked because the merge would introduce structural errors.
 
@@ -495,9 +584,11 @@ taxonomy-pipeline bulk-decide --merge-run merge_runs/<timestamp> --report judged
 | `--reuse-above Y` | `reuse` when the closest match (by meaning when the report has it, since a close spelling alone is unconfirmed; else by spelling) is one baseline *tag* scoring at least `Y`, linked at that same placement |
 
 - It only touches pending tags that saturation marked `REVIEW_AMBIGUOUS` and
-  that are held for nothing else. Tags in a duplicate candidate pair, tags
+  that are held for nothing else: their `resolution.json` disposition's
+  `reason_codes` is exactly `["producer_flagged"]`. Tags in a duplicate candidate pair, tags
   matching a baseline tag by name, hierarchy screening holds, Case A's review
   candidates for new tags, and tags already in `--decisions` are left as they are.
+  A merge run saved before `reason_codes` existed is read from its reason text instead.
 - The output starts with `--decisions` and every decision the merge run already
   applied (its `resolution.json` `decisions`, hierarchy decisions included), so
   applying the file alone never drops an earlier approval. A `--decisions` entry
@@ -1283,6 +1374,10 @@ To add a new source type (a live MariaDB connection, a CSV export, ...):
 implement `TaxonomySource.load()` (see `taxonomy/base.py`) and register a
 builder for it in `taxonomy/__init__.py`. No other file changes.
 
+If Case B should classify tags from the new source, also add a
+`SourceProvider` (see `providers/base.py`) supplying each tag's prompt context,
+and register it in `providers/registry.py` under the source's dataset name.
+
 ## Plugging in a metric
 
 Subclass `Metric` (see `quality/base.py`), implement `run(datasets, params)
@@ -1384,7 +1479,9 @@ kind) so metric tests don't depend on the real taxonomy data staying stable
 shape-wise. `tests/conftest.py`'s `isolated_db` fixture points `db.py` at a
 throwaway SQLite file per test - use it in any test that calls `db.save_run`
 or hits the API, so runs don't leak into your real `taxonomy_pipeline.sqlite3`
-or across tests.
+or across tests. Helpers several test modules share (e.g. `breadth_datasets`,
+`review_candidate_file`) also live in `conftest.py`; a test module never imports
+another test module.
 
 Ruff linting and the test suite run in CI (see the root
 `.github/workflows/ci.yml`).

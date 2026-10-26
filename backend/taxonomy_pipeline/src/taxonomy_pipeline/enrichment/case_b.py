@@ -2,29 +2,35 @@
 
 Saturation marks these tags `NO_PARENT` (see `routing.py`), so there is nothing
 in their source to adapt; an LLM proposes a category and
-speciality in the baseline taxonomy instead, using the SkillsFuture workbook's
-skill descriptions as context. Tags saturation could not confirm as new
-(`REVIEW_AMBIGUOUS`) are classified too, and their records flagged for review.
+speciality in the baseline taxonomy instead, using the context the source's
+provider (`providers/`, e.g. SkillsFuture's skill descriptions) adds to each
+tag. Tags saturation could not confirm as new (`REVIEW_AMBIGUOUS`) are
+classified too, and their records flagged for review.
 
 Proposal-only: writes JSON and CSV review files and never touches a database.
 Taxonomies come from the pipeline config, the same datasets saturation and Case A
-use. The OpenAI client is an optional dependency (`pip install -e ".[llm]"`) and
-is imported only when a run needs it, so this module imports without it.
+use. Progress is logged to `taxonomy_pipeline.enrichment.case_b` (raw model
+responses at DEBUG), never printed. The OpenAI client comes from `llm.py`; the SDK is an optional dependency
+(`pip install -e ".[llm]"`) imported only when a run needs it, so this module imports without it.
 
 """
 from __future__ import annotations
 
 import csv
 import json
+import logging
 import os
 from pathlib import Path
 from typing import Any
 
-from ..providers.skillsfuture import TAG_ID_OFFSET
+from .. import llm
+from ..providers.base import SourceProvider
+from ..providers.registry import get_provider
 from ..taxonomy.base import TaxonomyDataset
 from .models import CLASSIFICATION_OUTPUTS
 from .routing import RUN_ID_FIELD, case_b_tag_ids, load_saturation, mark_ambiguous
 
+logger = logging.getLogger(__name__)
 ACTIONS = ["assign_existing", "propose_new_speciality", "propose_new_category"]
 VALID_ACTIONS = set(ACTIONS)
 PROPOSAL_FIELDS = ("tag", "tag_id", "action", "service", "category", "speciality", "confidence", "reason")
@@ -44,8 +50,6 @@ RESPONSE_SCHEMA = {
     }, "required": list(PROPOSAL_FIELDS), "additionalProperties": False}}},
     "required": ["proposals"], "additionalProperties": False,
 }
-# The tag IDs the SkillsFuture generator assigns: 3000 + position in the sorted unique-skills list.
-ENV_FILE = Path(__file__).resolve().parents[4] / ".env"
 
 
 class CaseBError(RuntimeError):
@@ -68,7 +72,7 @@ def proposal_is_well_formed(proposal: dict[str, Any]) -> bool:
 
 
 async def classify_batch(
-    client: Any, prompt: str, batch: list[dict[str, Any]], model: str, *, debug: bool = False,
+    client: Any, prompt: str, batch: list[dict[str, Any]], model: str,
 ) -> list[dict[str, Any]]:
     """Call the model, retrying when it omits or invents tag IDs."""
     expected = {item["tag_id"] for item in batch}
@@ -79,9 +83,7 @@ async def classify_batch(
                 model=model, messages=[{"role": "user", "content": prompt}], temperature=0,
             )
             raw = response.choices[0].message.content or ""
-            if debug:
-                print("  Raw model response:")
-                print(raw[:4000] if raw else "  <empty response>")
+            logger.debug("  Raw model response:\n%s", raw[:4000] if raw else "  <empty response>")
             proposals = parse_json(raw).get("proposals", [])
             for proposal in proposals:
                 if isinstance(proposal, dict) and proposal.get("tag_id") in expected and proposal_is_well_formed(
@@ -95,62 +97,37 @@ async def classify_batch(
                 f"\nYour last response was incomplete. Return exactly one proposal for these missing tag_id "
                 f"values: {missing}. Do not include any other tag IDs."
             )
-            print(f"  Incomplete response; retrying ({attempt}/3), missing {len(missing)}")
+            logger.info("  Incomplete response; retrying (%d/3), missing %d", attempt, len(missing))
         except Exception as exc:  # noqa: BLE001 - retry transient API and response errors
-            print(f"  Invalid model response; retrying ({attempt}/3): {exc}")
+            logger.info("  Invalid model response; retrying (%d/3): %s", attempt, exc)
     raise CaseBError(f"Model failed to return one valid proposal for every tag in batch: {sorted(expected)}")
-
-
-def source_skills(path: str | Path) -> dict[str, dict[str, str]]:
-    """Skill title, description and type by SkillsFuture skill_id, for prompt context."""
-    from openpyxl import load_workbook
-
-    workbook = load_workbook(path, read_only=True, data_only=True)
-    try:
-        rows = workbook["Unique Skills List"].iter_rows(values_only=True)
-        headers = [str(value or "").strip() for value in next(rows)]
-        result = {}
-        for values in rows:
-            row = dict(zip(headers, values, strict=False))
-            skill_id = str(row.get("skill_id") or "").strip()
-            if skill_id:
-                result[skill_id] = {
-                    field: str(row.get(f"skill_{field}") or "").strip() for field in ("title", "description", "type")
-                }
-        return result
-    finally:
-        workbook.close()
 
 
 def baseline_hierarchy(
     baseline: TaxonomyDataset,
 ) -> tuple[list[str], list[dict[str, str]], list[dict[str, str]]]:
-    """Baseline services, service-scoped categories, and speciality paths for model placement."""
-    services = {str(row["id"]): str(row["name"]) for row in baseline.services}
-    categories = [
-        {
-            "service": services.get(str(row["service_id"]), ""),
+    """Baseline services, service-scoped categories, and speciality paths for model placement.
+
+    Parents come from `baseline.hierarchy()`, so a speciality's category and service are always
+    read from the same category row. A missing service shows as "", and a missing category as its id.
+    """
+    hierarchy = baseline.hierarchy()
+
+    def service_name(category: dict[str, Any] | None) -> str:
+        service = hierarchy.service_of(category)
+        return str(service["name"]) if service else ""
+
+    services = sorted(str(row["name"]) for row in hierarchy.services.values())
+    categories = [{"service": service_name(row), "name": str(row["name"])} for row in baseline.categories]
+    specialities = []
+    for row in baseline.specialities:
+        category = hierarchy.category_of(row)
+        specialities.append({
+            "service": service_name(category),
+            "category": str(category["name"]) if category else str(row["category_id"]),
             "name": str(row["name"]),
-        }
-        for row in baseline.categories
-    ]
-    category_names = {str(row["id"]): str(row["name"]) for row in baseline.categories}
-    specialities = [
-        {
-            "service": services.get(
-                next(
-                    (str(category["service_id"]) for category in baseline.categories
-                     if str(category["id"]) == str(row["category_id"])),
-                    "",
-                ),
-                "",
-            ),
-            "category": category_names.get(str(row["category_id"]), str(row["category_id"])),
-            "name": str(row["name"]),
-        }
-        for row in baseline.specialities
-    ]
-    return sorted(services.values()), sorted(categories, key=lambda item: (item["service"], item["name"])), specialities
+        })
+    return services, sorted(categories, key=lambda item: (item["service"], item["name"])), specialities
 
 
 def incoming_tags(incoming: TaxonomyDataset) -> dict[str, str]:
@@ -159,10 +136,11 @@ def incoming_tags(incoming: TaxonomyDataset) -> dict[str, str]:
 
 def build_prompt(
     services: list[str], categories: list[dict[str, str]], specialities: list[dict[str, str]],
-    batch: list[dict[str, Any]],
+    batch: list[dict[str, Any]], *, source_name: str,
 ) -> str:
+    """The classification prompt for one batch; `source_name` is the provider's `display_name`."""
     return (
-        "You are classifying incoming SkillsFuture skills into Ankit's taxonomy. Follow this decision procedure "
+        f"You are classifying incoming {source_name} skills into Ankit's taxonomy. Follow this decision procedure "
         "for every tag. First, inspect the supplied service/category/speciality hierarchy and choose the single "
         "best existing placement. If a suitable existing category and speciality exist under the same service, "
         "you MUST use action=assign_existing and copy both names exactly. Use action=propose_new_speciality "
@@ -171,12 +149,12 @@ def build_prompt(
         "propose a new category or speciality merely because the skill is specialised, and never propose a node "
         "whose name already appears in the supplied hierarchy under the relevant parent. The service, category, "
         "and speciality must form one consistent parent-child path. Do not choose a category from one service "
-        "and a speciality from another. The source tag remains a SkillsFuture tag, while the placement targets "
+        f"and a speciality from another. The source tag remains a {source_name} tag, while the placement targets "
         "Ankit's taxonomy. Copy the original skill title into the tag field exactly. Return exactly one proposal "
         "per tag_id and no commentary outside JSON.\n\nAllowed Ankit services:\n" + json.dumps(services)
         + "\nAnkit categories (each includes its parent service):\n" + json.dumps(categories)
         + "\nAnkit specialities (each includes its parent service and category):\n" + json.dumps(specialities)
-        + "\nSkillsFuture skills:\n" + json.dumps(batch)
+        + f"\n{source_name} skills:\n" + json.dumps(batch)
         + "\nReturn ONLY valid JSON matching this shape (no Markdown): " + json.dumps(RESPONSE_SCHEMA)
     )
 
@@ -214,21 +192,13 @@ def write_outputs(records: list[dict[str, Any]], output: Path) -> None:
         writer.writerows(records)
 
 
-def _openai_client(debug: bool) -> Any:
+def _openai_client() -> Any:
     try:
-        from dotenv import load_dotenv
-        from openai import AsyncOpenAI
-    except ImportError as exc:
-        raise CaseBError('Case B needs the optional LLM dependencies: pip install -e ".[llm]"') from exc
-    load_dotenv(ENV_FILE)
-    api_key = (os.getenv("OPENAI_API_KEY") or "").strip()
-    if not api_key or api_key in {"your-openai-api-key", "your-api-key"}:
-        raise CaseBError(f"Set a real OPENAI_API_KEY in {ENV_FILE}.")
-    base_url = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1").strip()
-    if debug:
-        print(f"OpenAI endpoint: {base_url}")
-        print("API key loaded: yes")
-    return AsyncOpenAI(api_key=api_key, base_url=base_url)
+        client = llm.openai_client("Case B", async_client=True)
+    except llm.LLMError as exc:
+        raise CaseBError(str(exc)) from exc
+    logger.debug("OpenAI endpoint: %s\nAPI key loaded: yes", llm.base_url())
+    return client
 
 
 def _load_checkpoint(path: Path, provenance: dict[str, Any]) -> dict[str, dict[str, Any]]:
@@ -287,15 +257,19 @@ async def run_case_b(
     *,
     baseline: str,
     incoming: str,
-    unique_skills: str | Path,
+    provider: SourceProvider | str,
     output: str | Path,
+    context: str | Path | None = None,
     checkpoint: str | Path | None = None,
     batch_size: int = 5,
     model: str | None = None,
-    debug: bool = False,
     client: Any = None,
 ) -> list[dict[str, Any]]:
     """Classify every Case B tag and write `output` (JSON) plus a CSV next to it.
+
+    `provider` (a `SourceProvider`, or a name registered in `providers/registry.py`)
+    adds each tag's source context to the prompt, read from `context` (default: the
+    provider's own default file).
 
     Completed batches are checkpointed, so an interrupted run resumes where it
     stopped, with any batch size; a successful run removes the checkpoint. The
@@ -305,6 +279,8 @@ async def run_case_b(
     for name in (baseline, incoming):
         if not isinstance(datasets.get(name), TaxonomyDataset):
             raise CaseBError(f"Dataset {name!r} is not a taxonomy loaded by this config")
+    if isinstance(provider, str):
+        provider = get_provider(provider)
     output = Path(output)
     checkpoint = Path(checkpoint) if checkpoint else output.with_name(f".{output.stem}.checkpoint.json")
     model = model or default_model()
@@ -315,15 +291,15 @@ async def run_case_b(
     if not input_tag_ids:
         raise CaseBError(f"None of the Case B tags in {report_path} exist in dataset {incoming!r}")
     ambiguous = sum(tag_id in saturation.ambiguous_matches() for tag_id in input_tag_ids)
-    print(f"Using {len(input_tag_ids)} Case B tag(s) from {report_path} (NO_PARENT; {ambiguous} need review)")
+    logger.info(
+        "Using %d Case B tag(s) from %s (NO_PARENT; %d need review)", len(input_tag_ids), report_path, ambiguous,
+    )
 
-    skills = source_skills(unique_skills)
-    tag_to_skill = {str(TAG_ID_OFFSET + index): skill_id for index, skill_id in enumerate(sorted(skills))}
+    contexts = provider.load_tag_context(context)
     services, categories, specialities = baseline_hierarchy(datasets[baseline])
     if client is None:
-        client = _openai_client(debug)
-    if debug:
-        print(f"Model: {model}")
+        client = _openai_client()
+    logger.debug("Model: %s", model)
 
     provenance = {"saturation_run_id": saturation.run_id, "incoming": incoming, "model": model}
     wanted = set(input_tag_ids)
@@ -333,17 +309,16 @@ async def run_case_b(
     # Batch only what is still missing, so resuming with a different --batch-size never resends finished tags.
     pending = [tag_id for tag_id in input_tag_ids if tag_id not in proposals]
     if proposals:
-        print(f"Resuming from {checkpoint}: {len(proposals)}/{len(input_tag_ids)} already classified")
+        logger.info("Resuming from %s: %d/%d already classified", checkpoint, len(proposals), len(input_tag_ids))
     for start in range(0, len(pending), batch_size):
         batch = []
         for tag_id in pending[start:start + batch_size]:
-            skill_id = tag_to_skill.get(tag_id)
-            batch.append({"tag_id": tag_id, "title": tags[tag_id], "skill_id": skill_id, **skills.get(skill_id, {})})
-        prompt = build_prompt(services, categories, specialities, batch)
-        for proposal in await classify_batch(client, prompt, batch, model, debug=debug):
+            batch.append({"tag_id": tag_id, "title": tags[tag_id], **provider.context_for(contexts, tag_id)})
+        prompt = build_prompt(services, categories, specialities, batch, source_name=provider.display_name)
+        for proposal in await classify_batch(client, prompt, batch, model):
             proposals[proposal["tag_id"]] = proposal
         _save_checkpoint(checkpoint, provenance, proposals)
-        print(f"Processed {len(proposals)}/{len(input_tag_ids)}")
+        logger.info("Processed %d/%d", len(proposals), len(input_tag_ids))
 
     ordered = [proposals[tag_id] for tag_id in input_tag_ids]
     records = mark_ambiguous(
@@ -351,7 +326,7 @@ async def run_case_b(
     )
     CLASSIFICATION_OUTPUTS.validate_python(records)
     write_outputs(records, output)
-    print(f"Wrote {len(records)} classifications to {output} and {output.with_suffix('.csv')}")
+    logger.info("Wrote %d classifications to %s and %s", len(records), output, output.with_suffix(".csv"))
     if checkpoint.exists():
         checkpoint.unlink()
     return records

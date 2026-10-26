@@ -1,7 +1,10 @@
-"""Core orchestration: load the configured datasets, run the configured
-metrics, build a report. Both the CLI (`cli.py`) and the FastAPI app
-(`api/app.py`) call `run_pipeline` directly - neither talks to the other
-over HTTP, so there is exactly one implementation of "what a run does".
+"""Scoring use cases: run a config's metrics, save and load the report, compare two runs, and the
+run-history and metric-catalogue reads behind the `/metrics` and `/runs` routes.
+
+Both the CLI (`cli.py`) and the FastAPI app (`api/app.py`) call `run_pipeline`
+directly - neither talks to the other over HTTP, so there is exactly one
+implementation of "what a run does". The dataset loaders here are shared with
+the enrichment use cases (`app/enrichment.py`).
 """
 from __future__ import annotations
 
@@ -11,16 +14,78 @@ from collections import Counter
 from pathlib import Path
 from typing import Any
 
-from .config import PipelineConfig
-from .models import DatasetSummary, MetricResult, RunReport, utcnow
-from .quality.definitions import METRIC_DEFINITIONS_VERSION
-from .quality.registry import get_metric
-from .taxonomy import load_dataset
-from .taxonomy.base import LoadedDataset
+from .. import db
+from ..config import PipelineConfig, load_config
+from ..models import Comparability, DatasetSummary, MetricInfo, MetricResult, RunReport, RunSummary, utcnow
+from ..quality.definitions import METRIC_DEFINITIONS_VERSION, check_comparable
+from ..quality.registry import METRICS, get_metric
+from ..taxonomy import load_dataset
+from ..taxonomy.base import LoadedDataset, TaxonomyDataset
 
 
 def load_datasets(config: PipelineConfig) -> dict[str, LoadedDataset]:
     return {ds_config.name: load_dataset(ds_config) for ds_config in config.datasets}
+
+
+def load_taxonomies(config_path: str | Path, *names: str) -> dict[str, LoadedDataset]:
+    """Load only the named datasets from a config, so unrelated reference workbooks aren't required;
+    each must be a taxonomy."""
+    config = load_config(config_path)
+    config.datasets = [dataset for dataset in config.datasets if dataset.name in names]
+    datasets = load_datasets(config)
+    for name in names:
+        if not isinstance(datasets.get(name), TaxonomyDataset):
+            raise ValueError(f"{config_path} declares no taxonomy dataset named {name!r}")
+    return datasets
+
+
+def metric_catalogue() -> dict[str, MetricInfo]:
+    """Every registered metric's description and default params, so a dashboard needs no hardcoded list."""
+    return {
+        metric_id: MetricInfo(description=metric.description, default_params=metric.params_schema())
+        for metric_id, metric in METRICS.items()
+    }
+
+
+def queue_run(config: PipelineConfig) -> RunReport:
+    """Record a run as queued in run history, so its id can be polled before it starts."""
+    report = RunReport(status="queued")
+    db.save_run(report, config_json=config.model_dump_json())
+    return report
+
+
+def execute_queued_run(queued: RunReport, config: PipelineConfig) -> RunReport:
+    """Run a queued run's config, saving it as running first and as done or failed after."""
+    config_json = config.model_dump_json()
+    # Persist "running" before the (potentially slow) pipeline starts, so a
+    # poller sees queued -> running -> done|failed rather than a jump.
+    queued.status = "running"
+    db.save_run(queued, config_json=config_json)
+
+    report = run_pipeline(config)
+    report.run_id = queued.run_id  # keep the id the caller was given, not a fresh one
+    db.save_run(report, config_json=config_json)
+    return report
+
+
+def list_runs(limit: int = 50) -> list[RunSummary]:
+    """The most recent runs in run history, newest first, as summaries rather than full reports."""
+    return [RunSummary(run_id=r.run_id, status=r.status, created_at=r.created_at) for r in db.list_runs(limit=limit)]
+
+
+def get_run(run_id: str) -> RunReport | None:
+    """One run's report from run history, or None if there is no such run."""
+    record = db.get_run(run_id)
+    return None if record is None else RunReport.model_validate_json(record.report_json)
+
+
+def run_config(config_path: str | Path, *, save: bool = True) -> tuple[PipelineConfig, RunReport]:
+    """Score a config file, saving the run to SQLite run history unless `save` is false."""
+    config = load_config(config_path)
+    report = run_pipeline(config)
+    if save:
+        db.save_run(report, config_json=config.model_dump_json())
+    return config, report
 
 
 def run_pipeline(config: PipelineConfig) -> RunReport:
@@ -92,6 +157,34 @@ def read_report(path: str | Path) -> RunReport:
         except (OSError, EOFError, zlib.error) as exc:  # not gzip, truncated, or corrupted
             raise ValueError(f"{path} is not a readable gzip report: {exc}") from exc
     return RunReport.model_validate_json(data)
+
+
+def load_report(source: str) -> RunReport:
+    """A saved report file (`run --output`, `.json` or `.json.gz`), else a run ID from SQLite run history.
+
+    Read-only: a mistyped path fails as a missing file, and run history is only queried when it exists, so a
+    check never creates the database.
+    """
+    path = Path(source)
+    if path.is_file():
+        return read_report(path)
+    if "/" in source or "\\" in source or path.suffix in {".json", ".gz"}:
+        raise ValueError(f"report file {source} does not exist")
+    if not db.DEFAULT_DB_PATH.is_file():
+        raise ValueError(f"{source!r} is not a report file, and there is no run history at {db.DEFAULT_DB_PATH}")
+    report = get_run(source)
+    if report is None:
+        raise ValueError(f"{source!r} is neither a report file nor a run ID in run history")
+    return report
+
+
+def check_runs(
+    before: str, after: str, *, before_subject: str | None = None, after_subject: str | None = None,
+) -> tuple[RunReport, RunReport, Comparability]:
+    """Load two runs (files or run IDs) and check they were scored comparably."""
+    before_report, after_report = load_report(before), load_report(after)
+    check = check_comparable(before_report, after_report, before_subject=before_subject, after_subject=after_subject)
+    return before_report, after_report, check
 
 
 def result_labels(results: list[MetricResult]) -> list[str]:

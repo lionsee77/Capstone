@@ -222,7 +222,7 @@ def record(out: Path) -> None:
         _require(_cli(log, "case-a", "case-a", *datasets, "--report", "report.json", "--semantic-model", "",
                       "--output", "case_a_output.json"), "case-a", log)
         original_client = case_b._openai_client
-        case_b._openai_client = lambda debug: stub
+        case_b._openai_client = lambda: stub
         try:
             _require(_cli(log, "case-b", "case-b", *datasets, "--report", "report.json",
                           "--output", "case_b_output.json", "--batch-size", "20", "--model", "stub"), "case-b", log)

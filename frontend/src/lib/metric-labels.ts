@@ -6,7 +6,7 @@ import type { MetricResult } from "@/lib/api/schemas";
  * still don't tell apart (identical or unrecorded params) get their config
  * position too, `#<index>`, so every label in a report is unique.
  *
- * Mirrors `result_labels` in the pipeline's `pipeline.py`, so the CLI summary and
+ * Mirrors `result_labels` in the pipeline's `app/scoring.py`, so the CLI summary and
  * this dashboard name results the same way; keep the two in step.
  */
 export function metricLabels(results: MetricResult[]): string[] {

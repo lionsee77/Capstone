@@ -4,10 +4,25 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+import yaml
 
+from taxonomy_pipeline.app.scoring import (
+    check_runs,
+    execute_queued_run,
+    get_run,
+    list_runs,
+    load_report,
+    load_taxonomies,
+    metric_catalogue,
+    queue_run,
+    read_report,
+    result_labels,
+    run_config,
+    run_pipeline,
+    write_report,
+)
 from taxonomy_pipeline.config import DatasetConfig, MetricConfig, PipelineConfig
 from taxonomy_pipeline.models import MetricResult, RunReport
-from taxonomy_pipeline.pipeline import read_report, result_labels, run_pipeline, write_report
 from taxonomy_pipeline.quality.definitions import METRIC_DEFINITIONS_VERSION
 from tests.conftest import FIXTURES
 
@@ -174,3 +189,81 @@ def test_label_values_keep_objects_booleans_and_nulls_readable() -> None:
         "depth (by_level={specialities:0.75,tags:0.8}, cross_level=true, model=null)",
         "depth (by_level={tags:0.9}, cross_level=false, model=m)",
     ]
+
+
+def _config_file(tmp_path: Path) -> Path:
+    path = tmp_path / "config.yaml"
+    path.write_text(yaml.safe_dump({
+        "datasets": [
+            {"name": "original", "paths": [str(FIXTURES / "mini_original.sql")]},
+            {"name": "ssic", "type": "ssic", "paths": [str(tmp_path / "missing.xlsx")]},
+        ],
+        "metrics": [{"id": "integrity", "params": {"dataset": "original"}}],
+    }), encoding="utf-8")
+    return path
+
+
+def test_load_taxonomies_loads_only_the_named_datasets(tmp_path: Path) -> None:
+    config = _config_file(tmp_path)
+    assert set(load_taxonomies(config, "original")) == {"original"}  # the missing workbook is never opened
+    with pytest.raises(ValueError, match="declares no taxonomy dataset named 'nope'"):
+        load_taxonomies(config, "original", "nope")
+
+
+def test_run_config_saves_to_run_history_unless_told_not_to(tmp_path: Path, isolated_db: Path) -> None:
+    from taxonomy_pipeline import db
+
+    config = tmp_path / "config.yaml"
+    config.write_text(yaml.safe_dump({
+        "datasets": [{"name": "original", "paths": [str(FIXTURES / "mini_original.sql")]}],
+        "metrics": [{"id": "integrity", "params": {"dataset": "original"}}],
+    }), encoding="utf-8")
+    _, unsaved = run_config(config, save=False)
+    assert unsaved.status == "done" and db.get_run(unsaved.run_id) is None
+    _, saved = run_config(config)
+    assert db.get_run(saved.run_id) is not None
+
+
+def test_load_report_reads_a_file_or_a_run_id_from_history(tmp_path: Path, isolated_db: Path) -> None:
+    from taxonomy_pipeline import db
+
+    report = RunReport(status="done")
+    path = tmp_path / "report.json"
+    write_report(report, path)
+    assert load_report(str(path)) == report
+    with pytest.raises(ValueError, match="there is no run history"):
+        load_report(report.run_id)
+    db.save_run(report, config_json="{}")
+    assert load_report(report.run_id).run_id == report.run_id
+    with pytest.raises(ValueError, match="does not exist"):
+        load_report(str(tmp_path / "missing.json"))
+
+
+def test_check_runs_loads_both_runs_and_compares_them(tmp_path: Path) -> None:
+    report = RunReport(status="done", metric_definitions_version=METRIC_DEFINITIONS_VERSION)
+    path = tmp_path / "report.json"
+    write_report(report, path)
+    before, after, check = check_runs(str(path), str(path), before_subject="original", after_subject="original")
+    assert before == after == report
+    assert check.before_run_id == check.after_run_id == report.run_id
+
+
+def test_the_metric_catalogue_describes_every_scoring_metric() -> None:
+    catalogue = metric_catalogue()
+    assert set(catalogue) == {"integrity", "depth", "breadth", "saturation"}
+    assert catalogue["integrity"].description and isinstance(catalogue["integrity"].default_params, dict)
+
+
+def test_a_queued_run_is_polled_through_history_until_it_finishes(isolated_db: Path) -> None:
+    config = PipelineConfig(
+        datasets=[DatasetConfig(name="original", paths=[str(FIXTURES / "mini_original.sql")])],
+        metrics=[MetricConfig(id="integrity", params={"dataset": "original"})],
+    )
+    queued = queue_run(config)
+    assert get_run(queued.run_id).status == "queued"
+    assert [(row.run_id, row.status) for row in list_runs()] == [(queued.run_id, "queued")]
+
+    finished = execute_queued_run(queued, config)
+
+    assert finished.run_id == queued.run_id and get_run(queued.run_id).status == "done"
+    assert get_run("missing") is None

@@ -53,19 +53,10 @@ class SourceParents:
     """Resolves each row's parents inside its own source dataset only."""
 
     def __init__(self, dataset: TaxonomyDataset):
-        self.services = {row.get("id"): row for row in dataset.services}
-        self.categories = {row.get("id"): row for row in dataset.categories}
-        self.specialities = {row.get("id"): row for row in dataset.specialities}
-        self.tag_specialities: dict[Any, list[Any]] = {}
-        for link in dataset.speciality_tags:
-            self.tag_specialities.setdefault(link.get("tag_id"), []).append(link.get("speciality_id"))
+        self.hierarchy = dataset.hierarchy()
 
     def lookup(self, level: str, row: dict[str, Any]) -> list[dict[str, Any] | None]:
-        if level == "categories":
-            return [self.services.get(row.get("service_id"))]
-        if level == "specialities":
-            return [self.categories.get(row.get("category_id"))]
-        return [self.specialities.get(sid) for sid in self.tag_specialities.get(row.get("id"), [])]
+        return self.hierarchy.parents(level, row)
 
     def classify(self, level: str, rows: list[dict[str, Any]]) -> dict[str, Any]:
         parents: dict[Any, dict[str, Any]] = {}

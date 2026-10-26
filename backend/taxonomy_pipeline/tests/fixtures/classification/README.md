@@ -9,8 +9,7 @@ Synthetic data for developing validation and merge previews without Lionel's rep
 | `case_b.json` | AI placements, overlap within and across branches, and two distinct meanings of Python |
 | `unresolved.json` | No proposed placement; reason retained |
 | `invalid_placements.json` | Historical filename: paths absent from the baseline, now accepted as proposed additions |
-| `legacy_case_a.json` | Legacy classified placement and an all-null Case B handoff |
-| `legacy_case_b.json` | Legacy existing/new path proposals, without source dataset or service |
+| `previous_format.json` | The old eight-field Case A format, which intake now rejects |
 | `review_decisions.json` | Synthetic decisions merging visualization variants, reusing SQL, and keeping both Python meanings separate |
 
 Tag `42` appears in both datasets; its source identities must remain distinct.
@@ -20,8 +19,7 @@ after review.
 
 Missing category/speciality paths are valid proposed additions under the supplied
 parents. Matching names under another parent do not reuse or move that node.
-Legacy adapters temporarily assign Industry to populated placements; unresolved
-placements stay all-null. Tests cover ambiguity, source conflicts, and handoff skips.
+Unresolved placements stay all-null. Tests cover ambiguity and source conflicts.
 Deduplication tests use these fixtures for within/across-branch candidates, distinct
 same-name concepts, multiple placements, and preserved source identities. Synthetic
 matcher scores cover semantic-only candidates and similarity chains without downloads.

@@ -1,16 +1,16 @@
-"""Validate combined producer exports while legacy handoffs are being migrated.
+"""Validate combined producer exports against the classification contract.
 
-Adapters are explicit per input. Raw rows are preserved; missing categories and
-specialities are proposed additions under their supplied parents. Matching tags and approving merges remain
-separate operations. No upstream comparison report or database connection is needed.
+Every input follows the nine-field `ClassificationOutput` contract. Raw rows are
+preserved; missing categories and specialities are proposed additions under
+their supplied parents. Matching tags and approving merges remain separate
+operations. No upstream comparison report or database connection is needed.
 """
 from __future__ import annotations
 
 import json
 import math
-import re
 from collections import Counter, defaultdict
-from collections.abc import Collection, Mapping
+from collections.abc import Mapping
 from typing import Any
 
 from ..matching.names import normalize
@@ -20,17 +20,8 @@ from .models import (
     ClassificationOutput,
     InputLocation,
     IntakeRecord,
-    LegacyClassificationOutput,
     PlacementTarget,
 )
-
-_CASE_A_FIELDS = {
-    "source_dataset", "tag_id", "original_tag", "original_classification",
-    "category", "speciality", "confidence", "reason",
-}
-_CASE_B_FIELDS = {"tag_id", "tag", "action", "category", "speciality", "confidence", "reason"}
-_ACTIONS = {"assign_existing", "propose_new_category", "propose_new_speciality"}
-_HANDOFF = re.compile(r"\broute\s+to\s+case\s+b\b", re.IGNORECASE)
 
 
 # Reject ambiguous JSON objects instead of silently keeping the last duplicate key.
@@ -49,24 +40,6 @@ def _finite_number(value: str) -> float:
     if not math.isfinite(number):
         raise ValueError("JSON numbers must be finite")
     return number
-
-
-# Map either explicitly selected legacy format into the shared temporary intake shape.
-def _adapt(raw: Any, case: str, source_dataset: str | None) -> dict[str, Any]:
-    fields = _CASE_A_FIELDS if case == "case_a" else _CASE_B_FIELDS
-    if not isinstance(raw, dict) or not fields.issubset(raw):
-        raise ValueError(f"{case} requires these fields: {', '.join(sorted(fields))}")
-    mapped = {field: raw[field] for field in sorted(fields)}
-    if case == "case_a":
-        mapped["tag"] = mapped.pop("original_tag")
-    else:
-        action = mapped.pop("action")
-        if not isinstance(action, str) or action not in _ACTIONS:
-            raise ValueError("Unsupported Case B action")
-        mapped.update(source_dataset=source_dataset, original_classification="unclassified")
-    candidate = LegacyClassificationOutput.model_validate(mapped).model_dump()
-    candidate["service"] = "Industry" if candidate["category"] is not None else None
-    return candidate
 
 
 # Resolve one existing node only when its name and parent identify it unambiguously.
@@ -108,31 +81,16 @@ def resolve_placement_path(candidate: dict[str, Any], taxonomy: TaxonomyDataset)
 
 
 # Validate one row while retaining original data and distinguishing reused nodes from proposed additions.
-def _validate_record(
-    record: IntakeRecord, taxonomy: TaxonomyDataset, case: str | None,
-    source_dataset: str | None, skip_handoffs: bool,
-) -> None:
+def _validate_record(record: IntakeRecord, taxonomy: TaxonomyDataset) -> None:
     try:
-        if case:
-            candidate = _adapt(record.raw, case, source_dataset)
-        else:
-            candidate = ClassificationOutput.model_validate(record.raw).model_dump()
+        candidate = ClassificationOutput.model_validate(record.raw).model_dump()
     except (ValueError, TypeError) as exc:
         record.findings.append(f"invalid_output: {exc}")
         return
     record.candidate = candidate
-    if (
-        case == "case_a" and skip_handoffs and candidate["category"] is None
-        and _HANDOFF.search(candidate["reason"])
-    ):
-        record.status = "skipped"
-        record.findings.append("case_a_handoff: temporarily ignored pending producer correction")
-        return
     if candidate["category"] is None:
         record.status = "unresolved"
     else:
-        if case:
-            record.findings.append("temporary_service: Industry assumed for this legacy placement")
         try:
             record.target = resolve_placement_path(candidate, taxonomy)
         except ValueError as exc:
@@ -183,24 +141,14 @@ def _collapse_repeats(records: list[IntakeRecord]) -> None:
             seen[key] = record.origin
 
 
-# Combine named JSON batches using opt-in legacy adapters and return a complete row accounting.
-def validate_outputs(
-    inputs: Mapping[str, str | bytes], taxonomy: TaxonomyDataset, *,
-    case_a_inputs: Collection[str] = (), case_b_sources: Mapping[str, str] | None = None,
-    skip_case_a_handoffs: bool = False,
-) -> BatchValidationReport:
-    """Merge unique valid placements; raw rows, skips, and review findings remain in the report.
+# Combine named JSON batches and return a complete row accounting.
+def validate_outputs(inputs: Mapping[str, str | bytes], taxonomy: TaxonomyDataset) -> BatchValidationReport:
+    """Merge unique valid placements; raw rows and review findings remain in the report.
 
     `complete` means every input parsed as a JSON array, not that all placements
-    are valid or approved. Case B source names must be supplied by the caller.
+    are valid or approved. The `skipped` count stays in the report shape for
+    merge runs saved while the legacy adapters existed; nothing produces it now.
     """
-    case_b_sources = case_b_sources or {}
-    if (set(case_a_inputs) | set(case_b_sources)) - set(inputs):
-        raise ValueError("Adapter configuration refers to unknown inputs")
-    if set(case_a_inputs) & set(case_b_sources):
-        raise ValueError("An input cannot use both legacy adapters")
-    if any(not isinstance(value, str) or not value.strip() for value in case_b_sources.values()):
-        raise ValueError("Case B requires a nonblank source_dataset")
     records: list[IntakeRecord] = []
     errors: dict[str, str] = {}
     for name, payload in inputs.items():
@@ -213,10 +161,9 @@ def validate_outputs(
         except (ValueError, TypeError) as exc:
             errors[name] = str(exc)
             continue
-        case = "case_a" if name in case_a_inputs else "case_b" if name in case_b_sources else None
         for index, raw in enumerate(rows):
             record = IntakeRecord(origin=InputLocation(input_name=name, row_index=index), raw=raw)
-            _validate_record(record, taxonomy, case, case_b_sources.get(name), skip_case_a_handoffs)
+            _validate_record(record, taxonomy)
             records.append(record)
     _flag_conflicts(records)
     _collapse_repeats(records)

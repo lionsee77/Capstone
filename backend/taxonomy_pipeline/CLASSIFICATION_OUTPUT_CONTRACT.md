@@ -144,38 +144,24 @@ all of them in order and writes each report (see the
 [README](README.md#classification-workflow)). The Python snippets show what each
 stage does on its own.
 
-## Temporary intake for current exports
+## Intake
 
 Use [validate_outputs](src/taxonomy_pipeline/enrichment/validation.py) to combine
-named JSON batches. Without adapter options, inputs must follow the nine-field contract.
+named JSON batches. Every input must follow the nine-field contract; files in the
+older eight- or seven-field formats are rejected row by row (`invalid_output`),
+not adapted.
 
-- `case_a_inputs`: legacy eight-field files; maps `original_tag` to `tag`.
-- `case_b_sources`: legacy seven-field files mapped to their source dataset names;
-  sets `original_classification` to `unclassified` and keeps `action` in raw evidence.
-- Both adapters accept extra keys but select only their expected fields before mapping.
-  Extra values cannot override adapter mappings or the temporary service default.
-- Both adapters temporarily set `service` to `Industry` for populated placements,
-  recorded as a `temporary_service` finding. Unresolved placements remain all-null.
-  Current nine-field inputs retain their explicit service; this default only applies
-  to legacy exports until producers supply the field.
+- Extra keys are kept in each record's `raw` evidence but never reach the output.
 - Missing categories/specialities are valid proposed additions. The supplied service
   must exist. Ambiguous existing nodes and malformed matching taxonomy rows need review.
-- Case B actions remain raw evidence. `assign_existing`, `propose_new_category`, and
-  `propose_new_speciality` all pass through the same reuse/addition checks.
-- `skip_case_a_handoffs=True`: temporarily skips legacy Case A rows with all-null
-  placements and the explicit phrase `route to Case B` in their reason. Skips remain
-  in the report and do not participate in cross-branch conflict checks. Default: false.
+- The `skipped` count stays in the report for merge runs saved while the old
+  adapters' Case A handoff skip existed; nothing produces it now.
 
-From the command line, `merge-preview` maps these options to flags: plain
-`--input FILE` for nine-field files, `--legacy-case-a FILE`,
-`--legacy-case-b FILE=SOURCE_DATASET` and `--skip-case-a-handoffs`. Run from
-`backend/taxonomy_pipeline/`:
+From the command line, `merge-preview` takes one `--input FILE` per producer
+file. Run from `backend/taxonomy_pipeline/`:
 
 ```bash
 taxonomy-pipeline merge-preview --input case_a_output.json --input case_b_output.json
-# or, for exports made before the producers wrote nine fields:
-taxonomy-pipeline merge-preview --legacy-case-a old_case_a.json \
-    --legacy-case-b classification_proposals.json=skillsfuture --skip-case-a-handoffs
 ```
 
 The same call in Python:
@@ -185,7 +171,7 @@ from pathlib import Path
 
 from taxonomy_pipeline.enrichment.validation import validate_outputs
 from taxonomy_pipeline.config import load_config
-from taxonomy_pipeline.pipeline import load_datasets
+from taxonomy_pipeline.app.scoring import load_datasets
 
 config = load_config("configs/original_vs_skillsfuture.yaml")
 config.datasets = [dataset for dataset in config.datasets if dataset.name == "original"]
@@ -368,7 +354,10 @@ resolution = resolve_outputs(deduplication, taxonomy, [decision])
   produce a new tag ID; changing input order does not.
 - `ResolutionReport` contains approved hierarchy nodes, canonical tags, mappings,
   unique links, source dispositions, counts, decisions, and the full deduplication
-  evidence. Hierarchy nodes without approved links are omitted. Unapproved placements
+  evidence. Each disposition's `reason` explains in words why the tag was held or
+  flagged, and `reason_codes` lists the same reasons, in order, as codes to branch on:
+  `hierarchy_review`, `baseline_name_match`, `producer_flagged`, `hierarchy_blocked`
+  and `duplicate_candidate` (empty when nothing flagged it). Hierarchy nodes without approved links are omitted. Unapproved placements
   remain visible; repeated links are collapsed and baseline links marked `existing`.
 - Path reuse is rechecked against the supplied baseline. Changed or ambiguous targets
   require revalidation. A content fingerprint identifies the baseline used for resolution.

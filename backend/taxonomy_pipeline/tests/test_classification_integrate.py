@@ -6,17 +6,16 @@ from pathlib import Path
 
 import pytest
 
+from taxonomy_pipeline.app.scoring import load_datasets
 from taxonomy_pipeline.config import DatasetConfig, MetricConfig, PipelineConfig, load_config
 from taxonomy_pipeline.enrichment import integrate as integrate_module
 from taxonomy_pipeline.enrichment.integrate import IntegrationError, _additions_sql, integrate
 from taxonomy_pipeline.enrichment.models import PlacementPath, ResolutionReport, ReviewDecision
 from taxonomy_pipeline.enrichment.runner import load_decisions, run_merge_preview
-from taxonomy_pipeline.pipeline import load_datasets
 from taxonomy_pipeline.taxonomy.base import CONCEPTS, TaxonomyDataset
 from taxonomy_pipeline.taxonomy.sql_dump import SqlDumpSource, iter_insert_statements
-
-FIXTURES = Path(__file__).parent / "fixtures" / "classification"
-PRODUCER_FILES = [FIXTURES / "case_a.json", FIXTURES / "case_b.json"]
+from tests.conftest import CLASSIFICATION_FIXTURES as FIXTURES
+from tests.conftest import PRODUCER_FILES, approve_data_analytics, review_candidate_file
 
 
 def _literal(value: object) -> str:
@@ -211,8 +210,6 @@ def test_additions_round_trip_awkward_names_through_the_sql_parser():
 
 
 def test_refuses_flagged_review_candidates_until_a_reviewer_approves_one_path(tmp_path, baseline):
-    from tests.test_classification_runner import approve_data_analytics, review_candidate_file
-
     taxonomy = SqlDumpSource(baseline.name, baseline.paths).load()
     inputs = [review_candidate_file(tmp_path)]
 

@@ -1,4 +1,9 @@
-"""Expose saved merge runs within a configured directory, without accepting arbitrary server paths."""
+"""Expose saved merge runs within a configured directory, without accepting arbitrary server paths.
+
+Which directory a request may read is this module's job (the same kind of check
+as `security.py`'s data roots); reading the review view is the
+`app.enrichment.review_proposals` use case, the one `review-proposals` calls.
+"""
 from __future__ import annotations
 
 import os
@@ -8,9 +13,10 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import ValidationError
 
+from ..app import enrichment as use_cases
 from ..enrichment.models import ProposalReviewReport
 from ..enrichment.proposals.models import Level
-from ..enrichment.review_view import ProposalNotFound, load_review_view
+from ..enrichment.review_view import ProposalNotFound
 
 router = APIRouter(prefix="/proposals", tags=["proposals"])
 
@@ -39,7 +45,7 @@ def _read(
 ) -> ProposalReviewReport:
     directory = _merge_directory(merge_run)
     try:
-        return load_review_view(directory, proposal_id=proposal_id, level=level, offset=offset, limit=limit)
+        return use_cases.review_proposals(directory, proposal_id=proposal_id, level=level, offset=offset, limit=limit)
     except (FileNotFoundError, ProposalNotFound) as exc:
         raise HTTPException(status_code=404, detail="Merge run or proposal not found") from exc
     except ValidationError as exc:

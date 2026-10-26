@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import csv
 import json
+import logging
 from types import SimpleNamespace
 
 import pytest
@@ -19,6 +20,7 @@ from taxonomy_pipeline.enrichment.case_b import (
     to_contract_records,
 )
 from taxonomy_pipeline.enrichment.models import CLASSIFICATION_OUTPUTS
+from taxonomy_pipeline.providers.skillsfuture import SkillsFutureProvider
 from taxonomy_pipeline.taxonomy.base import TaxonomyDataset
 
 PROPOSAL = {
@@ -108,6 +110,16 @@ def test_baseline_hierarchy_names_each_speciality_by_its_category():
     ]
 
 
+def test_a_specialitys_category_and_service_come_from_the_same_category_row():
+    baseline = TaxonomyDataset(
+        name="dup", services=[{"id": 1, "name": "Industry"}, {"id": 2, "name": "Subject"}],
+        categories=[{"id": 5, "name": "First", "service_id": 1}, {"id": 5, "name": "Second", "service_id": 2}],
+        specialities=[{"id": 9, "name": "Leaf", "category_id": 5}],
+    )
+    _, _, specialities = baseline_hierarchy(baseline)
+    assert specialities == [{"service": "Subject", "category": "Second", "name": "Leaf"}]
+
+
 def test_classify_batch_retries_until_every_tag_has_a_proposal():
     client = StubClient("not json", _response(PROPOSAL), _response({**PROPOSAL, "tag_id": "3002"}))
     batch = [{"tag_id": "3001"}, {"tag_id": "3002"}]
@@ -130,7 +142,7 @@ def test_run_classifies_only_case_b_tags_and_writes_contract_records(tmp_path, w
 
     records = asyncio.run(run_case_b(
         _datasets(), saturation_report(CONCEPTS, run_id="sat-9"), baseline="original", incoming="skillsfuture",
-        unique_skills=workbook, output=output, client=client,
+        provider=SkillsFutureProvider(), context=workbook, output=output, client=client,
     ))
 
     assert [record["tag_id"] for record in records] == ["3001", "3002"]
@@ -169,7 +181,7 @@ def _answers(*tag_ids):
 def _run(report, output, client, **kwargs):
     return asyncio.run(run_case_b(
         _six_tag_datasets(), report, baseline="original", incoming="skillsfuture",
-        unique_skills=kwargs.pop("workbook"), output=output, client=client, **kwargs,
+        provider=SkillsFutureProvider(), context=kwargs.pop("workbook"), output=output, client=client, **kwargs,
     ))
 
 
@@ -181,6 +193,37 @@ class CrashAfter(StubClient):
             self.prompts.append(messages[0]["content"])
             raise ConnectionError("network down")
         return await super()._create(model=model, messages=messages, temperature=temperature)
+
+
+def test_run_accepts_a_registered_provider_by_name(tmp_path, workbook, saturation_report):
+    records = asyncio.run(run_case_b(
+        _datasets(), saturation_report(CONCEPTS), baseline="original", incoming="skillsfuture",
+        provider="skillsfuture", context=workbook, output=tmp_path / "out.json",
+        client=StubClient(_response(PROPOSAL, {**PROPOSAL, "tag_id": "3002"})),
+    ))
+    assert [record["tag_id"] for record in records] == ["3001", "3002"]
+
+
+def test_run_refuses_an_unregistered_provider_name(tmp_path, workbook, saturation_report):
+    with pytest.raises(ValueError, match="No source provider 'nope'"):
+        asyncio.run(run_case_b(
+            _datasets(), saturation_report(CONCEPTS), baseline="original", incoming="skillsfuture",
+            provider="nope", context=workbook, output=tmp_path / "out.json", client=StubClient(),
+        ))
+
+
+def test_run_logs_its_progress_instead_of_printing_it(tmp_path, workbook, saturation_report, caplog, capsys):
+    unresolved = {**PROPOSAL, "tag_id": "3002", "action": "propose_new_category", "category": "", "speciality": ""}
+    with caplog.at_level(logging.DEBUG, logger="taxonomy_pipeline.enrichment.case_b"):
+        _run(saturation_report(CONCEPTS), tmp_path / "out.json", StubClient(_response(PROPOSAL, unresolved)),
+             workbook=workbook)
+
+    messages = [record.getMessage() for record in caplog.records]
+    assert messages[0].startswith("Using 2 Case B tag(s) from")
+    assert "Processed 2/2" in messages and messages[-1].startswith("Wrote 2 classifications to")
+    assert any(record.levelno == logging.DEBUG and "Raw model response" in record.getMessage()
+               for record in caplog.records)
+    assert capsys.readouterr().out == ""
 
 
 def test_run_resumes_from_a_checkpoint_without_calling_the_model_again(tmp_path, workbook, saturation_report):
@@ -259,7 +302,7 @@ def test_run_rejects_report_tags_missing_from_the_incoming_dataset(tmp_path, wor
     with pytest.raises(CaseBError, match="exist in dataset 'skillsfuture'"):
         asyncio.run(run_case_b(
             _datasets(), saturation_report(concepts), baseline="original", incoming="skillsfuture",
-            unique_skills=workbook, output=tmp_path / "out.json", client=StubClient(),
+            provider=SkillsFutureProvider(), context=workbook, output=tmp_path / "out.json", client=StubClient(),
         ))
 
 
@@ -267,15 +310,16 @@ def test_missing_llm_dependencies_explain_the_extra(monkeypatch):
     import builtins
 
     real_import = builtins.__import__
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
 
     def without_openai(name, *args, **kwargs):
-        if name in {"openai", "dotenv"}:
+        if name == "openai":
             raise ImportError(name)
         return real_import(name, *args, **kwargs)
 
     monkeypatch.setattr(builtins, "__import__", without_openai)
     with pytest.raises(CaseBError, match=r"\.\[llm\]"):
-        case_b._openai_client(debug=False)
+        case_b._openai_client()
 
 
 def test_flags_ambiguous_tags_for_review_in_the_json_and_csv(tmp_path, workbook, saturation_report):
@@ -290,7 +334,7 @@ def test_flags_ambiguous_tags_for_review_in_the_json_and_csv(tmp_path, workbook,
 
     records = asyncio.run(run_case_b(
         _datasets(), saturation_report(concepts), baseline="original", incoming="skillsfuture",
-        unique_skills=workbook, output=output, client=client,
+        provider=SkillsFutureProvider(), context=workbook, output=output, client=client,
     ))
 
     assert "needs_review" not in records[0]

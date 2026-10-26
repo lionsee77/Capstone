@@ -16,7 +16,7 @@ def test_the_stub_model_answers_every_tag_in_a_real_case_b_prompt_the_same_way_e
     categories = [{"service": "Subject", "name": "Computing"}]
     specialities = [{"service": "Subject", "category": "Computing", "name": "Data visualization"}]
     batch = [{"tag_id": str(3000 + index), "title": f"Skill {index}"} for index in range(40)]
-    prompt = build_prompt(services, categories, specialities, batch)
+    prompt = build_prompt(services, categories, specialities, batch, source_name="SkillsFuture")
 
     first = asyncio.run(classify_batch(StubModel(), prompt, batch, "stub"))
     again = asyncio.run(classify_batch(StubModel(), prompt, batch, "stub"))

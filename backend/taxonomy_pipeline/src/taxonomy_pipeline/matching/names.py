@@ -1,10 +1,20 @@
 """Name keys and lexical similarity: how two concept names compare before any model is involved.
 
-- `normalize` is the case/whitespace/punctuation fold every stage compares names with. It must
-  stay step-for-step identical to `backend/audit/taxonomy_audit.py`, or integrity's duplicate
-  counts stop matching that audit.
-- `match_key` adds the folds saturation treats as the same concept ('&'/'and', -isation,
-  a trailing plural 's'); hierarchy screening and the preview's moved-placement note reuse it.
+Each fold answers a different question, so stages must not swap one for another:
+
+- `normalize`: the same text, ignoring case, spacing and trailing punctuation? Used by
+  integrity's duplicate counts; intake, deduplication, resolution and review name
+  lookups; `/taxonomy` search.
+- `match_key`: the same concept? `normalize` plus '&'/'and', -isation and a trailing
+  plural 's'. Used by saturation and Case A (`engine.py`), deduplication, hierarchy
+  screening and the preview's moved-placement note.
+- `preprocessing.py` profiles: the text breadth embeds or fuzz-matches, versioned with
+  the metric definitions. Used by breadth only.
+- `collation_key`: would MySQL's `utf8mb4_general_ci` call these equal? Used by
+  integrate's check against the client schema's unique `tags.name`.
+
+- `normalize` must stay step-for-step identical to `backend/audit/taxonomy_audit.py`, or
+  integrity's duplicate counts stop matching that audit.
 - `is_valid_name` filters placeholders and names with no letters or digits.
 - `lexical_scores` is the RapidFuzz 0-100 ratio matrix saturation and screening share.
 """
@@ -53,6 +63,12 @@ def match_key(name: Any) -> str:
     value = value.replace("&", " and ").replace("isation", "ization")
     value = re.sub(r"\s+", " ", value).strip()
     return _PLURAL_S.sub("", value)
+
+
+def collation_key(name: Any) -> str:
+    """Approximate MySQL's utf8mb4_general_ci comparison: case- and accent-insensitive, trailing spaces ignored."""
+    decomposed = unicodedata.normalize("NFKD", str(name))
+    return "".join(char for char in decomposed if not unicodedata.combining(char)).casefold().rstrip(" ")
 
 
 def is_valid_name(name: Any) -> bool:

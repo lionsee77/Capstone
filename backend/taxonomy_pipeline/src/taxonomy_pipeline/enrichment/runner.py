@@ -23,7 +23,7 @@ from ..taxonomy.base import TaxonomyDataset
 from .change_log import append_review_decisions
 from .deduplication import deduplicate_outputs
 from .export import export_preview_csv
-from .models import BatchValidationReport, MergePreview, ReviewDecision
+from .models import BatchValidationReport, MergePreview, MergeRunInfo, ResolutionReport, ReviewDecision
 from .preview import build_preview
 from .proposals.models import ScreeningSettings
 from .resolution import resolve_outputs
@@ -53,6 +53,16 @@ class MergeRun:
 
 def load_decisions(path: str | Path) -> list[ReviewDecision]:
     return REVIEW_DECISIONS.validate_json(Path(path).read_text(encoding="utf-8"))
+
+
+def load_merge_run(merge_run: str | Path) -> tuple[ResolutionReport, MergeRunInfo | None]:
+    """A saved merge run's resolution report, and its `run.json` (None for runs written before it existed)."""
+    merge_run = Path(merge_run)
+    resolution = ResolutionReport.model_validate_json((merge_run / "resolution.json").read_text(encoding="utf-8"))
+    run_info = merge_run / "run.json"
+    if not run_info.exists():
+        return resolution, None
+    return resolution, MergeRunInfo.model_validate_json(run_info.read_text(encoding="utf-8"))
 
 
 def saturation_run_ids(payloads: dict[str, str]) -> list[str]:
@@ -102,9 +112,6 @@ def run_merge_preview(
     baseline: TaxonomyDataset,
     *,
     out_dir: str | Path,
-    legacy_case_a: list[str | Path] = (),
-    legacy_case_b: dict[str | Path, str] | None = None,
-    skip_case_a_handoffs: bool = False,
     decisions: list[ReviewDecision] = (),
     semantic_matcher: SimilarityMatcher | None = None,
     screening_settings: ScreeningSettings | None = None,
@@ -113,25 +120,17 @@ def run_merge_preview(
     """Chain the stages over producer files and write validation, deduplication,
     resolution and the preview CSV to `out_dir`.
 
-    `inputs` follow the nine-field contract; `legacy_case_a` and `legacy_case_b`
-    (path -> source dataset name) go through the temporary intake adapters.
-    Decisions not yet in `change_log` (default `out_dir/change_log.jsonl`) are
+    `inputs` follow the nine-field contract. Decisions not yet in `change_log` (default `out_dir/change_log.jsonl`) are
     appended to it; point several runs at one log to keep a reviewer's history.
     """
-    legacy_case_b = {Path(path): source for path, source in (legacy_case_b or {}).items()}
-    paths = [Path(path) for path in [*inputs, *legacy_case_a, *legacy_case_b]]
+    paths = [Path(path) for path in inputs]
     if len(set(paths)) != len(paths):
         raise ValueError("Each input file may be given only once")
     names = _input_names(paths)
     payloads = {names[path]: path.read_text(encoding="utf-8") for path in paths}
     warnings = check_saturation_runs(payloads)
 
-    validation = validate_outputs(
-        payloads, baseline,
-        case_a_inputs={names[Path(path)] for path in legacy_case_a},
-        case_b_sources={names[path]: source for path, source in legacy_case_b.items()},
-        skip_case_a_handoffs=skip_case_a_handoffs,
-    )
+    validation = validate_outputs(payloads, baseline)
     deduplication = deduplicate_outputs(validation, semantic_matcher=semantic_matcher)
     resolution = resolve_outputs(
         deduplication, baseline, list(decisions), semantic_matcher=semantic_matcher,
@@ -146,16 +145,16 @@ def run_merge_preview(
     ):
         (out_dir / filename).write_text(report.model_dump_json(indent=2), encoding="utf-8")
     export_preview_csv(preview, out_dir / "preview.csv")
-    # What `integrate` records as this snapshot's provenance; resolution.json doesn't carry the run stamp.
-    run_info = {
-        "saturation_run_ids": saturation_run_ids(payloads),
-        "inputs": [str(path) for path in paths],
-        "decisions": len(decisions),
-        "baseline_snapshot_id": resolution.baseline_snapshot_id,
-        "blocked": preview.blocked,
-        "pending_sources": preview.counts.pending_sources,
-    }
-    (out_dir / "run.json").write_text(json.dumps(run_info, indent=2), encoding="utf-8")
+    run_info = MergeRunInfo(
+        saturation_run_ids=saturation_run_ids(payloads),
+        inputs=[str(path) for path in paths],
+        decisions=len(decisions),
+        baseline_snapshot_id=resolution.baseline_snapshot_id,
+        blocked=preview.blocked,
+        pending_sources=preview.counts.pending_sources,
+    )
+    # json.dumps, not model_dump_json, so run.json keeps its existing formatting (ASCII-escaped).
+    (out_dir / "run.json").write_text(json.dumps(run_info.model_dump(), indent=2), encoding="utf-8")
     append_review_decisions(
         Path(change_log) if change_log else out_dir / "change_log.jsonl", resolution.decisions,
         baseline_snapshot_id=resolution.baseline_snapshot_id,

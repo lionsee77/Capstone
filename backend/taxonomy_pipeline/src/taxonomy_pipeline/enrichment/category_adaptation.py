@@ -44,7 +44,7 @@ from ..matching.names import is_valid_name, match_key, normalize
 from ..matching.semantic import SemanticMatcher
 from ..models import MetricResult
 from ..quality.base import Metric
-from ..taxonomy.base import LoadedDataset, TaxonomyDataset
+from ..taxonomy.base import Hierarchy, LoadedDataset, TaxonomyDataset
 
 NEW_CATEGORY = "NEW_CATEGORY"
 NEW_SPECIALITY = "NEW_SPECIALITY"
@@ -69,22 +69,16 @@ def _tag_source_categories(dataset: TaxonomyDataset, tag_ids: set[Any]) -> dict[
     speciality_tags -> specialities.category_id -> categories. A link is only
     followed if both the speciality and the category exist.
     """
-    categories_by_id = {row.get("id"): row for row in dataset.categories}
-    specialities_by_id = {row.get("id"): row for row in dataset.specialities}
-
+    hierarchy = dataset.hierarchy()
     grouped: dict[Any, dict[Any, dict[str, Any]]] = {tag_id: {} for tag_id in tag_ids}
-    for link in dataset.speciality_tags:
-        tag_id = link.get("tag_id")
-        if tag_id not in tag_ids:
-            continue
-        speciality = specialities_by_id.get(link.get("speciality_id"))
-        if speciality is None:
-            continue
-        category = categories_by_id.get(speciality.get("category_id"))
-        if category is None:
-            continue
-        entry = grouped[tag_id].setdefault(category.get("id"), {"category": category, "specialities": {}})
-        entry["specialities"][speciality.get("id")] = speciality
+    for tag_id, by_category in grouped.items():
+        for speciality_id in hierarchy.tag_specialities.get(tag_id, []):
+            speciality = hierarchy.specialities.get(speciality_id)
+            category = hierarchy.category_of(speciality)
+            if category is None:
+                continue
+            entry = by_category.setdefault(category.get("id"), {"category": category, "specialities": {}})
+            entry["specialities"][speciality.get("id")] = speciality
     return {
         tag_id: [
             {"category": entry["category"],
@@ -289,8 +283,7 @@ class CategoryAdaptationMetric(Metric):
             "semantic_threshold_by_level": {},
         }
         parents = SourceParents(incoming)
-        baseline_categories_by_id = {row.get("id"): row for row in baseline.categories}
-        baseline_services_by_id = {row.get("id"): row.get("name") for row in baseline.services}
+        known = baseline.hierarchy()
         tag_rows = [row for row in incoming.tags if row.get("id") in new_tag_ids]
 
         # Step 1, content: the tag against every baseline speciality. A tag row
@@ -300,18 +293,15 @@ class CategoryAdaptationMetric(Metric):
             "specialities", tag_rows, baseline.specialities, baseline, parents, settings, semantic_matcher,
         )
         content_outcomes = _outcomes_by_incoming_id(content_comparison, NEW_SPECIALITY)
-        baseline_specialities_by_id = {row.get("id"): row for row in baseline.specialities}
         # A content match only counts when the matched speciality's category and
         # service both exist: the contract needs all three, and a record with a
         # category but no service would fail validation for the whole batch.
         content_matched = {}
         for tag_id, outcome in content_outcomes.items():
-            matched_category = baseline_categories_by_id.get(
-                baseline_specialities_by_id.get(outcome["target_id"], {}).get("category_id")
-            )
+            matched_category = known.category_of(known.specialities.get(outcome["target_id"]))
             if (
                 outcome["action"] in MATCHED_ACTIONS and matched_category is not None
-                and baseline_services_by_id.get(matched_category.get("service_id")) is not None
+                and known.service_name(matched_category.get("service_id")) is not None
             ):
                 content_matched[tag_id] = outcome
 
@@ -335,7 +325,7 @@ class CategoryAdaptationMetric(Metric):
         # Only categories whose service the baseline knows can be proposed: the
         # contract needs all of service, category and speciality together.
         reviewable_categories = [
-            row for row in baseline.categories if baseline_services_by_id.get(row.get("service_id")) is not None
+            row for row in baseline.categories if known.service_name(row.get("service_id")) is not None
         ]
         review_candidates = {
             category_id: _closest_categories(row.get("name"), reviewable_categories, semantic_matcher)
@@ -343,19 +333,16 @@ class CategoryAdaptationMetric(Metric):
             if category_outcomes[category_id]["action"] in REVIEW_CATEGORY_ACTIONS
         }
         matched_baseline_rows = [
-            baseline_categories_by_id[outcome["target_id"]]
+            known.categories[outcome["target_id"]]
             for outcome in category_outcomes.values()
-            if outcome["action"] in MATCHED_ACTIONS and baseline_categories_by_id.get(outcome["target_id"]) is not None
+            if outcome["action"] in MATCHED_ACTIONS and known.categories.get(outcome["target_id"]) is not None
         ]
 
         placements: list[dict[str, Any]] = []
         for row in tag_rows:
             tag_id, tag_name = row.get("id"), row.get("name")
             if tag_id in content_matched:
-                placements.append(self._content_placement(
-                    tag_id, tag_name, content_matched[tag_id], baseline_specialities_by_id,
-                    baseline_categories_by_id, baseline_services_by_id,
-                ))
+                placements.append(self._content_placement(tag_id, tag_name, content_matched[tag_id], known))
                 continue
             entries = source_categories_by_tag[tag_id]
             near_miss = _near_miss(content_outcomes.get(tag_id))
@@ -399,13 +386,13 @@ class CategoryAdaptationMetric(Metric):
                 if category_outcome["action"] in MATCHED_ACTIONS:
                     # A matched category already has a real service in the
                     # baseline - look it up, don't guess.
-                    placement["target_service_id"] = baseline_categories_by_id[category_outcome["target_id"]].get(
+                    placement["target_service_id"] = known.categories[category_outcome["target_id"]].get(
                         "service_id"
                     )
                 elif category_outcome["action"] == NEW_CATEGORY:
                     placement["target_service_id"] = _assign_service(matched_baseline_rows)
                 if category_outcome["action"] in RESOLVED_CATEGORY_ACTIONS:
-                    placement["target_service_name"] = baseline_services_by_id.get(placement["target_service_id"])
+                    placement["target_service_name"] = known.service_name(placement["target_service_id"])
                     # Step 1 already searched every baseline speciality, so
                     # nothing under this category matches the tag either: the
                     # tag itself is the proposed speciality.
@@ -427,7 +414,7 @@ class CategoryAdaptationMetric(Metric):
                         "candidate_category_id": candidate.get("id"),
                         "candidate_category_name": candidate.get("name"),
                         "candidate_service_id": candidate.get("service_id"),
-                        "candidate_service_name": baseline_services_by_id[candidate.get("service_id")],
+                        "candidate_service_name": known.service_name(candidate.get("service_id")),
                         "speciality_action": NEW_SPECIALITY,
                         "target_speciality_id": f"{incoming.name}:tag:{tag_id}",
                         "target_speciality_name": tag_name,
@@ -461,13 +448,11 @@ class CategoryAdaptationMetric(Metric):
         tag_id: Any,
         tag_name: Any,
         outcome: dict[str, Any],
-        specialities_by_id: dict[Any, dict[str, Any]],
-        categories_by_id: dict[Any, dict[str, Any]],
-        services_by_id: dict[Any, Any],
+        known: Hierarchy,
     ) -> dict[str, Any]:
         """A tag matched to an existing baseline speciality sits wherever that speciality really is."""
-        speciality = specialities_by_id[outcome["target_id"]]
-        category = categories_by_id[speciality.get("category_id")]
+        speciality = known.specialities[outcome["target_id"]]
+        category = known.categories[speciality.get("category_id")]
         return {
             "tag_id": tag_id,
             "tag_name": tag_name,
@@ -476,7 +461,7 @@ class CategoryAdaptationMetric(Metric):
             "target_category_id": category.get("id"),
             "target_category_name": category.get("name"),
             "target_service_id": category.get("service_id"),
-            "target_service_name": services_by_id.get(category.get("service_id")),
+            "target_service_name": known.service_name(category.get("service_id")),
             "speciality_action": outcome["action"],
             "speciality_match_type": outcome["match_type"],
             "speciality_score": outcome["score"],

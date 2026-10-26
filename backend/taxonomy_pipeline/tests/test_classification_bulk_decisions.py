@@ -155,7 +155,7 @@ def test_leaves_tags_held_for_a_duplicate_pair_to_a_person(tmp_path, baseline, s
     assert draft.counts["held_for_another_reason"] == 2
 
 
-# Screening holds must prevent bulk approval even when combined review context begins with the producer prefix.
+# Screening holds must prevent bulk approval even when the reason codes say only the producer flagged the tag.
 def test_bulk_decisions_skip_hierarchy_holds_with_combined_reasons(
     tmp_path: Path, baseline: TaxonomyDataset, saturation_report: Callable,
 ) -> None:
@@ -164,11 +164,32 @@ def test_bulk_decisions_skip_hierarchy_holds_with_combined_reasons(
     producer = tmp_path / "producer.json"
     producer.write_text(json.dumps(rows), encoding="utf-8")
     resolution = run_merge_preview([producer], baseline, out_dir=tmp_path / "merge").preview.resolution
-    assert "Hierarchy screening:" in resolution.dispositions[0].reason
-    assert "Producer requested review:" in resolution.dispositions[0].reason
-    resolution.dispositions[0].reason = "Producer requested review: " + resolution.dispositions[0].reason
+    assert resolution.dispositions[0].reason_codes == ["hierarchy_review", "producer_flagged"]
+    resolution.dispositions[0].reason_codes = ["producer_flagged"]
     draft = draft_decisions(resolution, report, baseline, create_below=0.5)
     assert draft.drafted == [] and draft.counts["held_for_another_reason"] == 1
+
+
+def test_reads_why_a_tag_is_held_from_its_reason_codes_not_its_wording(baseline, merge):
+    report, run = merge
+    resolution = run().preview.resolution
+    for disposition in resolution.dispositions:
+        disposition.reason = "Reworded."
+
+    draft = draft_decisions(resolution, report, baseline, create_below=0.5, reuse_at_or_above=0.9)
+
+    assert draft.counts == {"create": 1, "reuse": 1, "left_for_review": 2}
+
+
+def test_a_merge_run_saved_before_reason_codes_is_read_from_its_reason_text(baseline, merge):
+    report, run = merge
+    resolution = run().preview.resolution
+    for disposition in resolution.dispositions:
+        disposition.reason_codes = []
+
+    draft = draft_decisions(resolution, report, baseline, create_below=0.5, reuse_at_or_above=0.9)
+
+    assert draft.counts == {"create": 1, "reuse": 1, "left_for_review": 2}
 
 
 def test_a_strong_spelling_match_keeps_a_tag_for_review_despite_a_weak_meaning_match(

@@ -1,7 +1,7 @@
 """Case A/B handoffs and internal Part 6 records, independent of transport and storage.
 
-ClassificationOutput is the producer contract. Temporary legacy intake and shared
-report models support validation.py; matching and preview construction remain separate.
+ClassificationOutput is the producer contract. Shared report models support
+validation.py; matching and preview construction remain separate.
 """
 from __future__ import annotations
 
@@ -114,29 +114,6 @@ class ClassificationOutput(BaseModel):
 CLASSIFICATION_OUTPUTS = TypeAdapter(list[ClassificationOutput])
 
 
-class LegacyClassificationOutput(BaseModel):
-    """Temporary eight-field intake shape, after producer-specific field mapping."""
-
-    model_config = ConfigDict(strict=True, extra="ignore")
-
-    source_dataset: NonBlankText
-    tag_id: NonBlankText
-    tag: NonBlankText
-    original_classification: Literal["classified", "unclassified"]
-    category: NonBlankText | None
-    speciality: NonBlankText | None
-    confidence: Confidence | None
-    reason: NonBlankText
-
-    @model_validator(mode="after")
-    # Reject partial legacy placements before applying the temporary service default.
-    def check_placement(self) -> Self:
-        values = (self.category, self.speciality, self.confidence)
-        if any(value is None for value in values) and not all(value is None for value in values):
-            raise ValueError("category, speciality, and confidence must be all present or all null")
-        return self
-
-
 class PlacementTarget(BaseModel):
     """Existing IDs; null child IDs mark proposed additions at the output's named path."""
 
@@ -153,7 +130,8 @@ class PlacementTarget(BaseModel):
 
 
 class IntakeRecord(BaseModel):
-    """Retain every received row, including rejected and temporarily skipped outputs."""
+    """Retain every received row, including rejected outputs. `skipped` only appears in
+    merge runs saved while the legacy Case A handoff skip existed."""
 
     origin: InputLocation
     raw: Any
@@ -336,13 +314,46 @@ class ResolvedLink(BaseModel):
     existing: bool
 
 
+# Why resolution held or flagged a source tag. `reason` says the same thing in words; code branches on these.
+ReasonCode = Literal[
+    "hierarchy_review",     # hierarchy screening wants a reviewer to look at a proposed path
+    "baseline_name_match",  # the tag's normalized name matches an existing baseline tag
+    "producer_flagged",     # the producer marked a placement needs_review
+    "hierarchy_blocked",    # hierarchy screening blocked a path the decision approved
+    "duplicate_candidate",  # deduplication paired the tag with another incoming tag
+]
+
+
 class SourceDisposition(BaseModel):
-    """Account for each eligible source tag and placements not approved for linking."""
+    """Account for each eligible source tag and placements not approved for linking.
+
+    `reason_codes` lists every reason in `reason`, in the same order; it is empty for
+    tags nothing flagged, and for merge runs saved before the codes existed.
+    """
 
     source: SourceTagRef
     status: Literal["accepted", "excluded", "deferred", "pending"]
     reason: NonBlankText
+    reason_codes: list[ReasonCode] = Field(default_factory=list)
     unapproved_paths: list[PlacementPath] = Field(default_factory=list)
+
+
+class MergeRunInfo(BaseModel):
+    """A merge run's `run.json`: what `integrate` records as the snapshot's provenance and what
+    `bulk-decide` checks the saturation run against (`resolution.json` doesn't carry the run stamp).
+
+    Every field has a default because runs saved before a field existed omit it; unknown keys are
+    kept, so a provenance copy loses nothing.
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+    saturation_run_ids: list[str] = Field(default_factory=list)
+    inputs: list[str] = Field(default_factory=list)
+    decisions: int = 0
+    baseline_snapshot_id: str | None = None
+    blocked: bool = False
+    pending_sources: int = 0
 
 
 class ResolutionReport(BaseModel):

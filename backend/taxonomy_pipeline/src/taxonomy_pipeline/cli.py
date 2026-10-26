@@ -1,39 +1,25 @@
 """`taxonomy-pipeline run|check-comparable|serve|case-a|case-b|merge-preview|review-proposals|bulk-decide|integrate`
 
-Every command is a thin wrapper around one library function, so the CLI never
-holds logic of its own: `run` calls `pipeline.run_pipeline` - the exact same
-function the FastAPI `/runs` route calls - plus optional SQLite persistence and
-a JSON report on stdout or a file. `check-comparable` calls
-`definitions.check_comparable`. The classification commands call
-`enrichment.case_a.run_case_a`, `enrichment.case_b.run_case_b`,
-`enrichment.runner.run_merge_preview`, `enrichment.review_view.load_review_view`,
-`enrichment.bulk_decisions.draft_decisions` and `enrichment.integrate.integrate`.
+A thin adapter over `app/`: each command parses its flags, calls the one use
+case behind it (`app.scoring` for `run` and `check-comparable`,
+`app.enrichment` for the classification commands) and turns the result into
+printed text and an exit code. `run` calls the same `run_pipeline` the FastAPI
+`/runs` route calls. Anything else a command does - loading, checks, writing
+outputs - belongs in its use case, not here.
 """
 from __future__ import annotations
 
 import argparse
-import asyncio
-import json
+import logging
 import sys
-from datetime import datetime
 from pathlib import Path
 
-from . import db
-from .config import load_config
-from .enrichment.proposals.models import ScreeningSettings
-from .models import RunReport
-from .pipeline import load_datasets, read_report, result_labels, run_pipeline, write_report
-from .providers import skillsfuture
-from .quality.definitions import check_comparable
-from .taxonomy.base import LoadedDataset, TaxonomyDataset
+from .app import enrichment as use_cases
+from .app.scoring import check_runs, result_labels, run_config, write_report
 
 
 def _cmd_run(args: argparse.Namespace) -> int:
-    config = load_config(args.config)
-    report = run_pipeline(config)
-
-    if not args.no_save:
-        db.save_run(report, config_json=config.model_dump_json())
+    _, report = run_config(args.config, save=not args.no_save)
 
     if args.output:
         write_report(report, args.output)
@@ -52,29 +38,11 @@ def _cmd_run(args: argparse.Namespace) -> int:
     return 0 if report.status == "done" and not any_metric_errors else 1
 
 
-def _load_report(source: str) -> RunReport:
-    """A saved report file (`run --output`, `.json` or `.json.gz`), else a run ID from SQLite run history.
-
-    Read-only: a mistyped path fails as a missing file, and run history is only queried when it exists, so a
-    check never creates the database.
-    """
-    path = Path(source)
-    if path.is_file():
-        return read_report(path)
-    if "/" in source or "\\" in source or path.suffix in {".json", ".gz"}:
-        raise ValueError(f"report file {source} does not exist")
-    if not db.DEFAULT_DB_PATH.is_file():
-        raise ValueError(f"{source!r} is not a report file, and there is no run history at {db.DEFAULT_DB_PATH}")
-    record = db.get_run(source)
-    if record is None:
-        raise ValueError(f"{source!r} is neither a report file nor a run ID in run history")
-    return RunReport.model_validate_json(record.report_json)
-
-
 def _cmd_check_comparable(args: argparse.Namespace) -> int:
     try:
-        before, after = _load_report(args.before), _load_report(args.after)
-        check = check_comparable(before, after, before_subject=args.before_subject, after_subject=args.after_subject)
+        before, after, check = check_runs(
+            args.before, args.after, before_subject=args.before_subject, after_subject=args.after_subject,
+        )
     except (OSError, ValueError) as exc:
         print(f"[FAILED] check-comparable: {exc}", file=sys.stderr)
         return 1
@@ -113,78 +81,39 @@ def _cmd_serve(args: argparse.Namespace) -> int:
     return 0
 
 
-def _datasets(args: argparse.Namespace, *names: str) -> dict[str, LoadedDataset]:
-    """Load only the datasets this command uses, so unrelated reference workbooks aren't required."""
-    config = load_config(args.config)
-    config.datasets = [dataset for dataset in config.datasets if dataset.name in names]
-    datasets = load_datasets(config)
-    for name in names:
-        if not isinstance(datasets.get(name), TaxonomyDataset):
-            raise ValueError(f"{args.config} declares no taxonomy dataset named {name!r}")
-    return datasets
-
-
 def _cmd_case_a(args: argparse.Namespace) -> int:
-    from .enrichment.case_a import run_case_a
-
     try:
-        records = run_case_a(
-            _datasets(args, args.baseline, args.incoming), args.report,
-            baseline=args.baseline, incoming=args.incoming, semantic_model=args.semantic_model or None,
+        records = use_cases.case_a(
+            args.config, args.report, baseline=args.baseline, incoming=args.incoming, output=args.output,
+            semantic_model=args.semantic_model,
         )
     except (OSError, ValueError, RuntimeError) as exc:
         print(f"[FAILED] case-a: {exc}", file=sys.stderr)
         return 1
-    Path(args.output).write_text(json.dumps(records, indent=2, ensure_ascii=False), encoding="utf-8")
     resolved = sum(record["category"] is not None for record in records)
     print(f"wrote {args.output}: {len(records)} records ({resolved} resolved, {len(records) - resolved} unresolved)")
     return 0
 
 
 def _cmd_case_b(args: argparse.Namespace) -> int:
-    from .enrichment.case_b import run_case_b
-
     try:
-        asyncio.run(run_case_b(
-            _datasets(args, args.baseline, args.incoming), args.report,
-            baseline=args.baseline, incoming=args.incoming, unique_skills=args.unique, output=args.output,
-            checkpoint=args.checkpoint, batch_size=args.batch_size, model=args.model, debug=args.debug_response,
-        ))
+        use_cases.case_b(
+            args.config, args.report, baseline=args.baseline, incoming=args.incoming, output=args.output,
+            provider=args.provider, context=args.context, checkpoint=args.checkpoint, batch_size=args.batch_size,
+            model=args.model,
+        )
     except (OSError, ValueError, RuntimeError) as exc:
         print(f"[FAILED] case-b: {exc}", file=sys.stderr)
         return 1
     return 0
 
 
-def _legacy_case_b(values: list[str]) -> dict[str, str]:
-    pairs = {}
-    for value in values:
-        path, separator, source = value.rpartition("=")
-        if not separator or not path or not source:
-            raise ValueError(f"--legacy-case-b expects FILE=SOURCE_DATASET, got {value!r}")
-        pairs[path] = source
-    return pairs
-
-
 def _cmd_merge_preview(args: argparse.Namespace) -> int:
-    from .enrichment.runner import load_decisions, run_merge_preview
-    from .matching.semantic import SemanticMatcher
-
-    out_dir = args.out_dir or f"merge_runs/{datetime.now():%Y%m%d-%H%M%S}"
     try:
-        if not (args.input or args.legacy_case_a or args.legacy_case_b):
-            raise ValueError("give at least one --input, --legacy-case-a or --legacy-case-b file")
-        screening_settings = ScreeningSettings(
-            lexical_threshold=args.screening_lexical, semantic_threshold=args.screening_semantic,
-        )
-        baseline = _datasets(args, args.baseline)[args.baseline]
-        run = run_merge_preview(
-            args.input, baseline, out_dir=out_dir,
-            legacy_case_a=args.legacy_case_a, legacy_case_b=_legacy_case_b(args.legacy_case_b),
-            skip_case_a_handoffs=args.skip_case_a_handoffs,
-            decisions=load_decisions(args.decisions) if args.decisions else [],
-            semantic_matcher=SemanticMatcher(args.semantic_model) if args.semantic_model else None,
-            screening_settings=screening_settings, change_log=args.change_log,
+        run = use_cases.merge_preview(
+            args.config, args.input, baseline=args.baseline, out_dir=args.out_dir, decisions=args.decisions,
+            semantic_model=args.semantic_model, screening_lexical=args.screening_lexical,
+            screening_semantic=args.screening_semantic, change_log=args.change_log,
         )
     except (OSError, ValueError) as exc:
         print(f"[FAILED] merge-preview: {exc}", file=sys.stderr)
@@ -209,12 +138,9 @@ def _cmd_merge_preview(args: argparse.Namespace) -> int:
 
 # Print the shared saved review view without altering decisions, reports or taxonomy data.
 def _cmd_review_proposals(args: argparse.Namespace) -> int:
-    from .enrichment.review_view import load_review_view
-
     try:
-        view = load_review_view(
-            args.merge_run, proposal_id=args.proposal_id, level=args.level,
-            offset=args.offset, limit=1 if args.proposal_id else args.limit,
+        view = use_cases.review_proposals(
+            args.merge_run, proposal_id=args.proposal_id, level=args.level, offset=args.offset, limit=args.limit,
         )
     except (OSError, ValueError) as exc:
         print(f"[FAILED] review-proposals: {exc}", file=sys.stderr)
@@ -224,36 +150,15 @@ def _cmd_review_proposals(args: argparse.Namespace) -> int:
 
 
 def _cmd_bulk_decide(args: argparse.Namespace) -> int:
-    from .enrichment.bulk_decisions import draft_decisions
-    from .enrichment.models import ResolutionReport
-    from .enrichment.routing import load_saturation
-    from .enrichment.runner import REVIEW_DECISIONS, load_decisions
-
-    merge_run, output = Path(args.merge_run), Path(args.output)
     try:
-        if output.exists() and (not args.decisions or output.resolve() != Path(args.decisions).resolve()):
-            raise ValueError(f"{output} already exists; pass it as --decisions to extend it, or pick another --output")
-        resolution = ResolutionReport.model_validate_json((merge_run / "resolution.json").read_text(encoding="utf-8"))
-        saturation = load_saturation(args.report, args.incoming)
-        run_info = merge_run / "run.json"
-        run_ids = (json.loads(run_info.read_text(encoding="utf-8")).get("saturation_run_ids", [])
-                   if run_info.exists() else [])
-        if not run_ids:
-            raise ValueError(f"{merge_run} records no saturation run (unstamped inputs, or written before run.json "
-                             "had one), so its tags can't be tied to a report; rerun the producers and merge-preview")
-        if run_ids != [saturation.run_id]:
-            raise ValueError(f"{merge_run} came from saturation run(s) {run_ids}, but {args.report} is "
-                             f"{saturation.run_id!r}; use the report the producers read")
-        baseline = _datasets(args, args.baseline)[args.baseline]
-        draft = draft_decisions(
-            resolution, saturation, baseline, create_below=args.create_below, reuse_at_or_above=args.reuse_above,
-            existing=load_decisions(args.decisions) if args.decisions else [],
+        draft = use_cases.bulk_decide(
+            args.config, args.merge_run, args.report, baseline=args.baseline, incoming=args.incoming,
+            output=args.output, create_below=args.create_below, reuse_above=args.reuse_above,
+            decisions=args.decisions,
         )
     except (OSError, ValueError) as exc:
         print(f"[FAILED] bulk-decide: {exc}", file=sys.stderr)
         return 1
-    output.parent.mkdir(parents=True, exist_ok=True)
-    output.write_bytes(REVIEW_DECISIONS.dump_json(draft.decisions, indent=2, exclude_defaults=True) + b"\n")
     counts = draft.counts
     print(
         f"[OK] drafted {counts['create']} create and {counts['reuse']} reuse decision(s); "
@@ -262,39 +167,20 @@ def _cmd_bulk_decide(args: argparse.Namespace) -> int:
         f"{counts['already_decided']} already decided",
         file=sys.stderr,
     )
+    output = Path(args.output)
     print(f"wrote {output} ({len(draft.decisions)} decisions); apply it with merge-preview --decisions {output}")
     return 0
 
 
 def _cmd_integrate(args: argparse.Namespace) -> int:
-    from .enrichment.integrate import IntegrationError, integrate
-    from .enrichment.models import ResolutionReport
-
-    merge_run = Path(args.merge_run)
-    out_dir = args.out_dir or f"integrations/{datetime.now():%Y%m%d-%H%M%S}"
     try:
-        resolution = ResolutionReport.model_validate_json((merge_run / "resolution.json").read_text(encoding="utf-8"))
-        run_info = merge_run / "run.json"
-        provenance = json.loads(run_info.read_text(encoding="utf-8")) if run_info.exists() else {}
-        config = load_config(args.config)
-        baseline = next((d for d in config.datasets if d.name == args.baseline), None)
-        if baseline is None:
-            raise IntegrationError(f"{args.config} declares no dataset named {args.baseline!r}")
-        result = integrate(
-            resolution, baseline, out_dir=out_dir, scoring_config=config,
-            provenance={"merge_run": str(merge_run), "scoring_config": str(args.config), **provenance},
-        )
+        outcome = use_cases.integrate(args.config, args.merge_run, baseline=args.baseline, out_dir=args.out_dir)
     except (OSError, ValueError) as exc:
         print(f"[FAILED] integrate: {exc}", file=sys.stderr)
         return 1
-    omitted = sum(result.manifest["omitted_records"].values())
-    if omitted:
-        print(f"[WARN] {omitted} input record(s) were omitted before review and are not in the snapshot "
-              f"(by status: {result.manifest['omitted_records']}); see {merge_run}/validation.json", file=sys.stderr)
-    for table, rows in result.manifest["exact_duplicate_rows"].items():
-        if rows["enriched"] > rows["baseline"]:
-            print(f"[WARN] {table}: rows in exact-duplicate name clusters rose from {rows['baseline']} to "
-                  f"{rows['enriched']}; check the new names before using this snapshot", file=sys.stderr)
+    for warning in outcome.warnings:
+        print(f"[WARN] {warning}", file=sys.stderr)
+    result = outcome.integration
     counts = result.counts
     print(
         f"[OK] {counts['categories']} new categories, {counts['specialities']} new specialities, "
@@ -349,26 +235,23 @@ def build_parser() -> argparse.ArgumentParser:
     case_b = subparsers.add_parser("case-b", help="propose placements for parentless new tags with an LLM")
     _add_dataset_args(case_b)
     case_b.add_argument("--report", default="report.json", help=report_help)
-    case_b.add_argument("--unique", default=str(skillsfuture.UNIQUE_SKILLS_WORKBOOK),
-                        help="SkillsFuture unique-skills workbook")
+    case_b.add_argument("--provider", help="source provider adding each tag's context (default: the --incoming name)")
+    case_b.add_argument("--context", "--unique", dest="context",
+                        help="the provider's context file (default: its own, e.g. the unique-skills workbook)")
     case_b.add_argument("--output", default="case_b_output.json", help="JSON output; a CSV is written next to it")
     case_b.add_argument("--checkpoint", help="checkpoint file for resuming after a failed run")
     case_b.add_argument("--batch-size", type=int, default=5)
     case_b.add_argument("--model", help="OpenAI model name (default: $OPENAI_MODEL or gpt-4o-mini)")
-    case_b.add_argument("--debug-response", action="store_true", help="print up to 4,000 characters per response")
+    case_b.add_argument("--debug-response", action="store_true",
+                        help="also log the endpoint, model and up to 4,000 characters per response")
     case_b.set_defaults(func=_cmd_case_b)
 
     merge = subparsers.add_parser("merge-preview", help="validate, deduplicate and resolve outputs into a preview CSV")
     _add_dataset_args(merge, incoming=False)
     merge.add_argument("--input", action="append", default=[], help="nine-field contract file (repeatable)")
-    merge.add_argument("--legacy-case-a", action="append", default=[], help="old eight-field Case A file")
-    merge.add_argument("--legacy-case-b", action="append", default=[], metavar="FILE=SOURCE",
-                       help="old seven-field Case B file and its source dataset name")
-    merge.add_argument("--skip-case-a-handoffs", action="store_true",
-                       help="skip legacy Case A rows that only route a tag to Case B")
     merge.add_argument("--decisions", help="JSON list of tag and hierarchy ReviewDecision records from an earlier run")
     merge.add_argument("--semantic-model", help="sentence model for semantic duplicate candidates")
-    screening_defaults = ScreeningSettings()
+    screening_defaults = use_cases.SCREENING_DEFAULTS
     merge.add_argument("--screening-lexical", type=float, default=screening_defaults.lexical_threshold,
                        help="hierarchy lexical review threshold, 0-1 (default: %(default)s; uncalibrated)")
     merge.add_argument("--screening-semantic", type=float, default=screening_defaults.semantic_threshold,
@@ -407,9 +290,29 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+_log_handler: logging.Handler | None = None
+
+
+def _show_library_logs(level: int) -> None:
+    """Print the package's log records (e.g. Case B progress) to stdout as bare lines, as a command's own output.
+
+    Bound to the current `sys.stdout` on every call, replacing the previous handler, so a caller
+    that redirects stdout around `main` (tests, the golden run) captures them too.
+    """
+    global _log_handler
+    package = logging.getLogger("taxonomy_pipeline")
+    if _log_handler is not None:
+        package.removeHandler(_log_handler)
+    _log_handler = logging.StreamHandler(sys.stdout)
+    _log_handler.setFormatter(logging.Formatter("%(message)s"))
+    package.addHandler(_log_handler)
+    package.setLevel(level)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
+    _show_library_logs(logging.DEBUG if getattr(args, "debug_response", False) else logging.INFO)
     return args.func(args)
 
 

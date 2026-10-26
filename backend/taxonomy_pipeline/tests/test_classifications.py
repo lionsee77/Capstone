@@ -3,25 +3,14 @@ import yaml
 from fastapi.testclient import TestClient
 
 from taxonomy_pipeline.api.app import app
+from taxonomy_pipeline.app.scoring import run_pipeline
 from taxonomy_pipeline.config import DatasetConfig, load_config
-from taxonomy_pipeline.pipeline import run_pipeline
 from taxonomy_pipeline.taxonomy import load_dataset
-from tests.conftest import FIXTURES
-
-
-def config_payload(classification_paths):
-    return {
-        "datasets": [
-            {"name": "original", "paths": [str(FIXTURES / "mini_original.sql")]},
-            *[{"name": kind, "type": kind, "paths": [str(path)]}
-              for kind, path in classification_paths.items()],
-        ],
-        "metrics": [{"id": "breadth", "params": {"target": "original", "matching_method": "lexical"}}],
-    }
+from tests.conftest import classification_config_payload
 
 
 def test_relative_yaml_paths_and_counts(classification_paths, tmp_path):
-    payload = config_payload(classification_paths)
+    payload = classification_config_payload(classification_paths)
     for dataset in payload["datasets"][1:]:
         dataset["paths"] = [f"{dataset['name']}.xlsx"]
     path = tmp_path / "config.yaml"
@@ -44,7 +33,7 @@ def test_requires_exactly_one_path(kind, paths):
 @pytest.mark.parametrize("profile", ["typography_v1", "legacy"])
 def test_api_persists_both_dimensions(classification_paths, isolated_db, profile):
     client = TestClient(app)
-    payload = config_payload(classification_paths)
+    payload = classification_config_payload(classification_paths)
     payload["metrics"][0]["params"]["preprocessing"] = profile
     created = client.post("/runs", json=payload)
     assert created.status_code == 202
