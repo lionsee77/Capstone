@@ -113,7 +113,7 @@ def test_get_unknown_run_is_404(isolated_db):
 
 def test_run_is_marked_running_while_the_pipeline_executes(isolated_db, monkeypatch):
     from taxonomy_pipeline import db
-    from taxonomy_pipeline.api import app as app_module
+    from taxonomy_pipeline.app import scoring
     from taxonomy_pipeline.models import RunReport
 
     statuses_seen_mid_run = []
@@ -124,7 +124,7 @@ def test_run_is_marked_running_while_the_pipeline_executes(isolated_db, monkeypa
         statuses_seen_mid_run.extend(record.status for record in db.list_runs())
         return RunReport(status="done")
 
-    monkeypatch.setattr(app_module, "run_pipeline", fake_run_pipeline)
+    monkeypatch.setattr(scoring, "run_pipeline", fake_run_pipeline)
     client = TestClient(app)
 
     created = client.post("/runs", json=_config_payload())

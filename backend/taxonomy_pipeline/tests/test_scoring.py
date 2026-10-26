@@ -8,8 +8,13 @@ import yaml
 
 from taxonomy_pipeline.app.scoring import (
     check_runs,
+    execute_queued_run,
+    get_run,
+    list_runs,
     load_report,
     load_taxonomies,
+    metric_catalogue,
+    queue_run,
     read_report,
     result_labels,
     run_config,
@@ -241,3 +246,24 @@ def test_check_runs_loads_both_runs_and_compares_them(tmp_path: Path) -> None:
     before, after, check = check_runs(str(path), str(path), before_subject="original", after_subject="original")
     assert before == after == report
     assert check.before_run_id == check.after_run_id == report.run_id
+
+
+def test_the_metric_catalogue_describes_every_scoring_metric() -> None:
+    catalogue = metric_catalogue()
+    assert set(catalogue) == {"integrity", "depth", "breadth", "saturation"}
+    assert catalogue["integrity"].description and isinstance(catalogue["integrity"].default_params, dict)
+
+
+def test_a_queued_run_is_polled_through_history_until_it_finishes(isolated_db: Path) -> None:
+    config = PipelineConfig(
+        datasets=[DatasetConfig(name="original", paths=[str(FIXTURES / "mini_original.sql")])],
+        metrics=[MetricConfig(id="integrity", params={"dataset": "original"})],
+    )
+    queued = queue_run(config)
+    assert get_run(queued.run_id).status == "queued"
+    assert [(row.run_id, row.status) for row in list_runs()] == [(queued.run_id, "queued")]
+
+    finished = execute_queued_run(queued, config)
+
+    assert finished.run_id == queued.run_id and get_run(queued.run_id).status == "done"
+    assert get_run("missing") is None

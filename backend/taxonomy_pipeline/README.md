@@ -83,17 +83,17 @@ taxonomy_pipeline/
 │   │       └── models.py             #     screening report shapes
 │   ├── config.py                     # YAML/JSON pipeline config (datasets + metrics + optional definitions pin)
 │   ├── models.py                     # shared run reports, comparability checks, API response shapes
-│   ├── app/                          # use cases: one function per CLI command, shared with the API
-│   │   ├── scoring.py                #   run_pipeline(config) -> RunReport; dataset loading; report I/O; check_runs
-│   │   └── enrichment.py             #   case_a, case_b, merge_preview, review_proposals, bulk_decide, integrate
+│   ├── app/                          # use cases: what every CLI command and API route calls
+│   │   ├── scoring.py                #   run_pipeline(config) -> RunReport; dataset/report I/O; check_runs; run history
+│   │   ├── enrichment.py             #   case_a, case_b, merge_preview, review_proposals, bulk_decide, integrate
+│   │   └── browse.py                 #   taxonomy search/detail over a past run's dataset (/taxonomy)
 │   ├── db.py                         # SQLite run history
 │   ├── env.py                        # loads backend/.env for `serve` and llm.py
 │   ├── llm.py                        # the one OpenAI client setup (judge + Case B): key check, base URL
 │   ├── api/
-│   │   ├── app.py                    #   FastAPI: /metrics, /runs, /taxonomy, /proposals
-│   │   ├── proposals.py              #   /proposals: saved merge runs' proposal review view
-│   │   ├── security.py               #   API token and allowed data directories
-│   │   └── taxonomy.py               #   dataset resolution + search/detail queries behind /taxonomy
+│   │   ├── app.py                    #   FastAPI: /metrics, /runs, /taxonomy routes over app/
+│   │   ├── proposals.py              #   /proposals: which merge runs a request may read, over app.enrichment
+│   │   └── security.py               #   API token and allowed data directories
 │   └── cli.py                        # `taxonomy-pipeline run|check-comparable|serve|case-a|case-b|merge-preview|review-proposals|bulk-decide|integrate`
 ├── schemas/
 │   └── classification_output.schema.json # JSON Schema for the producer contract

@@ -1,9 +1,10 @@
-"""Read-only taxonomy search and concept detail, over a dataset a past run
-loaded. Nothing here keeps a dataset loaded between requests - no such cache
-exists anywhere in this service yet - so both endpoints re-read `dataset`
-from disk fresh on each call, via the same `config_json` already saved for
-that run by `db.save_run`, reusing `pipeline.load_dataset` rather than adding
-a second way to load one. A result reflects the source files' current
+"""Browse use cases: read-only taxonomy search and concept detail, over a
+dataset a past run loaded. `search_run_dataset` and `concept_detail` are what
+the `/taxonomy` routes call. Nothing here keeps a dataset loaded between
+requests - no such cache exists anywhere in this service yet - so both re-read
+`dataset` from disk fresh on each call, via the same `config_json` already
+saved for that run by `db.save_run`, reusing `taxonomy.load_dataset` rather
+than adding a second way to load one. A result reflects the source files' current
 contents, not a snapshot of what the run originally saw: editing a dataset
 file changes what the same `run_id` returns immediately, with no new run
 needed - the run is only how `dataset` is resolved to a set of file paths.
@@ -28,6 +29,21 @@ class NotFound(Exception):
     """A run, dataset or concept the caller asked for doesn't exist. The
     route layer turns this into a 404; this module stays framework-agnostic.
     """
+
+
+def search_run_dataset(
+    run_id: str, dataset: str, *, q: str | None = None, level: ConceptLevel | None = None,
+    limit: int = DEFAULT_SEARCH_LIMIT,
+) -> list[TaxonomyConceptSummary]:
+    """Search one dataset a past run loaded; `limit` is clamped to 1..MAX_SEARCH_LIMIT."""
+    return search(
+        resolve_dataset(run_id, dataset), q=q, level=level, limit=max(1, min(limit, MAX_SEARCH_LIMIT)),
+    )
+
+
+def concept_detail(run_id: str, dataset: str, level: ConceptLevel, concept_id: str) -> TaxonomyConceptDetail:
+    """One concept's path(s) up, its children and its tags, in a dataset a past run loaded."""
+    return detail(resolve_dataset(run_id, dataset), level, concept_id)
 
 
 def resolve_dataset(run_id: str, dataset_name: str) -> TaxonomyDataset:

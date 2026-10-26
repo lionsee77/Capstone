@@ -31,7 +31,8 @@ new work should follow the same shape unless there's a good reason not to.
 - The CLI and API are adapters: each command or route calls one use-case
   function in `app/` and only translates inputs and outputs. Checks, file
   writes and warnings belong in the use case (taxonomy_pipeline:
-  `app/scoring.py`, `app/enrichment.py`).
+  `app/scoring.py`, `app/enrichment.py`, `app/browse.py`). Request-level
+  security checks (tokens, allowed paths) stay in `api/`.
 
 ## Frontend
 
