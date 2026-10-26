@@ -110,6 +110,16 @@ def test_baseline_hierarchy_names_each_speciality_by_its_category():
     ]
 
 
+def test_a_specialitys_category_and_service_come_from_the_same_category_row():
+    baseline = TaxonomyDataset(
+        name="dup", services=[{"id": 1, "name": "Industry"}, {"id": 2, "name": "Subject"}],
+        categories=[{"id": 5, "name": "First", "service_id": 1}, {"id": 5, "name": "Second", "service_id": 2}],
+        specialities=[{"id": 9, "name": "Leaf", "category_id": 5}],
+    )
+    _, _, specialities = baseline_hierarchy(baseline)
+    assert specialities == [{"service": "Subject", "category": "Second", "name": "Leaf"}]
+
+
 def test_classify_batch_retries_until_every_tag_has_a_proposal():
     client = StubClient("not json", _response(PROPOSAL), _response({**PROPOSAL, "tag_id": "3002"}))
     batch = [{"tag_id": "3001"}, {"tag_id": "3002"}]

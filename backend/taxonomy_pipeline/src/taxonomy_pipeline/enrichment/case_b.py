@@ -105,32 +105,28 @@ async def classify_batch(
 def baseline_hierarchy(
     baseline: TaxonomyDataset,
 ) -> tuple[list[str], list[dict[str, str]], list[dict[str, str]]]:
-    """Baseline services, service-scoped categories, and speciality paths for model placement."""
-    services = {str(row["id"]): str(row["name"]) for row in baseline.services}
-    categories = [
-        {
-            "service": services.get(str(row["service_id"]), ""),
+    """Baseline services, service-scoped categories, and speciality paths for model placement.
+
+    Parents come from `baseline.hierarchy()`, so a speciality's category and service are always
+    read from the same category row. A missing service shows as "", and a missing category as its id.
+    """
+    hierarchy = baseline.hierarchy()
+
+    def service_name(category: dict[str, Any] | None) -> str:
+        service = hierarchy.service_of(category)
+        return str(service["name"]) if service else ""
+
+    services = sorted(str(row["name"]) for row in hierarchy.services.values())
+    categories = [{"service": service_name(row), "name": str(row["name"])} for row in baseline.categories]
+    specialities = []
+    for row in baseline.specialities:
+        category = hierarchy.category_of(row)
+        specialities.append({
+            "service": service_name(category),
+            "category": str(category["name"]) if category else str(row["category_id"]),
             "name": str(row["name"]),
-        }
-        for row in baseline.categories
-    ]
-    category_names = {str(row["id"]): str(row["name"]) for row in baseline.categories}
-    specialities = [
-        {
-            "service": services.get(
-                next(
-                    (str(category["service_id"]) for category in baseline.categories
-                     if str(category["id"]) == str(row["category_id"])),
-                    "",
-                ),
-                "",
-            ),
-            "category": category_names.get(str(row["category_id"]), str(row["category_id"])),
-            "name": str(row["name"]),
-        }
-        for row in baseline.specialities
-    ]
-    return sorted(services.values()), sorted(categories, key=lambda item: (item["service"], item["name"])), specialities
+        })
+    return services, sorted(categories, key=lambda item: (item["service"], item["name"])), specialities
 
 
 def incoming_tags(incoming: TaxonomyDataset) -> dict[str, str]:
