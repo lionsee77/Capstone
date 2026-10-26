@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from taxonomy_pipeline.datasets.base import TaxonomyDataset
-from taxonomy_pipeline.metrics.depth import DepthMetric
+from taxonomy_pipeline.quality.depth import DepthMetric
+from taxonomy_pipeline.taxonomy.base import TaxonomyDataset
 
 
 def test_branching_factor_stats():

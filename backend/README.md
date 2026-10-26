@@ -8,14 +8,21 @@ provides Adminer for visual browsing and a Python/MySQL taxonomy audit.
 ```text
 backend/
 ├── sql-files-nus/        # Original SQL dumps
-├── skillsfuture/         # SkillsFuture Excel sources and taxonomy generator
+├── skillsfuture/         # SkillsFuture Excel sources and taxonomy generator (data prep)
+│   ├── generate_skillsfuture_taxonomy.py
+│   ├── validate_skillsfuture_taxonomy.py
+│   ├── AI_TAXONOMY_PIPELINE_PLAN.md
+│   └── *.xlsx              # SkillsFuture source workbooks
 ├── audit/                # Taxonomy audit module and report notebook
-├── taxonomy_pipeline/    # Taxonomy quality scoring (CLI + FastAPI) - own README, own deps
+├── taxonomy_pipeline/    # Quality scoring + Case A/B classification and merge preview (CLI + FastAPI) - own README, own deps
 ├── compose.yaml          # MySQL, Adminer and audit services
 ├── Dockerfile            # MySQL image and ordered imports
 ├── Dockerfile.python     # Python audit image
-└── requirements.txt      # Python MySQL connector
+└── requirements.txt      # Python deps for audit/ and skillsfuture/ data prep
 ```
+
+The admin dashboard lives in [`../frontend/`](../frontend/README.md) and reads
+everything from the `taxonomy_pipeline` API.
 
 ## Generate a SkillsFuture taxonomy
 
@@ -32,7 +39,33 @@ This reads the workbooks and writes `skillsfuture/skillsfuture_taxonomy.sql`.
 It does not connect to MySQL or modify the existing database. The generated SQL
 creates parallel `sf_categories`, `sf_specialities`, `sf_tags`, and
 `sf_speciality_tags` tables, using the existing `services` table. Review the
-generated file before importing it.
+generated file before importing it. Check it first with:
+
+```bash
+python skillsfuture/validate_skillsfuture_taxonomy.py
+```
+
+The validator is also read-only: it checks row shape, duplicate IDs/names,
+duplicate speciality/tag links, broken references, dead-end categories,
+specialities without tags, and unused tags.
+Unused tags are expected inputs for the Case B classifier and should not be
+treated as a reason to block that workflow.
+
+The generated SQL uses parallel `sf_` tables so the original taxonomy is not
+overwritten:
+
+```text
+services → sf_categories → sf_specialities → sf_speciality_tags → sf_tags
+```
+
+The generated SQL is the incoming SkillsFuture dataset for
+`taxonomy_pipeline/`. Classifying its new tags into the original taxonomy -
+Case A (tags with their own SkillsFuture category), Case B (LLM placement for
+the rest), the merge preview that combines them, and the integrate step that
+turns the reviewed result into an enriched taxonomy snapshot - runs from there
+as `taxonomy-pipeline case-a | case-b | merge-preview | bulk-decide | integrate`; see
+[Classification workflow](taxonomy_pipeline/README.md#classification-workflow).
+Case B's OpenAI settings still go in `backend/.env` (copy `.env.example`).
 
 ## Score taxonomy quality
 

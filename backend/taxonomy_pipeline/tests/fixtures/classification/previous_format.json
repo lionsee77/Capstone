@@ -1,0 +1,22 @@
+[
+  {
+    "source_dataset": "skillsfuture",
+    "tag_id": "42",
+    "original_tag": "Data visualization",
+    "original_classification": "classified",
+    "category": "Data analytics",
+    "speciality": "Data presentation",
+    "confidence": 0.95,
+    "reason": "The source category maps to data presentation."
+  },
+  {
+    "source_dataset": "skillsfuture",
+    "tag_id": "48",
+    "original_tag": "General practice",
+    "original_classification": "classified",
+    "category": null,
+    "speciality": null,
+    "confidence": null,
+    "reason": "No source category; route to Case B (AI classification)."
+  }
+]

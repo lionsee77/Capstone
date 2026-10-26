@@ -15,11 +15,34 @@ new work should follow the same shape unless there's a good reason not to.
   module, and register instances in one `registry.py`. Adding a new one
   should mean "add a file + one registry line," not touching call sites.
 - Keep one implementation behind both the CLI and the API where both exist
-  (e.g. `pipeline.run_pipeline`) - no parallel logic paths for the same
+  (e.g. `app.scoring.run_pipeline`) - no parallel logic paths for the same
   operation.
 - Shared result/data shapes (what gets printed, persisted, and returned
   over HTTP) live in one `models.py` using Pydantic - one shape everywhere,
   not a CLI-specific and an API-specific version.
+- Inside a subproject that grows several concerns, group modules by
+  bounded context rather than by kind (see `backend/taxonomy_pipeline`:
+  `taxonomy/`, `matching/`, `quality/`, `providers/`, `enrichment/`). Each
+  context exposes public names; never import another context's `_private`
+  names, and import only contexts below yours (taxonomy_pipeline:
+  `app -> enrichment -> quality -> matching -> taxonomy`, with `providers` used
+  by `enrichment` only). Code specific to one external source lives in
+  `providers/`, not in generic modules. Where each old module went is
+  listed under "Moved in the bounded-context refactor" in
+  `backend/taxonomy_pipeline/README.md`.
+- The CLI and API are adapters: each command or route calls one use-case
+  function in `app/` and only translates inputs and outputs. Checks, file
+  writes and warnings belong in the use case (taxonomy_pipeline:
+  `app/scoring.py`, `app/enrichment.py`, `app/browse.py`). Request-level
+  security checks (tokens, allowed paths) stay in `api/`.
+
+## Frontend
+
+- `frontend/` is the Next.js dashboard over the pipeline API; see
+  `frontend/README.md` for its stack and conventions. Use `bun` for package
+  management (commit `bun.lock`, not `package-lock.json`).
+- Its zod schemas in `src/lib/api/schemas.ts` mirror the Pydantic models -
+  a change to `models.py`/`config.py` updates them in the same PR.
 
 ## Python style
 
@@ -28,7 +51,7 @@ new work should follow the same shape unless there's a good reason not to.
   over `typing.Dict`/`Optional`.
 - Type-hint function signatures, including return types.
 - Module and class docstrings explain *why* a thing exists and how it's
-  meant to be extended, not just what it does (see `metrics/base.py`,
+  meant to be extended, not just what it does (see `quality/base.py`,
   `models.py` for the pattern).
 - Lint with `ruff`, `select = ["E", "F", "I", "UP", "B"]`, `line-length =
   120`. Run `ruff check .` clean before opening a PR.
@@ -64,8 +87,12 @@ new work should follow the same shape unless there's a good reason not to.
 - Commit subjects use a conventional-commit-style prefix: `feat:`, `fix:`,
   `chore:`, `ci:`, `docs:`, `init:`. Keep the subject in plain imperative
   language after the prefix.
+- Flow is feature branch -> `dev` -> `main`. Branch from `dev` (the default
+  branch) and open PRs against `dev`; `main` only receives `dev` -> `main`
+  promotion PRs. Both branches carry the same protections and required
+  checks.
 - Land work via PR + merge commit (`Merge pull request #N ...`), not direct
-  pushes to `main`.
+  pushes to `dev` or `main`.
 
 ## Docs
 

@@ -53,14 +53,16 @@ metrics:
       target: original
       ssic_reference: ssic
       ssoc_reference: ssoc
-      threshold: 75
+      matching_method: semantic
+      semantic_threshold: 0.60  # provisional, uncalibrated cosine cutoff
 
   - id: breadth
     params:
       target: skillsfuture
       ssic_reference: ssic
       ssoc_reference: ssoc
-      threshold: 75
+      matching_method: semantic
+      semantic_threshold: 0.60  # provisional, uncalibrated cosine cutoff
 
   - id: saturation
     params:
@@ -89,3 +91,20 @@ metrics:
       # skills vs original specialities); the parent check still applies.
       # false = strict level-by-level comparison.
       cross_level: true
+      # LLM judge for REVIEW_AMBIGUOUS concepts (OpenAI Decisions API, public
+      # beta); see the README's "Decisions API judge". On for classification
+      # rounds: write the report as judged_report.json and pass that to case-a,
+      # case-b and bulk-decide. Needs OPENAI_API_KEY in backend/.env and the llm
+      # extra. The cache path is relative to the working directory, so run from
+      # backend/taxonomy_pipeline/. Without a key, comment this block out and
+      # write report.json instead - never mix the two reports in one round. It
+      # changes the reported ambiguous count, so baseline and enriched runs
+      # must use the same judge settings to be comparable.
+      judge:
+        model: gpt-6-luna
+        candidates: 5            # closest known concepts (by meaning) offered per concept
+        same_at_or_above: 0.8    # probability needed to call it a duplicate
+        new_at_or_above: 0.8     # probability of "none" needed to call it new
+        levels: [tags]
+        cache: judge_cache.json  # reruns reuse verdicts instead of paying again
+        workers: 8

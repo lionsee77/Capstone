@@ -4,9 +4,11 @@ on:
   pull_request:
     branches:
       - main
+      - dev
   push:
     branches:
       - main
+      - dev
   workflow_dispatch:
 
 # This workflow only needs to read repository contents.
@@ -73,8 +75,9 @@ jobs:
         run: echo "TODO - configure and run the project linter"
 
       # TEMPORARY PLACEHOLDER: replace this step with pytest or unittest after a
-      # test suite is added for audit/ and skillsfuture/. Keep it in this job so
-      # the required check name stays stable. (backend/taxonomy_pipeline/ already
+      # test suite is added for audit/ and the skillsfuture/ data-prep scripts.
+      # Keep it in this job so the required check name stays stable.
+      # (backend/taxonomy_pipeline/, including the Case A/B classifiers, already
       # has a real test suite - see the "Taxonomy pipeline" job below.)
       - name: Unit-test placeholder
         run: echo "TODO - add and run automated unit tests"
@@ -111,3 +114,36 @@ jobs:
 
       - name: Run tests
         run: python -m pytest -q
+
+  frontend:
+    name: Frontend dashboard checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: frontend
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Bun
+        # Third-party action pinned to a reviewed commit (v2.2.0); bump deliberately.
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: "1.2.6"
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Lint
+        run: bun run lint
+
+      - name: Typecheck
+        run: bun run typecheck
+
+      - name: Run tests
+        run: bun run test
+
+      - name: Build
+        run: bun run build

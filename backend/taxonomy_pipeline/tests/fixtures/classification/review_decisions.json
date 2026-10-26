@@ -1,0 +1,36 @@
+[
+  {
+    "members": [
+      {"source_dataset": "categorized-skills", "tag_id": "42"},
+      {"source_dataset": "categorized-skills", "tag_id": "43"},
+      {"source_dataset": "plain-skills", "tag_id": "42"},
+      {"source_dataset": "plain-skills", "tag_id": "45"}
+    ],
+    "action": "create",
+    "canonical_name": "Data visualization",
+    "approved_paths": [
+      {"service": "Subject", "category": "Data analytics", "speciality": "Data presentation"},
+      {"service": "Subject", "category": "Data analytics", "speciality": "Business communication"}
+    ],
+    "reason": "Synthetic review confirms equivalence and both placements."
+  },
+  {
+    "members": [{"source_dataset": "categorized-skills", "tag_id": "44"}],
+    "action": "reuse",
+    "existing_tag_id": 200,
+    "approved_speciality_ids": [120],
+    "reason": "Synthetic review reuses SQL and approves the additional reporting link."
+  },
+  {
+    "members": [{"source_dataset": "plain-skills", "tag_id": "46"}],
+    "action": "create",
+    "approved_paths": [{"service": "Subject", "category": "Data analytics", "speciality": "Programming"}],
+    "reason": "Keep the programming language separate from the animal."
+  },
+  {
+    "members": [{"source_dataset": "plain-skills", "tag_id": "47"}],
+    "action": "create",
+    "approved_paths": [{"service": "Subject", "category": "Biology", "speciality": "Zoology"}],
+    "reason": "Keep the animal separate from the programming language."
+  }
+]

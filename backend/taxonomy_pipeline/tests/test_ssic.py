@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 from openpyxl import Workbook
 
-from taxonomy_pipeline.datasets.ssic import HEADERS, SHEET, SsicSource
+from taxonomy_pipeline.taxonomy.references.ssic import HEADERS, SHEET, SsicSource
 
 
 def write_workbook(tmp_path, rows, sheet=SHEET, headers=HEADERS):
