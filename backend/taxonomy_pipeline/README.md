@@ -81,12 +81,12 @@ taxonomy_pipeline/
 │   │       ├── intake.py             #     collect proposed hierarchy paths
 │   │       ├── screening.py          #     screen them against the baseline's categories and specialities
 │   │       └── models.py             #     screening report shapes
-│   ├── config.py                     # YAML/JSON pipeline config (datasets + metrics + optional definitions pin)
-│   ├── models.py                     # shared run reports, comparability checks, API response shapes
 │   ├── app/                          # use cases: what every CLI command and API route calls
 │   │   ├── scoring.py                #   run_pipeline(config) -> RunReport; dataset/report I/O; check_runs; run history
 │   │   ├── enrichment.py             #   case_a, case_b, merge_preview, review_proposals, bulk_decide, integrate
 │   │   └── browse.py                 #   taxonomy search/detail over a past run's dataset (/taxonomy)
+│   ├── config.py                     # YAML/JSON pipeline config (datasets + metrics + optional definitions pin)
+│   ├── models.py                     # shared run reports, comparability checks, API response shapes
 │   ├── db.py                         # SQLite run history
 │   ├── env.py                        # loads backend/.env for `serve` and llm.py
 │   ├── llm.py                        # the one OpenAI client setup (judge + Case B): key check, base URL
@@ -101,6 +101,83 @@ taxonomy_pipeline/
     └── fixtures/                     # tiny synthetic SQL dumps used by the tests
         └── classification/           #   synthetic producer outputs, taxonomy and review decisions
 ```
+
+## Moved in the bounded-context refactor (#104)
+
+The package was reorganised in two PRs: #110 moved files into the context
+folders above, and #111 added the interfaces (`app/`, `llm.py`, `providers/`
+adapters, the hierarchy helper). Pipeline outputs did not change - a golden run
+(`experiments/golden_run.py`) on the code before #110 and after #111 matches on
+every file, command output and Case B prompt, except the new `reason_codes`
+field in `resolution.json`. Paths below are under `src/taxonomy_pipeline/`.
+
+**Files**
+
+| Before | After |
+|---|---|
+| `datasets/__init__.py`, `base.py`, `sql_dump.py` | `taxonomy/` (same names) |
+| `datasets/ssic.py`, `ssoc.py` | `taxonomy/references/ssic.py`, `ssoc.py`, sharing the new `workbook.py` loader |
+| `metrics/base.py`, `registry.py`, `integrity.py`, `depth.py`, `breadth.py` | `quality/` (same names) |
+| `definitions.py` | `quality/definitions.py` |
+| `metrics/saturation.py` | split: `matching/engine.py` (comparison engine), `matching/names.py` (name keys, lexical scores), `quality/saturation.py` (the metric) |
+| `metrics/embeddings.py`, `judge.py`, `preprocessing.py` | `matching/` (same names) |
+| `matching.py` | `matching/semantic.py` |
+| `metrics/category_adaptation.py` | `enrichment/category_adaptation.py` (no longer a registered metric) |
+| `classification/*.py` | `enrichment/*.py` (same names) |
+| `proposals/` | `enrichment/proposals/` |
+| `pipeline.py` | `app/scoring.py` |
+| `api/taxonomy.py` | `app/browse.py` |
+
+**Logic**
+
+| What | Before | After |
+|---|---|---|
+| What a CLI command does (checks, file writes, warnings) | inside `cli.py` | `app/scoring.py`, `app/enrichment.py`; `cli.py` and `api/` only translate input/output |
+| OpenAI client setup, placeholder-key check | `metrics/judge.py` and `classification/case_b.py` | `llm.py` |
+| Loading `backend/.env` | three places | `env.py` only (via `llm.py` for the LLM) |
+| Service/category/speciality id lookups | rebuilt in saturation, Case A, `/taxonomy`, Case B | `TaxonomyDataset.hierarchy()` in `taxonomy/base.py` |
+| Name normalisation | `integrity.normalize`, `saturation.match_key`, `integrate._collation_key` | `matching/names.py` (`normalize`, `match_key`, `collation_key`; its docstring says which stage uses which) |
+| SkillsFuture specifics (`TAG_ID_OFFSET`, unique-skills workbook) | `classification/case_b.py`, `cli.py` | `providers/skillsfuture.py`, behind `providers/base.py` + `registry.py` |
+| `InputLocation`, `SourceTagRef`, `HierarchyGroup` | root `models.py` | `enrichment/models.py` |
+| Classification placement path | `TaxonomyPath` in `classification/models.py` | `PlacementPath` in `enrichment/models.py` (the API's `TaxonomyPath` keeps its name) |
+| Why a tag is pending | text prefix "Producer requested review" | `SourceDisposition.reason_codes` |
+| Reading a merge run's `run.json` | parsed by hand in `cli.py` | `MergeRunInfo` + `enrichment.runner.load_merge_run()` |
+| `GET /metrics`, `POST /runs`, `GET /runs` responses | plain dicts | `MetricInfo`, `RunCreated`, `RunSummary` in `models.py` |
+| Case B progress output | `print` | logging (`taxonomy_pipeline.enrichment.case_b`); the CLI shows it |
+
+**After pulling**, delete the old package folders git leaves behind (they hold only
+`__pycache__`, but let Python import the old names as empty packages):
+`rm -rf src/taxonomy_pipeline/{datasets,metrics,classification,proposals}`.
+
+**Import paths** - there are no compatibility shims, so update imports:
+
+```text
+taxonomy_pipeline.datasets[.x]        -> taxonomy_pipeline.taxonomy[.x]  (ssic/ssoc: taxonomy.references.x)
+taxonomy_pipeline.metrics.<metric>    -> taxonomy_pipeline.quality.<metric>
+taxonomy_pipeline.metrics.<embeddings|judge|preprocessing> -> taxonomy_pipeline.matching.<same>
+taxonomy_pipeline.matching            -> taxonomy_pipeline.matching.semantic
+taxonomy_pipeline.definitions         -> taxonomy_pipeline.quality.definitions
+taxonomy_pipeline.classification.x    -> taxonomy_pipeline.enrichment.x
+taxonomy_pipeline.proposals.x         -> taxonomy_pipeline.enrichment.proposals.x
+taxonomy_pipeline.pipeline            -> taxonomy_pipeline.app.scoring
+```
+
+**Removed**
+
+- The legacy Case A/B intake adapters (`LegacyClassificationOutput`,
+  `merge-preview --legacy-case-a/--legacy-case-b/--skip-case-a-handoffs`);
+  old-format files are now reported as invalid rows.
+- `backend/skillsfuture/validate_classification_proposals.py` -
+  `experiments/evaluate_case_b.py` uses `enrichment/validation.py` instead.
+- The `jsonschema` dependency, and `category_adaptation` from `GET /metrics`.
+
+**Changed calls**
+
+- `case-b` takes `--provider` (default: the `--incoming` dataset name) and
+  `--context` (`--unique` still works); `run_case_b(provider=..., context=...)`
+  replaces `unique_skills=...`.
+- `experiments/evaluate_case_b.py` takes `--config` and `--baseline <dataset
+  name>` instead of a SQL directory and `--skillsfuture-sql`.
 
 ## Classification workflow
 
