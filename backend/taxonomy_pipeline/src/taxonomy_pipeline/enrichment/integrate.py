@@ -28,7 +28,6 @@ import json
 import os
 import shutil
 import tempfile
-import unicodedata
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -37,6 +36,7 @@ from typing import Any
 import yaml
 
 from ..config import DatasetConfig, PipelineConfig
+from ..matching.names import collation_key
 from ..quality.integrity import IntegrityMetric
 from ..quality.registry import METRICS
 from ..taxonomy.base import CONCEPTS, TaxonomyDataset
@@ -225,12 +225,6 @@ def _assign_ids(
     return additions, id_map
 
 
-def _collation_key(name: Any) -> str:
-    """Approximate MySQL's utf8mb4_general_ci comparison: case- and accent-insensitive, trailing spaces ignored."""
-    decomposed = unicodedata.normalize("NFKD", str(name))
-    return "".join(char for char in decomposed if not unicodedata.combining(char)).casefold().rstrip(" ")
-
-
 def _check_unique_keys(additions: dict[str, list[dict[str, Any]]], baseline: TaxonomyDataset) -> None:
     """Refuse additions that the client schema's unique keys would reject.
 
@@ -239,10 +233,10 @@ def _check_unique_keys(additions: dict[str, list[dict[str, Any]]], baseline: Tax
     parser doesn't enforce either, so check here rather than at apply time.
     """
     problems = []
-    existing = {_collation_key(row.get("name")): row.get("name") for row in baseline.tags}
+    existing = {collation_key(row.get("name")): row.get("name") for row in baseline.tags}
     added: dict[str, dict[str, Any]] = {}
     for row in additions["tags"]:
-        key = _collation_key(row["name"])
+        key = collation_key(row["name"])
         if key in existing:
             problems.append(f"new tag {row['name']!r} (ID {row['id']}) collides with existing tag {existing[key]!r}")
         elif key in added:
