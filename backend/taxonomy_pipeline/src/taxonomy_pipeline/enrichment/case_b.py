@@ -25,6 +25,7 @@ from typing import Any
 
 from .. import llm
 from ..providers.base import SourceProvider
+from ..providers.registry import get_provider
 from ..taxonomy.base import TaxonomyDataset
 from .models import CLASSIFICATION_OUTPUTS
 from .routing import RUN_ID_FIELD, case_b_tag_ids, load_saturation, mark_ambiguous
@@ -256,7 +257,7 @@ async def run_case_b(
     *,
     baseline: str,
     incoming: str,
-    provider: SourceProvider,
+    provider: SourceProvider | str,
     output: str | Path,
     context: str | Path | None = None,
     checkpoint: str | Path | None = None,
@@ -266,8 +267,9 @@ async def run_case_b(
 ) -> list[dict[str, Any]]:
     """Classify every Case B tag and write `output` (JSON) plus a CSV next to it.
 
-    `provider` adds each tag's source context to the prompt, read from `context`
-    (default: the provider's own default file).
+    `provider` (a `SourceProvider`, or a name registered in `providers/registry.py`)
+    adds each tag's source context to the prompt, read from `context` (default: the
+    provider's own default file).
 
     Completed batches are checkpointed, so an interrupted run resumes where it
     stopped, with any batch size; a successful run removes the checkpoint. The
@@ -277,6 +279,8 @@ async def run_case_b(
     for name in (baseline, incoming):
         if not isinstance(datasets.get(name), TaxonomyDataset):
             raise CaseBError(f"Dataset {name!r} is not a taxonomy loaded by this config")
+    if isinstance(provider, str):
+        provider = get_provider(provider)
     output = Path(output)
     checkpoint = Path(checkpoint) if checkpoint else output.with_name(f".{output.stem}.checkpoint.json")
     model = model or default_model()

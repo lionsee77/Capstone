@@ -25,8 +25,10 @@ from ..enrichment.proposals.models import ScreeningSettings
 from ..enrichment.review_view import load_review_view
 from ..enrichment.routing import load_saturation
 from ..enrichment.runner import REVIEW_DECISIONS, MergeRun, load_decisions, load_merge_run, run_merge_preview
-from ..providers.registry import get_provider
 from .scoring import load_taxonomies
+
+# merge-preview's hierarchy screening thresholds when the caller gives none; adapters show these as defaults.
+SCREENING_DEFAULTS = ScreeningSettings()
 
 
 def _timestamped(parent: str) -> str:
@@ -53,9 +55,9 @@ def case_b(
 ) -> list[dict[str, Any]]:
     """Classify the tags saturation routed to Case B; `provider` defaults to the incoming dataset's name."""
     datasets = load_taxonomies(config_path, baseline, incoming)
-    source = get_provider(provider or incoming)
     return asyncio.run(run_case_b(
-        datasets, report, baseline=baseline, incoming=incoming, provider=source, context=context, output=output,
+        datasets, report, baseline=baseline, incoming=incoming, provider=provider or incoming, context=context,
+        output=output,
         checkpoint=checkpoint, batch_size=batch_size, model=model,
     ))
 
@@ -71,10 +73,9 @@ def merge_preview(
 
     if not inputs:
         raise ValueError("give at least one --input file")
-    defaults = ScreeningSettings()
     screening_settings = ScreeningSettings(
-        lexical_threshold=defaults.lexical_threshold if screening_lexical is None else screening_lexical,
-        semantic_threshold=defaults.semantic_threshold if screening_semantic is None else screening_semantic,
+        lexical_threshold=SCREENING_DEFAULTS.lexical_threshold if screening_lexical is None else screening_lexical,
+        semantic_threshold=SCREENING_DEFAULTS.semantic_threshold if screening_semantic is None else screening_semantic,
     )
     taxonomy = load_taxonomies(config_path, baseline)[baseline]
     return run_merge_preview(

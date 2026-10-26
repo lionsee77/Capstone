@@ -195,6 +195,23 @@ class CrashAfter(StubClient):
         return await super()._create(model=model, messages=messages, temperature=temperature)
 
 
+def test_run_accepts_a_registered_provider_by_name(tmp_path, workbook, saturation_report):
+    records = asyncio.run(run_case_b(
+        _datasets(), saturation_report(CONCEPTS), baseline="original", incoming="skillsfuture",
+        provider="skillsfuture", context=workbook, output=tmp_path / "out.json",
+        client=StubClient(_response(PROPOSAL, {**PROPOSAL, "tag_id": "3002"})),
+    ))
+    assert [record["tag_id"] for record in records] == ["3001", "3002"]
+
+
+def test_run_refuses_an_unregistered_provider_name(tmp_path, workbook, saturation_report):
+    with pytest.raises(ValueError, match="No source provider 'nope'"):
+        asyncio.run(run_case_b(
+            _datasets(), saturation_report(CONCEPTS), baseline="original", incoming="skillsfuture",
+            provider="nope", context=workbook, output=tmp_path / "out.json", client=StubClient(),
+        ))
+
+
 def test_run_logs_its_progress_instead_of_printing_it(tmp_path, workbook, saturation_report, caplog, capsys):
     unresolved = {**PROPOSAL, "tag_id": "3002", "action": "propose_new_category", "category": "", "speciality": ""}
     with caplog.at_level(logging.DEBUG, logger="taxonomy_pipeline.enrichment.case_b"):

@@ -16,7 +16,6 @@ from pathlib import Path
 
 from .app import enrichment as use_cases
 from .app.scoring import check_runs, result_labels, run_config, write_report
-from .enrichment.proposals.models import ScreeningSettings
 
 
 def _cmd_run(args: argparse.Namespace) -> int:
@@ -252,7 +251,7 @@ def build_parser() -> argparse.ArgumentParser:
     merge.add_argument("--input", action="append", default=[], help="nine-field contract file (repeatable)")
     merge.add_argument("--decisions", help="JSON list of tag and hierarchy ReviewDecision records from an earlier run")
     merge.add_argument("--semantic-model", help="sentence model for semantic duplicate candidates")
-    screening_defaults = ScreeningSettings()
+    screening_defaults = use_cases.SCREENING_DEFAULTS
     merge.add_argument("--screening-lexical", type=float, default=screening_defaults.lexical_threshold,
                        help="hierarchy lexical review threshold, 0-1 (default: %(default)s; uncalibrated)")
     merge.add_argument("--screening-semantic", type=float, default=screening_defaults.semantic_threshold,
