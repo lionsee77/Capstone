@@ -3,11 +3,13 @@
 Each output is checked for Case B coverage and passed through the pipeline's own
 intake validation (`enrichment.validation.validate_outputs`, the stage
 `merge-preview` runs first), so a prompt version is judged by the same rules its
-output will meet. On top of that, each record's Case B `action` is compared with
-the path validation actually resolved: the pipeline treats `action` as evidence
-only, but whether the model's claim matches the baseline is what tells prompt
-versions apart. The evaluator reports one independent metrics section per named
-output for manual comparison.
+output will meet. On top of that come two Case B-specific checks the pipeline
+doesn't make: each record's `action` is compared with the path validation
+actually resolved (`assign_existing` with no placement counts as a mismatch),
+and a tag answered more than once is reported. The pipeline treats `action` as
+evidence only and accepts several placements per tag, but Case B is asked for
+exactly one proposal per tag, so both tell prompt versions apart. The evaluator
+reports one independent metrics section per named output for manual comparison.
 """
 from __future__ import annotations
 
@@ -44,17 +46,23 @@ def run_classification_validator(proposals_path: Path, baseline: TaxonomyDataset
         raise RuntimeError(f"{proposals_path} is not a readable JSON array: {report.input_errors}")
     findings: Counter[str] = Counter()
     mismatches: Counter[str] = Counter()
+    tag_ids = Counter(
+        str(row.raw["tag_id"]) for row in report.records if isinstance(row.raw, dict) and "tag_id" in row.raw
+    )
     needing_review = 0
     for record in report.records:
         findings.update(finding.split(":", 1)[0] for finding in record.findings)
         claimed = record.raw.get("action") if isinstance(record.raw, dict) else None
         actual = resolved_action(record)
+        if record.status == "unresolved" and claimed == "assign_existing":
+            actual = "no placement"  # claims an existing placement but names none
         mismatched = actual is not None and claimed != actual
         if mismatched:
             mismatches[f"{claimed} -> {actual}"] += 1
         flagged = isinstance(record.raw, dict) and record.raw.get("needs_review") is True
         needing_review += record.status in NEEDS_REVIEW or mismatched or flagged
-    problems = report.counts["invalid"] + report.counts["review"] + sum(mismatches.values())
+    duplicate_tag_ids = sorted(tag_id for tag_id, count in tag_ids.items() if count > 1)
+    problems = report.counts["invalid"] + report.counts["review"] + sum(mismatches.values()) + len(duplicate_tag_ids)
     return {
         "passed": problems == 0,
         "records": len(report.records),
@@ -63,6 +71,8 @@ def run_classification_validator(proposals_path: Path, baseline: TaxonomyDataset
         "findings_by_code": dict(sorted(findings.items())),
         "action_mismatch_count": sum(mismatches.values()),
         "action_mismatches": dict(sorted(mismatches.items())),
+        # Case B returns exactly one proposal per tag; a repeat means the model answered a tag twice.
+        "duplicate_tag_ids": duplicate_tag_ids,
     }
 
 
@@ -74,6 +84,7 @@ def evaluate_output(
     output_tag_ids = {str(item.get("tag_id")) for item in raw if isinstance(item, dict)}
     return {
         "expected_case_b_tags": len(expected_tag_ids),
+        "output_records": len(raw),
         "output_tags": len(output_tag_ids),
         "missing_case_b_tags": sorted(expected_tag_ids - output_tag_ids),
         "unexpected_tags": sorted(output_tag_ids - expected_tag_ids),

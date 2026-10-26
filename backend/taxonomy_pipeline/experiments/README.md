@@ -29,11 +29,12 @@ each saved output independently through the pipeline's own intake validation
 baseline dataset in `--config` (default `configs/original_vs_skillsfuture.yaml`,
 dataset `--baseline original`). Its `classification_validator` section holds
 validation's per-status `counts`, `findings_by_code`, `records_needing_review`,
-and `action_mismatches`: records whose Case B `action` disagrees with the path
+`action_mismatches`: records whose Case B `action` disagrees with the path
 validation resolved (e.g. `assign_existing` for a speciality that doesn't
-exist). The summary does not compare prompts automatically; compare the
+exist, or with no placement at all), and `duplicate_tag_ids`: tags the model
+answered more than once. Either makes `passed` false. The summary does not compare prompts automatically; compare the
 per-version metrics manually, especially `action_mismatch_count`,
-`records_needing_review` and the finding codes.
+`duplicate_tag_ids`, `records_needing_review` and the finding codes.
 
 Confidence remains the model's estimate and is not treated as a calibrated
 probability. Never reuse a checkpoint after changing a prompt.

@@ -20,6 +20,7 @@ def test_evaluate_output_reports_missing_and_unexpected_case_b_tags(tmp_path: Pa
 
     assert metrics == {
         "expected_case_b_tags": 2,
+        "output_records": 2,
         "output_tags": 2,
         "missing_case_b_tags": ["3002"],
         "unexpected_tags": ["9999"],
@@ -80,3 +81,35 @@ def test_an_unreadable_output_is_not_reported_as_zero_errors(tmp_path: Path, bas
 
     with pytest.raises(RuntimeError, match="not a readable JSON array"):
         run_classification_validator(proposals, baseline)
+
+
+def test_an_assignment_with_no_placement_is_a_mismatch(tmp_path: Path, baseline: TaxonomyDataset) -> None:
+    proposals = tmp_path / "proposals.json"
+    proposals.write_text(json.dumps([
+        _row("3001", "assign_existing", service=None, category=None, speciality=None, confidence=None),
+        _row("3002", "propose_new_category", service=None, category=None, speciality=None, confidence=None),
+    ]), encoding="utf-8")
+
+    result = run_classification_validator(proposals, baseline)
+
+    assert result["counts"]["unresolved"] == 2
+    assert result["action_mismatches"] == {"assign_existing -> no placement": 1}
+    assert result["passed"] is False and result["records_needing_review"] == 1
+
+
+def test_a_tag_answered_twice_fails_even_when_both_answers_are_valid(tmp_path: Path, baseline: TaxonomyDataset) -> None:
+    proposals = tmp_path / "proposals.json"
+    proposals.write_text(json.dumps([
+        _row("3001", "assign_existing"),
+        _row("3001", "propose_new_speciality", speciality="Brand new speciality"),
+        _row("3002", "assign_existing"),
+        _row("3002", "assign_existing"),
+    ]), encoding="utf-8")
+
+    result = run_classification_validator(proposals, baseline)
+
+    assert result["duplicate_tag_ids"] == ["3001", "3002"]
+    assert result["action_mismatch_count"] == 0
+    assert result["passed"] is False
+    assert evaluate_output(proposals, {"3001", "3002"})["output_records"] == 4
+
