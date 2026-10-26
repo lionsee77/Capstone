@@ -41,7 +41,7 @@ taxonomy_pipeline/
 │   │       ├── ssic.py               #     SSIC 2025 industry classification: levels and code rule
 │   │       └── ssoc.py               #     SSOC 2024 occupation classification: levels and code rule
 │   ├── matching/                     # anything that answers "is this the same concept?"
-│   │   ├── names.py                  #   normalize, match_key, placeholder filter, lexical score matrix
+│   │   ├── names.py                  #   normalize, match_key, collation_key (which stage uses which), lexical scores
 │   │   ├── semantic.py               #   SimilarityMatcher protocol + the sentence-model SemanticMatcher
 │   │   ├── embeddings.py             #   pinned sentence-model loader (one revision pin for every matcher)
 │   │   ├── preprocessing.py          #   breadth's label normalisation profiles
