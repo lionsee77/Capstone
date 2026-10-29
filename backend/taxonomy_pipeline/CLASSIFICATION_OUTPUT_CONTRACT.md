@@ -134,7 +134,7 @@ Resolution accepts unflagged classifications and applies explicit review decisio
 the combined snapshot and exports a CSV for review.
 
 - [JSON Schema](schemas/classification_output.schema.json)
-- [Python validator](src/taxonomy_pipeline/classification/models.py): `CLASSIFICATION_OUTPUTS.validate_json(payload)`
+- [Python validator](src/taxonomy_pipeline/enrichment/models.py): `CLASSIFICATION_OUTPUTS.validate_json(payload)`
 - [Case A fixture](tests/fixtures/classification/case_a.json)
 - [Case B fixture](tests/fixtures/classification/case_b.json)
 - [All fixture scenarios](tests/fixtures/classification/README.md)
@@ -144,38 +144,24 @@ all of them in order and writes each report (see the
 [README](README.md#classification-workflow)). The Python snippets show what each
 stage does on its own.
 
-## Temporary intake for current exports
+## Intake
 
-Use [validate_outputs](src/taxonomy_pipeline/classification/validation.py) to combine
-named JSON batches. Without adapter options, inputs must follow the nine-field contract.
+Use [validate_outputs](src/taxonomy_pipeline/enrichment/validation.py) to combine
+named JSON batches. Every input must follow the nine-field contract; files in the
+older eight- or seven-field formats are rejected row by row (`invalid_output`),
+not adapted.
 
-- `case_a_inputs`: legacy eight-field files; maps `original_tag` to `tag`.
-- `case_b_sources`: legacy seven-field files mapped to their source dataset names;
-  sets `original_classification` to `unclassified` and keeps `action` in raw evidence.
-- Both adapters accept extra keys but select only their expected fields before mapping.
-  Extra values cannot override adapter mappings or the temporary service default.
-- Both adapters temporarily set `service` to `Industry` for populated placements,
-  recorded as a `temporary_service` finding. Unresolved placements remain all-null.
-  Current nine-field inputs retain their explicit service; this default only applies
-  to legacy exports until producers supply the field.
+- Extra keys are kept in each record's `raw` evidence but never reach the output.
 - Missing categories/specialities are valid proposed additions. The supplied service
   must exist. Ambiguous existing nodes and malformed matching taxonomy rows need review.
-- Case B actions remain raw evidence. `assign_existing`, `propose_new_category`, and
-  `propose_new_speciality` all pass through the same reuse/addition checks.
-- `skip_case_a_handoffs=True`: temporarily skips legacy Case A rows with all-null
-  placements and the explicit phrase `route to Case B` in their reason. Skips remain
-  in the report and do not participate in cross-branch conflict checks. Default: false.
+- The `skipped` count stays in the report for merge runs saved while the old
+  adapters' Case A handoff skip existed; nothing produces it now.
 
-From the command line, `merge-preview` maps these options to flags: plain
-`--input FILE` for nine-field files, `--legacy-case-a FILE`,
-`--legacy-case-b FILE=SOURCE_DATASET` and `--skip-case-a-handoffs`. Run from
-`backend/taxonomy_pipeline/`:
+From the command line, `merge-preview` takes one `--input FILE` per producer
+file. Run from `backend/taxonomy_pipeline/`:
 
 ```bash
 taxonomy-pipeline merge-preview --input case_a_output.json --input case_b_output.json
-# or, for exports made before the producers wrote nine fields:
-taxonomy-pipeline merge-preview --legacy-case-a old_case_a.json \
-    --legacy-case-b classification_proposals.json=skillsfuture --skip-case-a-handoffs
 ```
 
 The same call in Python:
@@ -183,9 +169,9 @@ The same call in Python:
 ```python
 from pathlib import Path
 
-from taxonomy_pipeline.classification.validation import validate_outputs
+from taxonomy_pipeline.enrichment.validation import validate_outputs
 from taxonomy_pipeline.config import load_config
-from taxonomy_pipeline.pipeline import load_datasets
+from taxonomy_pipeline.app.scoring import load_datasets
 
 config = load_config("configs/original_vs_skillsfuture.yaml")
 config.datasets = [dataset for dataset in config.datasets if dataset.name == "original"]
@@ -221,7 +207,7 @@ nodes or write to the database.
 Pass the intake report to `deduplicate_outputs`:
 
 ```python
-from taxonomy_pipeline.classification.deduplication import deduplicate_outputs
+from taxonomy_pipeline.enrichment.deduplication import deduplicate_outputs
 
 deduplication = deduplicate_outputs(report)
 Path("deduplication.json").write_text(deduplication.model_dump_json(indent=2), encoding="utf-8")
@@ -245,7 +231,7 @@ The candidate's `similarity` is the largest available name score, not a probabil
 or approval; inspect the separate scores and placement context.
 
 Semantic checks are optional at runtime. Supply an existing
-`taxonomy_pipeline.metrics.saturation.SemanticMatcher` as `semantic_matcher` to use
+`taxonomy_pipeline.matching.semantic.SemanticMatcher` as `semantic_matcher` to use
 the shared embedding implementation. Without a matcher, name/lexical checks run and
 `skipped_checks.semantic` explains the omission. Matcher failures likewise retain
 name-based results with an explicit finding. `complete` requires readable input files
@@ -255,9 +241,24 @@ are resolved. No baseline tag comparison, database writes, or preview constructi
 ## Resolve reviewed tags and links
 
 Use `resolve_outputs(deduplication, taxonomy, decisions)` from
-`taxonomy_pipeline.classification.resolution`. This consumes the shared deduplication
+`taxonomy_pipeline.enrichment.resolution`. This consumes the shared deduplication
 report, independent of producer filenames, branch formats, and source dataset names.
 The nine-field producer contract is unchanged.
+
+Before resolving additions, PB06 screens category and speciality proposals
+against the baseline. `ResolutionReport.screening` retains each proposal's paths,
+source references, exact/near matches and lexical/optional semantic scores.
+`DeduplicationReport.screening_hierarchy` includes complete proposals held by
+intake as well as eligible paths; it does not make held source tags eligible.
+
+Unambiguous exact spelling variants within the same parent reuse existing IDs.
+Near matches require review before automatic acceptance. An exact match at
+another parent or level, or an ambiguous exact match, blocks new-node creation;
+a tag decision cannot override that hierarchy hold. Safe approved paths still
+proceed; blocked paths are retained in `unapproved_paths` and flagged in the
+preview. Sources stay pending when all their decision's approved paths are blocked.
+See [hierarchy screening](README.md#hierarchy-proposal-screening) for the matching
+rules and report fields. This adds internal evidence, not producer JSON fields.
 
 Valid source tags with no duplicate candidates are accepted automatically, keeping
 all supplied placements and creating any required category/speciality nodes under
@@ -270,7 +271,44 @@ Explicit decisions override this default, including exclusion, deferral, reuse, 
 restricting approved paths. Automatically accepted tags get an explanatory source
 disposition; `decisions` contains only supplied reviews, not fabricated human decisions.
 
-`ReviewDecision` is an internal review format:
+`ReviewDecision` is the single internal review format for tag groups and hierarchy
+proposals. The fields below describe tag decisions; their existing format remains
+valid. For a category or speciality, supply `proposal_id` instead of `members`,
+and `existing_concept_id` instead of `existing_tag_id` for `reuse`. Do not include
+tag link approvals or `canonical_name` in a hierarchy decision.
+
+| Hierarchy field | Rule |
+|---|---|
+| `proposal_id` | One stable ID from `resolution.screening.proposals` |
+| `action` | `create` (approve), `exclude` (reject), `reuse` (merge), `defer` (requires review) |
+| `reason` | Required nonblank reviewer explanation |
+| `existing_concept_id` | Required positive baseline ID for `reuse`; absent/null otherwise |
+
+Every screened proposal has a derived `suggested_action`; suggestions do not
+replace reviewer decisions. Category decisions run before speciality decisions.
+Merge validates the target's level and full parent chain, reuses its existing row,
+and never moves it. A speciality merge must agree with the resolved category.
+Creating an exact/name-key equivalent raises `ValueError`, except a speciality
+whose only exact matches are specialities under other categories. A category
+`reuse` must target a category in the proposal's own service. Near matches may be
+approved as distinct, but failed semantic checks and unresolved incoming variant
+clusters cannot be bypassed. Excluding a competing variant allows the retained
+proposal to be considered again. Synonym evidence depends on #56/PB07.
+
+Hierarchy rejection/deferral blocks its placements; it does not implicitly reject
+the source tag. Tag decisions remain separate entries in the **same list**.
+Intake omissions are not restored by hierarchy decisions. The original screening
+evidence is retained and the decisions are reapplied during preview/integration.
+
+`merge-preview --decisions decisions.json` accepts both kinds of entry. The runner
+appends validated decisions not already logged for that baseline to `change_log.jsonl`
+(or `--change-log`) using `ReviewDecisionEvent`
+(event/submission IDs, UTC timestamp, baseline fingerprint and the same decision).
+This local log is the PB09 handoff until shared audit storage is available;
+automatic defaults and pure replay do not create reviewer events. See the
+[review workflow](README.md#review-category-and-speciality-proposals-57).
+
+Tag decision fields:
 
 | Field                     | Meaning                                                                                              |
 | ------------------------- | ---------------------------------------------------------------------------------------------------- |
@@ -288,8 +326,8 @@ to empty. Automatic acceptance includes all supplied paths for unflagged tags. `
 cannot approve links. Reuse preserves the baseline label.
 
 ```python
-from taxonomy_pipeline.classification.models import ReviewDecision, TaxonomyPath
-from taxonomy_pipeline.classification.resolution import resolve_outputs
+from taxonomy_pipeline.enrichment.models import ReviewDecision, TaxonomyPath
+from taxonomy_pipeline.enrichment.resolution import resolve_outputs
 
 # Example approval for a source identity present in the deduplication report.
 decision = ReviewDecision(
@@ -316,7 +354,10 @@ resolution = resolve_outputs(deduplication, taxonomy, [decision])
   produce a new tag ID; changing input order does not.
 - `ResolutionReport` contains approved hierarchy nodes, canonical tags, mappings,
   unique links, source dispositions, counts, decisions, and the full deduplication
-  evidence. Hierarchy nodes without approved links are omitted. Unapproved placements
+  evidence. Each disposition's `reason` explains in words why the tag was held or
+  flagged, and `reason_codes` lists the same reasons, in order, as codes to branch on:
+  `hierarchy_review`, `baseline_name_match`, `producer_flagged`, `hierarchy_blocked`
+  and `duplicate_candidate` (empty when nothing flagged it). Hierarchy nodes without approved links are omitted. Unapproved placements
   remain visible; repeated links are collapsed and baseline links marked `existing`.
 - Path reuse is rechecked against the supplied baseline. Changed or ambiguous targets
   require revalidation. A content fingerprint identifies the baseline used for resolution.
@@ -332,8 +373,8 @@ This stage returns proposed changes without modifying the baseline or writing to
 Build the preview from resolution and the same baseline, then export it:
 
 ```python
-from taxonomy_pipeline.classification.preview import build_preview
-from taxonomy_pipeline.classification.export import export_preview_csv
+from taxonomy_pipeline.enrichment.preview import build_preview
+from taxonomy_pipeline.enrichment.export import export_preview_csv
 
 preview = build_preview(resolution, taxonomy)
 export_preview_csv(preview, "preview.csv")

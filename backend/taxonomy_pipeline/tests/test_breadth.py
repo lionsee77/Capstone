@@ -1,37 +1,16 @@
-from pathlib import Path
 
 import pytest
 
-from taxonomy_pipeline.datasets.base import TaxonomyDataset
-from taxonomy_pipeline.datasets.ssic import SsicRecord, SsicReference
-from taxonomy_pipeline.datasets.ssoc import SsocRecord, SsocReference
-from taxonomy_pipeline.metrics.breadth import BreadthMetric
-from taxonomy_pipeline.metrics.depth import DepthMetric
-
-
-def datasets():
-    return {
-        "original": TaxonomyDataset(
-            name="original",
-            categories=[{"id": 1, "name": "Accounting", "service_id": 1},
-                        {"id": 2, "name": "Retail", "service_id": 2}],
-            specialities=[{"id": 10, "name": "Accountants"}],
-        ),
-        "ssic": SsicReference(source_path=Path("ssic.xlsx"), records=[
-            SsicRecord(code="01", title="Accounting", level="division", parent_code="A"),
-            SsicRecord(code="02", title="Retail", level="division", parent_code="A"),
-            SsicRecord(code="A", title="Accounting", level="section", parent_code=None),
-        ]),
-        "ssoc": SsocReference(source_path=Path("ssoc.xlsx"), records=[
-            SsocRecord(code="241", title="Accountants", level="minor_group", parent_code="24"),
-            SsocRecord(code="242", title="Nurses", level="minor_group", parent_code="24"),
-        ]),
-    }
+from taxonomy_pipeline.quality.breadth import BreadthMetric
+from taxonomy_pipeline.quality.depth import DepthMetric
+from taxonomy_pipeline.taxonomy.base import TaxonomyDataset
+from taxonomy_pipeline.taxonomy.references.ssic import SsicRecord
+from tests.conftest import breadth_datasets
 
 
 def run(data=None, **params):
     return BreadthMetric().run(
-        datasets() if data is None else data,
+        breadth_datasets() if data is None else data,
         {"target": "original",
          "matching_method": "lexical",
          **params}
@@ -68,7 +47,7 @@ def test_selectable_and_empty_levels():
 
 
 def test_empty_targets_do_not_match_even_at_zero_threshold():
-    data = datasets()
+    data = breadth_datasets()
     data["original"] = TaxonomyDataset(name="original")
     result = run(data, threshold=0)
     assert result.details["industry"]["coverage"] == 0
@@ -76,7 +55,7 @@ def test_empty_targets_do_not_match_even_at_zero_threshold():
 
 
 def test_distinct_codes_and_duplicate_target_names():
-    data = datasets()
+    data = breadth_datasets()
     data["original"].categories.append(dict(data["original"].categories[0], id=3))
     data["ssic"].records.append(data["ssic"].records[0])
     data["ssic"].records.append(SsicRecord(
@@ -102,13 +81,13 @@ def test_missing_and_wrong_dataset_types():
     assert run({}).status == "error"
     assert run(ssic_reference="ssoc").status == "error"
     assert run(ssoc_reference="original").status == "error"
-    assert BreadthMetric().run(datasets(), {"target": "ssic"}).status == "error"
-    assert DepthMetric().run(datasets(), {"dataset": "ssic"}).status == "error"
+    assert BreadthMetric().run(breadth_datasets(), {"target": "ssic"}).status == "error"
+    assert DepthMetric().run(breadth_datasets(), {"dataset": "ssic"}).status == "error"
 
 
 @pytest.mark.parametrize("profile", ["typography_v1", "legacy"])
 def test_profiles_keep_counts_ties_and_threshold_boundaries(profile):
-    data = datasets()
+    data = breadth_datasets()
     data["original"].categories.append({"id": 3, "name": "ACCOUNTING", "service_id": 1})
     result = run(data, threshold=100, preprocessing=profile)
     detail = result.details["industry"]
@@ -121,7 +100,7 @@ def test_profiles_keep_counts_ties_and_threshold_boundaries(profile):
 
 
 def test_typography_matches_both_sides_without_mutation():
-    data = datasets()
+    data = breadth_datasets()
     data["ssic"].records[0].title = "POST-MARKET / SERVICES"
     data["original"].categories[0]["name"] = "Post‑Market/Services"
     data["original"].categories.append({"id": 3, "name": "POST-MARKET / SERVICES", "service_id": 1})

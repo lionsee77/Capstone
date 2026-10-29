@@ -1,1 +1,1 @@
-"""FastAPI layer - a thin HTTP wrapper over `pipeline.run_pipeline`."""
+"""FastAPI layer - a thin HTTP wrapper over the `app/` use cases."""

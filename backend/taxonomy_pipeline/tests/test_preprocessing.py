@@ -1,6 +1,6 @@
 import pytest
 
-from taxonomy_pipeline.metrics.preprocessing import get_normalizer, typography_v1
+from taxonomy_pipeline.matching.preprocessing import get_normalizer, typography_v1
 
 
 @pytest.mark.parametrize("source, expected", [

@@ -5,11 +5,10 @@ import pytest
 from fastapi.testclient import TestClient
 
 from taxonomy_pipeline.api.app import app
-from taxonomy_pipeline.datasets.base import TaxonomyDataset
-from taxonomy_pipeline.metrics import embeddings
-from taxonomy_pipeline.metrics.breadth import BreadthMetric
-from tests.test_breadth import datasets
-from tests.test_classifications import config_payload
+from taxonomy_pipeline.matching import embeddings
+from taxonomy_pipeline.quality.breadth import BreadthMetric
+from taxonomy_pipeline.taxonomy.base import TaxonomyDataset
+from tests.conftest import breadth_datasets, classification_config_payload
 
 
 @pytest.fixture
@@ -23,11 +22,11 @@ def encoder(monkeypatch):
 
 
 def run(data=None, **params):
-    return BreadthMetric().run(datasets() if data is None else data, {"target": "original", **params})
+    return BreadthMetric().run(breadth_datasets() if data is None else data, {"target": "original", **params})
 
 
 def test_semantic_default_metadata_candidates_and_no_mutation(encoder):
-    data = datasets()
+    data = breadth_datasets()
     before = {name: ds.model_dump() for name, ds in data.items()}
     result = run(data)
     assert result.status == "ok"
@@ -54,7 +53,7 @@ def test_semantic_default_metadata_candidates_and_no_mutation(encoder):
 
 
 def test_top_k_stable_ties_and_duplicate_target_rows(encoder):
-    data = datasets()
+    data = breadth_datasets()
     data["original"].categories = [
         {"id": i, "name": "Accounting", "service_id": 1} for i in range(7)
     ]
@@ -84,7 +83,7 @@ def test_unrounded_threshold_and_negative_similarity(monkeypatch):
 def test_ranks_best_target_first(encoder):
     result = run(industry_service_id=2)
     assert result.details["industry"]["matched"][0]["title"] == "Retail"
-    data = datasets()
+    data = breadth_datasets()
     data["original"].categories[1]["service_id"] = 1
     detail = run(data).details["industry"]
     assert [m["target_id"] for m in detail["matched"]] == [1, 2]
@@ -94,7 +93,7 @@ def test_empty_targets_and_reference_levels_do_not_load_model(monkeypatch):
     def fail():
         pytest.fail("No model should be needed")
     monkeypatch.setattr(embeddings, "_get_model", fail)
-    data = datasets()
+    data = breadth_datasets()
     data["original"] = TaxonomyDataset(name="original", categories=[
         {"id": 1, "name": " ", "service_id": 1}])
     result = run(data, semantic_threshold=-1)
@@ -153,7 +152,7 @@ def test_semantic_text_preserves_readable_label():
 
 def test_api_persists_semantic_defaults_and_candidates(encoder, classification_paths, isolated_db):
     client = TestClient(app)
-    payload = config_payload(classification_paths)
+    payload = classification_config_payload(classification_paths)
     payload["metrics"][0]["params"].pop("matching_method")
     created = client.post("/runs", json=payload)
     assert created.status_code == 202

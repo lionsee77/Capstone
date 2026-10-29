@@ -20,6 +20,10 @@ export const metricResultSchema = z.object({
   summary: z.string(),
   // Metric-specific; each metric module documents its own shape.
   details: z.record(z.string(), z.unknown()),
+  // Which config entry produced the result (position, and params resolved over
+  // the metric's defaults). Null or absent on reports saved before they existed.
+  index: z.number().int().nullish(),
+  params: z.record(z.string(), z.unknown()).nullish(),
 });
 export type MetricResult = z.infer<typeof metricResultSchema>;
 
@@ -27,23 +31,62 @@ export const datasetSummarySchema = z.object({
   name: z.string(),
   counts: z.record(z.string(), z.number()),
 });
+export type DatasetSummary = z.infer<typeof datasetSummarySchema>;
 
 export const runReportSchema = z.object({
   run_id: z.string(),
   created_at: z.string(),
   finished_at: z.string().nullable(),
   status: runStatusSchema,
+  // The metric definitions (formulas and defaults) the run was scored with; only
+  // runs with the same version compare. Null or absent on reports saved before
+  // runs were stamped, whose definitions are unknown.
+  metric_definitions_version: z.number().int().nullish(),
   datasets: z.array(datasetSummarySchema),
   results: z.array(metricResultSchema),
   error: z.string().nullable(),
 });
 export type RunReport = z.infer<typeof runReportSchema>;
 
-/** `GET /runs` rows - a summary, not the full report. */
+/** Mirrors `ComparabilityIssue`: one reason two runs' numbers don't compare like for like. */
+export const comparabilityIssueSchema = z.object({
+  kind: z.enum(["run_status", "definitions_version", "missing_result", "result_status", "settings", "reference_data"]),
+  message: z.string(),
+});
+export type ComparabilityIssue = z.infer<typeof comparabilityIssueSchema>;
+
+/** Mirrors `MetricComparison`: a scoring result paired with its counterpart; an index is null when there is none. */
+export const metricComparisonSchema = z.object({
+  metric_id: z.string(),
+  before_index: z.number().int().nullable(),
+  after_index: z.number().int().nullable(),
+  issues: z.array(comparabilityIssueSchema),
+});
+export type MetricComparison = z.infer<typeof metricComparisonSchema>;
+
+/**
+ * Mirrors `Comparability` (`quality.definitions.check_comparable`): whether two runs were scored alike. A
+ * version comparison (#69) shows deltas only for pairs without issues, and none when `issues` isn't empty.
+ */
+export const comparabilitySchema = z.object({
+  before_run_id: z.string(),
+  after_run_id: z.string(),
+  // Null when that run didn't finish, so it records no scored taxonomy.
+  before_subject: z.string().nullable(),
+  after_subject: z.string().nullable(),
+  before_definitions_version: z.number().int().nullable(),
+  after_definitions_version: z.number().int().nullable(),
+  issues: z.array(comparabilityIssueSchema),
+  metrics: z.array(metricComparisonSchema),
+  comparable: z.boolean(),
+});
+export type Comparability = z.infer<typeof comparabilitySchema>;
+
+/** Mirrors `RunSummary`: `GET /runs` rows - a summary, not the full report. */
 export const runSummarySchema = runReportSchema.pick({ run_id: true, status: true, created_at: true });
 export type RunSummary = z.infer<typeof runSummarySchema>;
 
-/** `GET /metrics` - catalogue keyed by metric id. */
+/** Mirrors `dict[str, MetricInfo]`: `GET /metrics` - catalogue keyed by metric id. */
 export const metricCatalogueSchema = z.record(
   z.string(),
   z.object({
@@ -53,11 +96,11 @@ export const metricCatalogueSchema = z.record(
 );
 export type MetricCatalogue = z.infer<typeof metricCatalogueSchema>;
 
-/** Source types registered in `datasets/__init__.py`. */
+/** Source types registered in `taxonomy/__init__.py`. */
 export const datasetTypeSchema = z.enum(["sql_dump", "ssic", "ssoc"]);
 export type DatasetType = z.infer<typeof datasetTypeSchema>;
 
-/** Reference classifications load from a single workbook (`datasets/__init__.py`). */
+/** Reference classifications load from a single workbook (`taxonomy/__init__.py`). */
 const SINGLE_PATH_TYPES: ReadonlySet<DatasetType> = new Set(["ssic", "ssoc"]);
 
 export const datasetConfigSchema = z
@@ -84,16 +127,190 @@ export type MetricConfig = z.infer<typeof metricConfigSchema>;
 
 /** `POST /runs` body - same schema as the YAML configs. */
 export const pipelineConfigSchema = z.object({
+  // Optional pin: the run fails if the pipeline implements another definitions version.
+  metric_definitions_version: z.number().int().positive().optional(),
   datasets: z.array(datasetConfigSchema).min(1, "Add at least one dataset"),
   metrics: z.array(metricConfigSchema).min(1, "Pick at least one metric"),
 });
 export type PipelineConfig = z.infer<typeof pipelineConfigSchema>;
 
+/** Mirrors `RunCreated`: the `POST /runs` response. */
 export const createRunResponseSchema = z.object({
   run_id: z.string(),
   status: z.literal("queued"),
 });
 
+/** Mirrors enrichment/proposals/models.py; persisted as resolution.json's optional `screening` field. */
+const proposalConceptLevelSchema = z.enum(["category", "speciality"]);
+const proposalConceptIdSchema = z.union([z.number().int(), z.string()]).nullable();
+
+export const existingConceptSchema = z.object({
+  reference: z.string(),
+  level: proposalConceptLevelSchema,
+  id: proposalConceptIdSchema,
+  name: z.string(),
+  path: z.array(z.string().nullable()),
+  path_ids: z.array(proposalConceptIdSchema),
+  reusable: z.boolean(),
+});
+
+export const conceptMatchSchema = z.object({
+  concept: existingConceptSchema,
+  match_types: z.array(z.enum(["normalized_name", "match_key", "lexical", "semantic"])),
+  lexical_score: z.number().min(0).max(1),
+  semantic_score: z.number().min(-1).max(1).nullable().default(null),
+  same_parent: z.boolean(),
+});
+
+export const screenedProposalSchema = z.object({
+  proposal_id: z.string(),
+  level: proposalConceptLevelSchema,
+  name: z.string(),
+  path: z.array(z.string()),
+  variants: z.array(z.array(z.string())),
+  source_tags: z.array(z.tuple([z.string(), z.string()])),
+  origins: z.array(z.tuple([z.string(), z.number().int()])),
+  matches: z.array(conceptMatchSchema).default([]),
+  status: z.enum(["new", "reuse", "review"]),
+  suggested_action: z.enum(["create", "reuse", "defer"]).optional(), // Absent in older saved reports.
+  existing_id: z.number().int().nullable().default(null),
+  blocks_creation: z.boolean().default(false),
+  reason: z.string(),
+});
+
+export const screeningSettingsSchema = z.object({
+  lexical_threshold: z.number().min(0).max(1).default(0.9),
+  semantic_threshold: z.number().min(0).max(1).default(0.7),
+}).strict();
+
+export const proposalScreeningReportSchema = z.object({
+  baseline_snapshot_id: z.string(),
+  settings: screeningSettingsSchema,
+  semantic_status: z.enum(["disabled", "complete", "failed"]),
+  skipped_checks: z.record(z.string(), z.string()).default({}),
+  proposals: z.array(screenedProposalSchema),
+});
+export type ProposalScreeningReport = z.infer<typeof proposalScreeningReportSchema>;
+
+/** One ReviewDecision contract for tag groups and hierarchy proposals (#57). */
+const reviewTextSchema = z.string().regex(/\S/);
+const reviewIdSchema = z.number().int().positive();
+export const reviewDecisionSchema = z.object({
+  members: z.array(z.object({ source_dataset: reviewTextSchema, tag_id: reviewTextSchema })).default([]),
+  proposal_id: reviewTextSchema.nullable().default(null),
+  action: z.enum(["create", "exclude", "reuse", "defer"]),
+  reason: reviewTextSchema,
+  existing_tag_id: reviewIdSchema.nullable().default(null),
+  existing_concept_id: reviewIdSchema.nullable().default(null),
+  approved_speciality_ids: z.array(reviewIdSchema).default([]),
+  approved_paths: z.array(z.object({
+    service: z.enum(["Industry", "Function", "Subject", "Others"]),
+    category: reviewTextSchema, speciality: reviewTextSchema,
+  })).default([]),
+  canonical_name: reviewTextSchema.nullable().default(null),
+}).strict().superRefine((decision, context) => {
+  const hasLinks = decision.approved_paths.length > 0 || decision.approved_speciality_ids.length > 0;
+  const hierarchy = decision.proposal_id !== null;
+  const valid = hierarchy
+    ? decision.members.length === 0 && decision.existing_tag_id === null && !hasLinks
+      && decision.canonical_name === null
+      && (decision.action === "reuse") === (decision.existing_concept_id !== null)
+    : decision.members.length > 0 && decision.existing_concept_id === null
+      && (decision.action === "reuse") === (decision.existing_tag_id !== null)
+      && (!(decision.action === "exclude" || decision.action === "defer") || !hasLinks)
+      && (decision.action === "create" || decision.canonical_name === null);
+  if (!valid) context.addIssue({ code: "custom", message: "Decision target and fields do not match its action" });
+});
+export type ReviewDecision = z.infer<typeof reviewDecisionSchema>;
+
+export const reviewDecisionEventSchema = z.object({
+  event_id: reviewTextSchema,
+  submission_id: reviewTextSchema,
+  recorded_at: z.string().datetime({ offset: true }),
+  baseline_snapshot_id: reviewTextSchema,
+  event_type: z.literal("review_decision").default("review_decision"),
+  decision: reviewDecisionSchema,
+}).strict();
+
+export const resolvedHierarchyNodeSchema = z.object({
+  level: proposalConceptLevelSchema,
+  id: z.union([reviewIdSchema, reviewTextSchema]),
+  parent_id: z.union([reviewIdSchema, reviewTextSchema]),
+  name: reviewTextSchema,
+  path: z.array(z.string()),
+  existing: z.boolean(),
+});
+
+export const proposalReviewItemSchema = z.object({
+  proposal: screenedProposalSchema,
+  proposed_path: z.array(z.string()),
+  proposed_parent: z.array(z.string()),
+  decision: reviewDecisionSchema.nullable().default(null),
+  resolved_node: resolvedHierarchyNodeSchema.nullable().default(null),
+});
+
+/** Saved evidence and decisions returned identically by the review CLI and API (#58). */
+export const proposalReviewReportSchema = z.object({
+  baseline_snapshot_id: z.string(),
+  settings: screeningSettingsSchema,
+  semantic_status: z.enum(["disabled", "complete", "failed"]),
+  skipped_checks: z.record(z.string(), z.string()),
+  total: z.number().int().nonnegative(),
+  offset: z.number().int().nonnegative(),
+  limit: z.number().int().min(1).max(200),
+  proposals: z.array(proposalReviewItemSchema),
+});
+export type ProposalReviewReport = z.infer<typeof proposalReviewReportSchema>;
+
 export function isRunFinished(status: RunStatus): boolean {
   return status === "done" || status === "failed";
 }
+
+/** The concept tables a taxonomy dataset always reports counts for - absent
+ * on a classification reference (ssic/ssoc), which counts its own levels
+ * instead. Used to tell `/taxonomy`-searchable datasets apart from ones
+ * that aren't. */
+const TAXONOMY_CONCEPT_KEYS = ["services", "categories", "specialities", "tags"] as const;
+export function isTaxonomyDataset(dataset: DatasetSummary): boolean {
+  return TAXONOMY_CONCEPT_KEYS.every((key) => key in dataset.counts);
+}
+
+/** Matches `taxonomy/base.py`'s CONCEPTS, minus `speciality_tags` (a join table, not a level). */
+export const conceptLevelSchema = z.enum(["services", "categories", "specialities", "tags"]);
+export type ConceptLevel = z.infer<typeof conceptLevelSchema>;
+
+/** A concept id is usually an integer, but a proposed-not-yet-integrated
+ * concept can carry a temporary string id (e.g. "skillsfuture:501"). */
+const conceptIdSchema = z.union([z.number(), z.string()]);
+
+export const taxonomyConceptRefSchema = z.object({
+  id: conceptIdSchema,
+  name: z.string(),
+});
+export type TaxonomyConceptRef = z.infer<typeof taxonomyConceptRefSchema>;
+
+/** `GET /taxonomy/search` result row. */
+export const taxonomyConceptSummarySchema = taxonomyConceptRefSchema.extend({
+  level: conceptLevelSchema,
+});
+export type TaxonomyConceptSummary = z.infer<typeof taxonomyConceptSummarySchema>;
+
+/** One parent chain from a concept up to its service; any step can be null (an orphan row). */
+export const taxonomyPathSchema = z.object({
+  service: taxonomyConceptRefSchema.nullable(),
+  category: taxonomyConceptRefSchema.nullable(),
+  speciality: taxonomyConceptRefSchema.nullable(),
+});
+export type TaxonomyPath = z.infer<typeof taxonomyPathSchema>;
+
+/** `GET /taxonomy/{level}/{id}` - a concept's path(s) up, children, and (for a speciality) its tags. */
+export const taxonomyConceptDetailSchema = z.object({
+  id: conceptIdSchema,
+  name: z.string(),
+  level: conceptLevelSchema,
+  dataset: z.string(),
+  paths: z.array(taxonomyPathSchema),
+  children: z.array(taxonomyConceptRefSchema),
+  tags: z.array(taxonomyConceptRefSchema),
+});
+export type TaxonomyConceptDetail = z.infer<typeof taxonomyConceptDetailSchema>;

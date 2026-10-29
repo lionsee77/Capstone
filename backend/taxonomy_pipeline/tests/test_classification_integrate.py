@@ -6,17 +6,16 @@ from pathlib import Path
 
 import pytest
 
-from taxonomy_pipeline.classification import integrate as integrate_module
-from taxonomy_pipeline.classification.integrate import IntegrationError, _additions_sql, integrate
-from taxonomy_pipeline.classification.models import ResolutionReport, ReviewDecision, TaxonomyPath
-from taxonomy_pipeline.classification.runner import load_decisions, run_merge_preview
-from taxonomy_pipeline.config import DatasetConfig, load_config
-from taxonomy_pipeline.datasets.base import CONCEPTS, TaxonomyDataset
-from taxonomy_pipeline.datasets.sql_dump import SqlDumpSource, iter_insert_statements
-from taxonomy_pipeline.pipeline import load_datasets
-
-FIXTURES = Path(__file__).parent / "fixtures" / "classification"
-PRODUCER_FILES = [FIXTURES / "case_a.json", FIXTURES / "case_b.json"]
+from taxonomy_pipeline.app.scoring import load_datasets
+from taxonomy_pipeline.config import DatasetConfig, MetricConfig, PipelineConfig, load_config
+from taxonomy_pipeline.enrichment import integrate as integrate_module
+from taxonomy_pipeline.enrichment.integrate import IntegrationError, _additions_sql, integrate
+from taxonomy_pipeline.enrichment.models import PlacementPath, ResolutionReport, ReviewDecision
+from taxonomy_pipeline.enrichment.runner import load_decisions, run_merge_preview
+from taxonomy_pipeline.taxonomy.base import CONCEPTS, TaxonomyDataset
+from taxonomy_pipeline.taxonomy.sql_dump import SqlDumpSource, iter_insert_statements
+from tests.conftest import CLASSIFICATION_FIXTURES as FIXTURES
+from tests.conftest import PRODUCER_FILES, approve_data_analytics, review_candidate_file
 
 
 def _literal(value: object) -> str:
@@ -211,8 +210,6 @@ def test_additions_round_trip_awkward_names_through_the_sql_parser():
 
 
 def test_refuses_flagged_review_candidates_until_a_reviewer_approves_one_path(tmp_path, baseline):
-    from tests.test_classification_runner import approve_data_analytics, review_candidate_file
-
     taxonomy = SqlDumpSource(baseline.name, baseline.paths).load()
     inputs = [review_candidate_file(tmp_path)]
 
@@ -246,7 +243,7 @@ def test_a_reviewer_can_map_an_ambiguous_tag_onto_the_existing_tag_it_resembles(
     taxonomy = SqlDumpSource(baseline.name, baseline.paths).load()
     reuse_sql = ReviewDecision(
         members=[{"source_dataset": "skillsfuture", "tag_id": "77"}], action="reuse", existing_tag_id=200,
-        approved_paths=[TaxonomyPath(service="Subject", category="Data analytics", speciality="Data presentation")],
+        approved_paths=[PlacementPath(service="Subject", category="Data analytics", speciality="Data presentation")],
         reason="Same skill as SQL.",
     )
 
@@ -259,3 +256,45 @@ def test_a_reviewer_can_map_an_ambiguous_tag_onto_the_existing_tag_it_resembles(
     assert result.counts["tags"] == 0  # no new tag: the skill is SQL
     enriched = load_datasets(load_config(tmp_path / "out" / "enriched.yaml"))["enriched"]
     assert {(link["speciality_id"], link["tag_id"]) for link in enriched.speciality_tags} == {(122, 200), (120, 200)}
+
+
+def test_enriched_config_falls_back_to_integrity_and_depth_without_scoring_metrics(tmp_path, baseline):
+    # A round config that only places tags: nothing in it scores the baseline.
+    scoring = PipelineConfig(datasets=[baseline], metrics=[
+        MetricConfig(id="category_adaptation", params={"baseline": baseline.name, "incoming": "x"}),
+    ])
+    integrate(_resolution(tmp_path, baseline), baseline, out_dir=tmp_path / "out", scoring_config=scoring)
+
+    config = load_config(tmp_path / "out" / "enriched.yaml")
+    assert [(m.id, m.params) for m in config.metrics] == [
+        ("integrity", {"dataset": "enriched"}), ("depth", {"dataset": "enriched"}),
+    ]
+    assert [d.name for d in config.datasets] == ["enriched"]
+
+
+@pytest.mark.parametrize("pin", [1, None])
+def test_the_enriched_config_keeps_the_round_configs_metric_definitions_pin(tmp_path, baseline, pin):
+    # A pinned round config (configs/baseline_v<N>.yaml) holds the snapshot's scoring to the same version.
+    scoring = PipelineConfig(metric_definitions_version=pin, datasets=[baseline], metrics=[
+        MetricConfig(id="integrity", params={"dataset": baseline.name}),
+    ])
+    integrate(_resolution(tmp_path, baseline), baseline, out_dir=tmp_path / "out", scoring_config=scoring)
+
+    assert load_config(tmp_path / "out" / "enriched.yaml").metric_definitions_version == pin
+
+
+def test_the_snapshot_never_shares_a_name_with_a_dataset_its_metrics_read(tmp_path, baseline):
+    # The round compares against an earlier snapshot that is itself called "enriched".
+    earlier = DatasetConfig(name="enriched", paths=baseline.paths)
+    scoring = PipelineConfig(datasets=[baseline, earlier], metrics=[
+        MetricConfig(id="saturation", params={"baseline": baseline.name, "incoming": ["enriched"]}),
+    ])
+    integrate(_resolution(tmp_path, baseline), baseline, out_dir=tmp_path / "out", scoring_config=scoring)
+
+    config = load_config(tmp_path / "out" / "enriched.yaml")
+    assert [d.name for d in config.datasets] == ["enriched_2", "enriched"]
+    assert [(m.id, m.params) for m in config.metrics] == [
+        ("integrity", {"dataset": "enriched_2"}), ("depth", {"dataset": "enriched_2"}),
+        ("saturation", {"baseline": "enriched_2", "incoming": ["enriched"]}),
+    ]
+    assert config.datasets[0].paths[-1].endswith("additions.sql")  # the snapshot, not the earlier one

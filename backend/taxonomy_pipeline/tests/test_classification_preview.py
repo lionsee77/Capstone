@@ -7,12 +7,12 @@ from typing import Any
 
 import pytest
 
-from taxonomy_pipeline.classification.deduplication import deduplicate_outputs
-from taxonomy_pipeline.classification.models import MergePreview, ResolutionReport, ReviewDecision, TaxonomyPath
-from taxonomy_pipeline.classification.preview import build_preview
-from taxonomy_pipeline.classification.resolution import resolve_outputs
-from taxonomy_pipeline.classification.validation import validate_outputs
-from taxonomy_pipeline.datasets.base import TaxonomyDataset
+from taxonomy_pipeline.enrichment.deduplication import deduplicate_outputs
+from taxonomy_pipeline.enrichment.models import MergePreview, PlacementPath, ResolutionReport, ReviewDecision
+from taxonomy_pipeline.enrichment.preview import build_preview
+from taxonomy_pipeline.enrichment.resolution import resolve_outputs
+from taxonomy_pipeline.enrichment.validation import validate_outputs
+from taxonomy_pipeline.taxonomy.base import TaxonomyDataset
 
 FIXTURES = Path(__file__).parent / "fixtures" / "classification"
 
@@ -36,7 +36,7 @@ def approve(rows: list[dict[str, Any]], **changes: Any) -> ReviewDecision:
     members = {(row["source_dataset"], row["tag_id"]) for row in rows}
     return ReviewDecision(
         members=[{"source_dataset": source, "tag_id": identifier} for source, identifier in sorted(members)],
-        reason="Reviewed", **(dict(action="create", approved_paths=[TaxonomyPath(
+        reason="Reviewed", **(dict(action="create", approved_paths=[PlacementPath(
             service=row["service"], category=row["category"], speciality=row["speciality"],
         ) for row in rows]) | changes),
     )
@@ -245,9 +245,14 @@ def test_default_acceptance_adds_unflagged_paths_and_retains_candidate_review(ba
 
 # Treat equal names as separate approved concepts when reviews explicitly retained both identities.
 def test_distinct_same_name_concepts_do_not_become_structural_errors(baseline: TaxonomyDataset) -> None:
-    rows = [placement(tag_id="one", tag="Python"), placement(tag_id="two", tag="Python", speciality="Zoology")]
+    rows = [
+        placement(tag_id="one", tag="Python"),
+        placement(tag_id="two", tag="Python", category="Biology", speciality="Zoology"),
+    ]
     preview = build_preview(resolve(rows, baseline, [approve([row]) for row in rows]), baseline)
     assert not preview.blocked and preview.counts.added_tags == 2
+    assert preview.counts.pending_sources == 0
+    assert preview.counts.added_categories == preview.counts.added_specialities == 0
     assert preview.preview_integrity.details["exact_duplicates"]["tags"]
 
 

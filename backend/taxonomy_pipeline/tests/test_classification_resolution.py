@@ -8,16 +8,11 @@ from typing import Any
 import pytest
 from pydantic import ValidationError
 
-from taxonomy_pipeline.classification.deduplication import deduplicate_outputs
-from taxonomy_pipeline.classification.models import (
-    DeduplicationReport,
-    ResolutionReport,
-    ReviewDecision,
-    TaxonomyPath,
-)
-from taxonomy_pipeline.classification.resolution import resolve_outputs
-from taxonomy_pipeline.classification.validation import validate_outputs
-from taxonomy_pipeline.datasets.base import TaxonomyDataset
+from taxonomy_pipeline.enrichment.deduplication import deduplicate_outputs
+from taxonomy_pipeline.enrichment.models import DeduplicationReport, PlacementPath, ResolutionReport, ReviewDecision
+from taxonomy_pipeline.enrichment.resolution import resolve_outputs
+from taxonomy_pipeline.enrichment.validation import validate_outputs
+from taxonomy_pipeline.taxonomy.base import TaxonomyDataset
 
 FIXTURES = Path(__file__).parent / "fixtures" / "classification"
 
@@ -61,8 +56,35 @@ def decision(
 
 
 # Refer to a placement without relying on existing or temporary numeric IDs.
-def path(**changes: str) -> TaxonomyPath:
-    return TaxonomyPath(**(dict(service="Subject", category="Computing", speciality="Languages") | changes))
+def path(**changes: str) -> PlacementPath:
+    return PlacementPath(**(dict(service="Subject", category="Computing", speciality="Languages") | changes))
+
+
+# Each pending tag records why it is held as codes, matching its reason text, so callers need not parse it.
+def test_dispositions_carry_a_reason_code_for_each_hold(baseline: TaxonomyDataset) -> None:
+    report = dedup([
+        row("name", "SQL"),
+        row("pair-1", "Payroll"), row("pair-2", "payroll!"),
+        row("flagged", "Fire prevention", needs_review=True),
+        row("plain", "Glassblowing"),
+    ], baseline)
+    result = resolve_outputs(report, baseline, [])
+    by_tag = {item.source.tag_id: item for item in result.dispositions}
+    assert by_tag["name"].reason_codes == ["baseline_name_match"]
+    assert by_tag["name"].reason.startswith("Potential duplicate: normalized name matches baseline tags")
+    assert by_tag["pair-1"].reason_codes == by_tag["pair-2"].reason_codes == ["duplicate_candidate"]
+    assert by_tag["flagged"].reason_codes == ["producer_flagged"]
+    assert by_tag["flagged"].reason.startswith("Producer requested review")
+    assert by_tag["plain"].status == "accepted" and by_tag["plain"].reason_codes == []
+
+
+# A merge run saved before reason codes still loads, with no codes.
+def test_a_disposition_saved_without_reason_codes_still_loads(baseline: TaxonomyDataset) -> None:
+    result = resolve_outputs(dedup([row("x", "Glassblowing")], baseline), baseline, [])
+    saved = json.loads(result.model_dump_json())
+    for item in saved["dispositions"]:
+        del item["reason_codes"]
+    assert ResolutionReport.model_validate(saved).dispositions[0].reason_codes == []
 
 
 # Merge a reviewed group across unrelated source datasets and retain every approved parent link.
@@ -189,7 +211,7 @@ def test_shared_labels_do_not_collapse_different_parent_paths(baseline: Taxonomy
     ]
     report = dedup(placements, baseline)
     approvals = [
-        TaxonomyPath(**{key: item[key] for key in ("service", "category", "speciality")}) for item in placements
+        PlacementPath(**{key: item[key] for key in ("service", "category", "speciality")}) for item in placements
     ]
     result = resolve_outputs(report, baseline, [decision(approved_paths=approvals)])
     assert len(result.hierarchy) == 6 and len({node.id for node in result.hierarchy}) == 6
@@ -206,10 +228,13 @@ def test_label_variants_and_repeated_placements_share_one_link(baseline: Taxonom
 
 # Stable IDs depend on identities and parent paths rather than report or decision ordering.
 def test_resolved_content_is_stable_when_inputs_and_decisions_are_reordered(baseline: TaxonomyDataset) -> None:
-    report = dedup([row("x", "First", category="New"), row("y", "Second", category="New")], baseline)
+    report = dedup([
+        row("x", "First", category="New", speciality="Operations"),
+        row("y", "Second", category="New", speciality="Operations"),
+    ], baseline)
     decisions = [
-        decision(approved_paths=[path(category="New")]),
-        decision([("catalogue", "y")], approved_paths=[path(category="New")]),
+        decision(approved_paths=[path(category="New", speciality="Operations")]),
+        decision([("catalogue", "y")], approved_paths=[path(category="New", speciality="Operations")]),
     ]
     first = resolve_outputs(report, baseline, decisions)
     report.tags.reverse()
@@ -218,7 +243,9 @@ def test_resolved_content_is_stable_when_inputs_and_decisions_are_reordered(base
     baseline.tags.reverse()
     second = resolve_outputs(report, baseline, list(reversed(decisions)))
     assert first.model_dump(exclude={"evidence"}) == second.model_dump(exclude={"evidence"})
-    expanded = dedup([row("z", "Unrelated"), row("x", "First", category="New")], baseline)
+    expanded = dedup([
+        row("z", "Unrelated"), row("x", "First", category="New", speciality="Operations"),
+    ], baseline)
     later = resolve_outputs(expanded, baseline, decisions[:1])
     assert next(tag.id for tag in first.tags if tag.name == "First") == next(
         tag.id for tag in later.tags if tag.name == "First"
@@ -306,25 +333,6 @@ def test_invalid_review_extensions_are_rejected(action: str) -> None:
             decision(action=action, approved_paths=[path()])
 
 
-# Legacy files enter through intake only; resolution sees the same generic report as current producers.
-def test_legacy_adapter_reports_use_the_same_resolution_entry_point() -> None:
-    baseline = TaxonomyDataset.model_validate_json((FIXTURES / "taxonomy.json").read_text(encoding="utf-8"))
-    intake = validate_outputs(
-        {name: (FIXTURES / name).read_text(encoding="utf-8") for name in ("legacy_case_a.json", "legacy_case_b.json")},
-        baseline, case_a_inputs={"legacy_case_a.json"}, case_b_sources={"legacy_case_b.json": "skillsfuture"},
-        skip_case_a_handoffs=True,
-    )
-    report = deduplicate_outputs(intake)
-    decisions = [ReviewDecision(
-        members=[tag.source], action="create", reason="Reviewed separately", approved_paths=[
-            TaxonomyPath(service=p.service, category=p.category, speciality=p.speciality) for p in tag.placements
-        ],
-    ) for tag in report.tags]
-    result = resolve_outputs(report, baseline, decisions)
-    assert len(result.tags) == 3 and result.counts["omitted_input_records"] == 1
-    assert all(node.path[0] == "Industry" for node in result.hierarchy)
-
-
 # Resolve the published current-contract fixture and review file through the full downstream sequence.
 def test_shared_review_fixture_resolves_current_contract_sources() -> None:
     baseline = TaxonomyDataset.model_validate_json((FIXTURES / "taxonomy.json").read_text(encoding="utf-8"))
@@ -396,9 +404,9 @@ def test_unflagged_tags_and_new_paths_are_accepted_automatically(baseline: Taxon
 # Only sources named in duplicate candidates are held when unrelated proposals share the same batch.
 def test_candidates_hold_only_their_members_while_other_sources_proceed(baseline: TaxonomyDataset) -> None:
     report = dedup([
-        row("a", "Python", category="Programming"),
-        row("b", "Python", source_dataset="wildlife", category="Animals"),
-        row("c", "Payroll", service="Function", category="Finance"),
+        row("a", "Python", category="Programming", speciality="Software development"),
+        row("b", "Python", source_dataset="wildlife", category="Animals", speciality="Wildlife"),
+        row("c", "Payroll", service="Function", category="Finance", speciality="Payroll administration"),
     ], baseline)
     result = resolve_outputs(report, baseline)
     assert result.counts["pending_sources"] == 2 and result.counts["accepted_sources"] == 1
@@ -415,7 +423,7 @@ def test_producer_flagged_placement_stays_pending_without_a_decision(baseline: T
             confidence=0.3, needs_review=True),
         row("a", "Fire Prevention", service="Industry", category="Travel", speciality="Fire Prevention",
             confidence=0.2, needs_review=True),
-        row("c", "Payroll", service="Function", category="Finance"),
+        row("c", "Payroll", service="Function", category="Finance", speciality="Payroll administration"),
     ], baseline)
     result = resolve_outputs(report, baseline)
     pending = [item for item in result.dispositions if item.status == "pending"]

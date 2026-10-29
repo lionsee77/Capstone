@@ -15,7 +15,7 @@ from pydantic import BaseModel, Field
 class DatasetConfig(BaseModel):
     """One taxonomy dataset to load, addressed by `name` from metric params.
 
-    `type` selects a source implementation registered in `datasets/__init__.py`
+    `type` selects a source implementation registered in `taxonomy/__init__.py`
     ("sql_dump", "ssic", or "ssoc"). Classification sources require exactly
     one workbook path. `table_map` remaps canonical concepts onto
     whatever the underlying tables are actually called, e.g. the SkillsFuture
@@ -30,7 +30,7 @@ class DatasetConfig(BaseModel):
 
 
 class MetricConfig(BaseModel):
-    """One metric run, by id (see `metrics/registry.py`), with its params.
+    """One metric run, by id (see `quality/registry.py`), with its params.
 
     The same metric id may appear more than once with different params -
     e.g. running "integrity" once per dataset.
@@ -41,8 +41,16 @@ class MetricConfig(BaseModel):
 
 
 class PipelineConfig(BaseModel):
-    """A full pipeline run: datasets to load and metrics to run against them."""
+    """A full pipeline run: datasets to load and metrics to run against them.
 
+    `metric_definitions_version` optionally pins the metric definitions (see
+    `quality/definitions.py`) the config was written for. A run of a pinned config
+    fails instead of scoring with other formulas or defaults, so a baseline
+    config either reproduces its baseline or says why it can't. Omit it to
+    score with whatever the code currently implements.
+    """
+
+    metric_definitions_version: int | None = Field(default=None, ge=1)
     datasets: list[DatasetConfig]
     metrics: list[MetricConfig]
 

@@ -1,5 +1,5 @@
-from taxonomy_pipeline.classification.from_category_adaptation import build_classification_outputs
-from taxonomy_pipeline.classification.models import CLASSIFICATION_OUTPUTS
+from taxonomy_pipeline.enrichment.from_category_adaptation import build_classification_outputs
+from taxonomy_pipeline.enrichment.models import CLASSIFICATION_OUTPUTS
 
 
 def _base(**overrides):

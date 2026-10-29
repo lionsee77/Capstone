@@ -9,12 +9,11 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from taxonomy_pipeline.classification.models import (
+from taxonomy_pipeline.enrichment.models import (
     CLASSIFICATION_OUTPUTS,
     CanonicalMapping,
     ClassificationOutput,
     DuplicateCandidate,
-    LegacyClassificationOutput,
     MergePreview,
     PlacementTarget,
     PreviewCounts,
@@ -23,7 +22,7 @@ from taxonomy_pipeline.classification.models import (
     ValidationFinding,
     ValidationReport,
 )
-from taxonomy_pipeline.datasets.base import TaxonomyDataset
+from taxonomy_pipeline.taxonomy.base import TaxonomyDataset
 
 FIXTURES = Path(__file__).parent / "fixtures" / "classification"
 
@@ -128,14 +127,10 @@ def test_wrong_types_are_rejected(
         ClassificationOutput.model_validate(placement)
 
 
-@pytest.mark.parametrize("legacy", [False, True])
 @pytest.mark.parametrize("value", ["upstream-42", {"scores": [0.8, None]}, None])
-# Ignore extra input fields without storing or serializing them in either classification model.
-def test_extra_fields_are_ignored(placement: dict[str, object], legacy: bool, value: object) -> None:
-    if legacy:
-        del placement["service"]
-    model = LegacyClassificationOutput if legacy else ClassificationOutput
-    record = model.model_validate({
+# Ignore extra input fields without storing or serializing them.
+def test_extra_fields_are_ignored(placement: dict[str, object], value: object) -> None:
+    record = ClassificationOutput.model_validate({
         **placement, "metadata": value, "original_tag": "Ignored alias", "proposed_tag": "Ignored proposal",
     })
     assert record.model_dump() == placement

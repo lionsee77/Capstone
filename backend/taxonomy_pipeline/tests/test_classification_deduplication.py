@@ -8,11 +8,11 @@ from typing import Any
 import numpy as np
 import pytest
 
-from taxonomy_pipeline.classification.deduplication import deduplicate_outputs
-from taxonomy_pipeline.classification.models import BatchValidationReport, DeduplicationReport
-from taxonomy_pipeline.classification.validation import validate_outputs
-from taxonomy_pipeline.datasets.base import TaxonomyDataset
-from taxonomy_pipeline.datasets.sql_dump import SqlDumpSource
+from taxonomy_pipeline.enrichment.deduplication import deduplicate_outputs
+from taxonomy_pipeline.enrichment.models import BatchValidationReport, DeduplicationReport
+from taxonomy_pipeline.enrichment.validation import validate_outputs
+from taxonomy_pipeline.taxonomy.base import TaxonomyDataset
+from taxonomy_pipeline.taxonomy.sql_dump import SqlDumpSource
 
 FIXTURES = Path(__file__).parent / "fixtures" / "classification"
 
@@ -193,20 +193,18 @@ def test_semantic_failure_keeps_name_candidates(failure: str) -> None:
 
 
 # Explain all excluded statuses, including repeated unresolved rows, without matching them as tags.
-def test_unresolved_invalid_skipped_and_conflicting_rows_are_omitted() -> None:
-    validation = validate_outputs({
-        "a": (FIXTURES / "legacy_case_a.json").read_text(encoding="utf-8"),
-        "rows": json.dumps([
-            placement("1", "Pending", service=None, category=None, speciality=None, confidence=None),
-            placement("1", "Pending", service=None, category=None, speciality=None, confidence=None),
-            placement("2", "Wrong", confidence="bad"),
-            placement("3", "First"), placement("3", "Conflict"),
-        ]),
-    }, taxonomy(), case_a_inputs={"a"}, skip_case_a_handoffs=True)
+def test_unresolved_invalid_and_conflicting_rows_are_omitted() -> None:
+    validation = intake([
+        placement("1", "Pending", service=None, category=None, speciality=None, confidence=None),
+        placement("1", "Pending", service=None, category=None, speciality=None, confidence=None),
+        placement("2", "Wrong", confidence="bad"),
+        placement("3", "First"), placement("3", "Conflict"),
+        placement("4", "Kept"),
+    ])
     result = deduplicate_outputs(validation)
-    assert result.omitted_counts == {"skipped": 1, "unresolved": 1, "duplicate": 1, "invalid": 1, "review": 2}
+    assert result.omitted_counts == {"unresolved": 1, "duplicate": 1, "invalid": 1, "review": 2}
     assert result.counts["included_records"] == 1
-    assert result.counts["included_records"] + result.counts["omitted_records"] == 7
+    assert result.counts["included_records"] + result.counts["omitted_records"] == 6
     assert len(result.tags) == 1
 
 
@@ -251,18 +249,19 @@ def test_conflicting_hierarchy_ids_are_rejected() -> None:
         deduplicate_outputs(validation)
 
 
-# Exercise SQL loading, both adapters, the handoff skip, and hierarchy grouping together.
-def test_sql_and_legacy_intake_integration(tmp_path: Path) -> None:
+# Exercise SQL loading, intake, and hierarchy grouping together.
+def test_sql_intake_integration(tmp_path: Path) -> None:
     path = tmp_path / "taxonomy.sql"
     path.write_text("INSERT INTO services (id,name) VALUES (1,'Industry');\n", encoding="utf-8")
     baseline = SqlDumpSource("integration", [path]).load()
-    validation = validate_outputs({
-        "a": (FIXTURES / "legacy_case_a.json").read_text(encoding="utf-8"),
-        "b": (FIXTURES / "legacy_case_b.json").read_text(encoding="utf-8"),
-    }, baseline, case_a_inputs={"a"}, case_b_sources={"b": "skillsfuture"}, skip_case_a_handoffs=True)
+    validation = validate_outputs({"rows": json.dumps([
+        placement("42", "Data visualization", category="Data analytics", speciality="Data presentation"),
+        placement("48", "Quantum analysis", category="Quantum science", speciality="Quantum computing"),
+        placement("49", "Qubit design", category="Quantum science", speciality="Quantum hardware"),
+    ])}, baseline)
     result = deduplicate_outputs(validation, semantic_matcher=FakeMatcher())
     assert result.complete
     assert result.counts["source_tags"] == 3
-    assert result.counts["new_category_nodes"] == 3
-    assert result.omitted_counts == {"skipped": 1}
+    assert result.counts["new_category_nodes"] == 2  # Data analytics and Quantum science
+    assert result.omitted_counts == {}
     assert baseline.categories == baseline.specialities == []

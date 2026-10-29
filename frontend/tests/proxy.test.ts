@@ -1,12 +1,26 @@
 import { describe, expect, it } from "vitest";
 
-import { checkWriteRequest, decideProxyRequest, resolveUpstream } from "@/lib/api/proxy";
+import { checkWriteRequest, decideProxyRequest, resolveUpstream, upstreamHeaders } from "@/lib/api/proxy";
 
 const env = { TAXONOMY_API_URL: "http://pipeline:8000/" };
 const resolve = (method: string, path: string, query = "", overrides = {}) =>
   resolveUpstream(method, path.split("/").filter(Boolean), new URLSearchParams(query), { ...env, ...overrides });
 
 describe("pipeline proxy allowlist", () => {
+  it("forwards only bounded read requests for saved proposals", () => {
+    expect(resolve("GET", "proposals", "merge_run=reviewed&level=speciality&offset=50&limit=50&extra=ignored"))
+      .toEqual({ ok: true,
+        url: "http://pipeline:8000/proposals?merge_run=reviewed&level=speciality&offset=50&limit=50" });
+    expect(resolve("GET", "proposals/proposal-1", "merge_run=reviewed"))
+      .toEqual({ ok: true, url: "http://pipeline:8000/proposals/proposal-1?merge_run=reviewed" });
+    for (const query of ["", "merge_run=../private", "merge_run=C:\\private", "merge_run=reviewed&limit=201",
+      "merge_run=reviewed&limit=0", "merge_run=reviewed&offset=-1", "merge_run=reviewed&level=tags"]) {
+      expect(resolve("GET", "proposals", query)).toMatchObject({ ok: false, status: 404 });
+    }
+    expect(resolve("GET", "proposals/..", "merge_run=reviewed")).toMatchObject({ ok: false });
+    expect(resolve("POST", "proposals/proposal-1", "merge_run=reviewed")).toMatchObject({ ok: false });
+  });
+
   it("forwards the read endpoints the dashboard uses", () => {
     expect(resolve("GET", "metrics")).toEqual({ ok: true, url: "http://pipeline:8000/metrics" });
     expect(resolve("GET", "runs", "limit=100")).toEqual({ ok: true, url: "http://pipeline:8000/runs?limit=100" });
@@ -22,6 +36,68 @@ describe("pipeline proxy allowlist", () => {
     for (const path of ["docs", "openapi.json", "runs/abc/extra", "runs/..%2Fmetrics"]) {
       expect(resolve("GET", path)).toMatchObject({ ok: false, status: 404 });
     }
+  });
+
+  const runAndDataset = "run_id=3f2a9c0e&dataset=original";
+
+  it("forwards a taxonomy search with the identity it requires", () => {
+    expect(resolve("GET", "taxonomy/search", runAndDataset)).toEqual({
+      ok: true,
+      url: "http://pipeline:8000/taxonomy/search?run_id=3f2a9c0e&dataset=original",
+    });
+  });
+
+  it("forwards optional search filters and drops a malformed limit", () => {
+    expect(resolve("GET", "taxonomy/search", `${runAndDataset}&q=tax&level=tags&limit=10`)).toEqual({
+      ok: true,
+      url: "http://pipeline:8000/taxonomy/search?run_id=3f2a9c0e&dataset=original&q=tax&level=tags&limit=10",
+    });
+    expect(resolve("GET", "taxonomy/search", `${runAndDataset}&limit=not-a-number`)).toEqual({
+      ok: true,
+      url: "http://pipeline:8000/taxonomy/search?run_id=3f2a9c0e&dataset=original",
+    });
+  });
+
+  it("forwards a dataset name with spaces and parentheses, not just word characters", () => {
+    // Dataset names are an unrestricted `name: str` in the pipeline config -
+    // "Original (NUS)" is a real, valid name, not just "original".
+    expect(resolve("GET", "taxonomy/search", "run_id=3f2a9c0e&dataset=Original+%28NUS%29")).toEqual({
+      ok: true,
+      url: "http://pipeline:8000/taxonomy/search?run_id=3f2a9c0e&dataset=Original+%28NUS%29",
+    });
+  });
+
+  it("rejects a taxonomy search missing its required run_id or dataset", () => {
+    expect(resolve("GET", "taxonomy/search", "dataset=original")).toMatchObject({ ok: false, status: 404 });
+    expect(resolve("GET", "taxonomy/search", "run_id=3f2a9c0e")).toMatchObject({ ok: false, status: 404 });
+  });
+
+  it("rejects a taxonomy search with an unknown level", () => {
+    expect(resolve("GET", "taxonomy/search", `${runAndDataset}&level=not-a-level`)).toMatchObject({
+      ok: false,
+      status: 404,
+    });
+  });
+
+  it("forwards a taxonomy concept lookup, including a temporary proposal id", () => {
+    expect(resolve("GET", "taxonomy/categories/1", runAndDataset)).toEqual({
+      ok: true,
+      url: "http://pipeline:8000/taxonomy/categories/1?run_id=3f2a9c0e&dataset=original",
+    });
+    // Next.js decodes dynamic route segments before this function sees them,
+    // so a colon in a temporary proposal id arrives literal, not pre-encoded.
+    expect(resolve("GET", "taxonomy/categories/skillsfuture:501", runAndDataset)).toEqual({
+      ok: true,
+      url: "http://pipeline:8000/taxonomy/categories/skillsfuture%3A501?run_id=3f2a9c0e&dataset=original",
+    });
+  });
+
+  it("rejects a taxonomy concept lookup with an unknown level", () => {
+    expect(resolve("GET", "taxonomy/not-a-level/1", runAndDataset)).toMatchObject({ ok: false, status: 404 });
+  });
+
+  it("rejects a taxonomy concept lookup missing its required run_id or dataset", () => {
+    expect(resolve("GET", "taxonomy/categories/1", "dataset=original")).toMatchObject({ ok: false, status: 404 });
   });
 
   it("refuses run creation unless it is explicitly enabled", () => {
@@ -107,5 +183,23 @@ describe("proxy decision order", () => {
 
   it("does not apply the write guard to reads", () => {
     expect(decide("GET", "metrics")).toMatchObject({ ok: true });
+  });
+});
+
+describe("upstreamHeaders", () => {
+  it("adds the API token server-side when one is configured", () => {
+    expect(upstreamHeaders(null, { TAXONOMY_API_TOKEN: "s3cret" })).toEqual({ Authorization: "Bearer s3cret" });
+  });
+
+  it("forwards a body's content type alongside the token", () => {
+    expect(upstreamHeaders("application/json", { TAXONOMY_API_TOKEN: "s3cret" })).toEqual({
+      "Content-Type": "application/json",
+      Authorization: "Bearer s3cret",
+    });
+  });
+
+  it("sends no Authorization header without a token, so the API's own check decides", () => {
+    expect(upstreamHeaders(null, {})).toEqual({});
+    expect(upstreamHeaders(null, { TAXONOMY_API_TOKEN: "" })).toEqual({});
   });
 });

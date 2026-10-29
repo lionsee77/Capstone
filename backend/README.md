@@ -37,7 +37,7 @@ python skillsfuture/generate_skillsfuture_taxonomy.py
 ```
 
 This reads the workbooks and writes `skillsfuture/skillsfuture_taxonomy.sql`.
-The generator and Case B share `taxonomy_pipeline.datasets.skillsfuture` for
+The generator and Case B share `taxonomy_pipeline.providers.skillsfuture` for
 skill-to-tag ID assignment, including filtering untitled workbook rows.
 It does not connect to MySQL or modify the existing database. The generated SQL
 creates parallel `sf_categories`, `sf_specialities`, `sf_tags`, and

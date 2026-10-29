@@ -1,11 +1,89 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
+import pytest
 import yaml
 
 from taxonomy_pipeline.cli import main
+from taxonomy_pipeline.quality.definitions import METRIC_DEFINITIONS_VERSION
 from tests.conftest import FIXTURES
+
+
+@pytest.mark.parametrize(("lexical", "pending"), [(0.9, 1), (1.0, 0)])
+# CLI thresholds must reach screening, change review outcomes and survive saved report replay.
+def test_merge_preview_exposes_and_persists_screening_thresholds(
+    tmp_path: Path, lexical: float, pending: int,
+) -> None:
+    config = _write_stage_config(tmp_path)
+    producer = tmp_path / "producer.json"
+    producer.write_text(json.dumps([{
+        "source_dataset": "skillsfuture", "tag_id": "9001", "tag": "Campaign planning",
+        "original_classification": "classified", "service": "Industry", "category": "Marketing",
+        "speciality": "Brand Strateg", "confidence": 0.8, "reason": "Proposed placement",
+    }]), encoding="utf-8")
+    output = tmp_path / "merge"
+    assert main(["merge-preview", "--config", str(config), "--input", str(producer),
+                 "--out-dir", str(output), "--screening-lexical", str(lexical), "--screening-semantic", "0.85"]) == 0
+    resolution = json.loads((output / "resolution.json").read_text(encoding="utf-8"))
+    assert resolution["screening"]["settings"] == {"lexical_threshold": lexical, "semantic_threshold": 0.85}
+    assert resolution["counts"]["pending_sources"] == pending
+
+
+# Submit hierarchy choices through the existing CLI, persist the audit trail and reject invalid approvals.
+def test_merge_preview_applies_and_logs_hierarchy_decisions(tmp_path: Path) -> None:
+    config = _write_stage_config(tmp_path)
+    producer = tmp_path / "producer.json"
+    producer.write_text(json.dumps([{
+        "source_dataset": "skillsfuture", "tag_id": "9001", "tag": "Campaign planning",
+        "original_classification": "classified", "service": "Industry", "category": "Marketing",
+        "speciality": "Brand Strateg", "confidence": 0.8, "reason": "Proposed placement",
+    }]), encoding="utf-8")
+    output = tmp_path / "merge"
+    command = ["merge-preview", "--config", str(config), "--input", str(producer), "--out-dir", str(output)]
+    assert main(command) == 0
+    initial = json.loads((output / "resolution.json").read_text(encoding="utf-8"))
+    proposal = next(item for item in initial["screening"]["proposals"] if item["level"] == "speciality")
+    target = next(match["concept"]["id"] for match in proposal["matches"] if match["same_parent"])
+    assert proposal["suggested_action"] == "defer"
+    choice = {"proposal_id": proposal["proposal_id"], "action": "reuse", "existing_concept_id": target,
+              "reason": "Reviewed: same speciality"}
+    decisions = tmp_path / "decisions.json"
+    decisions.write_text(json.dumps([choice]), encoding="utf-8")
+    assert main([*command, "--decisions", str(decisions)]) == 0
+    resolution = json.loads((output / "resolution.json").read_text(encoding="utf-8"))
+    assert resolution["counts"]["pending_sources"] == 0
+    assert resolution["counts"]["added_speciality_nodes"] == 0
+    log_path = output / "change_log.jsonl"
+    events = [json.loads(line) for line in log_path.read_text(encoding="utf-8").splitlines()]
+    assert len(events) == 1  # Internal preview replay did not log the submission again.
+    assert events[0]["decision"]["reason"] == choice["reason"]
+    assert events[0]["decision"]["existing_concept_id"] == target
+    # Rerunning the same decisions, into the same folder or another sharing the log, doesn't log them again.
+    assert main([*command, "--decisions", str(decisions)]) == 0
+    rerun = ["merge-preview", "--config", str(config), "--input", str(producer), "--out-dir", str(tmp_path / "rerun"),
+             "--decisions", str(decisions), "--change-log", str(log_path)]
+    assert main(rerun) == 0
+    assert len(log_path.read_text(encoding="utf-8").splitlines()) == 1
+    assert not (tmp_path / "rerun" / "change_log.jsonl").exists()
+    category = next(item for item in initial["screening"]["proposals"] if item["level"] == "category")
+    decisions.write_text(json.dumps([{"proposal_id": category["proposal_id"], "action": "create",
+                                      "reason": "Invalid duplicate approval"}]), encoding="utf-8")
+    before = log_path.read_bytes(), (output / "resolution.json").read_bytes()
+    assert main([*command, "--decisions", str(decisions)]) == 1
+    assert before == (log_path.read_bytes(), (output / "resolution.json").read_bytes())
+
+
+@pytest.mark.parametrize(("flag", "value"), [("--screening-lexical", "1.1"), ("--screening-semantic", "nan")])
+# Invalid CLI thresholds must fail before reading inputs or creating reports.
+def test_merge_preview_rejects_invalid_screening_thresholds(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], flag: str, value: str,
+) -> None:
+    output = tmp_path / "merge"
+    assert main(["merge-preview", "--input", "unused.json", "--out-dir", str(output), flag, value]) == 1
+    assert "threshold" in capsys.readouterr().err
+    assert not output.exists()
 
 
 def _write_config(tmp_path, metrics):
@@ -101,7 +179,7 @@ def test_case_a_then_merge_preview_run_end_to_end_from_the_cli(tmp_path, saturat
 
 
 def test_integrate_refuses_a_merge_run_with_nothing_to_add(tmp_path, capsys):
-    from tests.test_classification_integrate import PRODUCER_FILES
+    from tests.conftest import PRODUCER_FILES
 
     # These producer files target another baseline, so validation sets every record aside.
     config_path = _write_stage_config(tmp_path)
@@ -138,6 +216,15 @@ def test_case_b_fails_cleanly_for_an_unknown_dataset(tmp_path, capsys):
 
     assert code == 1
     assert "no taxonomy dataset named 'nope'" in capsys.readouterr().err
+
+
+def test_case_b_fails_cleanly_for_an_unknown_provider(tmp_path, capsys):
+    config_path = _write_stage_config(tmp_path)
+
+    code = main(["case-b", "--config", str(config_path), "--provider", "nope", "--report", "r.json"])
+
+    assert code == 1
+    assert "No source provider 'nope'" in capsys.readouterr().err
 
 
 def test_merge_preview_rejects_outputs_from_different_saturation_runs(tmp_path, capsys):
@@ -233,3 +320,145 @@ def test_bulk_decide_refuses_a_merge_run_with_no_saturation_run_recorded(tmp_pat
     assert main(["bulk-decide", "--config", str(config_path), "--merge-run", str(tmp_path / "unstamped-merge"),
                  "--report", str(report), "--create-below", "0.5", "--output", str(tmp_path / "d.json")]) == 1
     assert "records no saturation run" in capsys.readouterr().err
+
+
+def _integrated_round(tmp_path, saturation_report, classification_paths, metrics, **config_fields):
+    """A round config scoring `original` with `metrics`, taken through case-a, merge-preview and integrate.
+    Returns the config's path and the snapshot folder."""
+    config_path = _write_stage_config(tmp_path)
+    config = yaml.safe_load(config_path.read_text())
+    config["datasets"][2:] = [{"name": kind, "type": kind, "paths": [str(path)]}
+                              for kind, path in classification_paths.items()]
+    config.update(metrics=metrics, **config_fields)
+    config_path.write_text(yaml.safe_dump(config))
+    report = saturation_report([
+        {"recommended_action": "ADD_CANDIDATE", "parent_status": "HAS_PARENT", "incoming_ids": [9001]},
+    ])
+    main(["case-a", "--config", str(config_path), "--report", str(report), "--semantic-model", "",
+          "--output", str(tmp_path / "case_a.json")])
+    main(["merge-preview", "--config", str(config_path), "--input", str(tmp_path / "case_a.json"),
+          "--out-dir", str(tmp_path / "merge")])
+    assert main(["integrate", "--config", str(config_path), "--merge-run", str(tmp_path / "merge"),
+                 "--out-dir", str(tmp_path / "enriched")]) == 0
+    return config_path, tmp_path / "enriched"
+
+
+def test_enriched_config_scores_the_snapshot_with_the_rounds_metrics(
+    tmp_path, saturation_report, classification_paths, capsys, monkeypatch,
+):
+    _integrated_round(tmp_path, saturation_report, classification_paths, [
+        {"id": "integrity", "params": {"dataset": "original", "fuzzy_threshold": 70}},
+        {"id": "integrity", "params": {"dataset": "skillsfuture"}},  # scores another dataset: left out
+        {"id": "breadth", "params": {"target": "original", "matching_method": "lexical"}},
+        {"id": "saturation", "params": {"baseline": "original", "incoming": ["skillsfuture"]}},
+    ])
+    capsys.readouterr()
+
+    enriched = yaml.safe_load((tmp_path / "enriched" / "enriched.yaml").read_text())
+    assert [(m["id"], m["params"]) for m in enriched["metrics"]] == [
+        ("depth", {"dataset": "enriched"}),
+        ("integrity", {"dataset": "enriched", "fuzzy_threshold": 70}),
+        ("breadth", {"target": "enriched", "matching_method": "lexical"}),
+        ("saturation", {"baseline": "enriched", "incoming": ["skillsfuture"]}),
+    ]
+    assert [d["name"] for d in enriched["datasets"]] == ["enriched", "skillsfuture", "ssic", "ssoc"]
+
+    # One run from another directory gives the whole scorecard.
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    monkeypatch.chdir(elsewhere)
+    assert main(["run", "--config", str(tmp_path / "enriched" / "enriched.yaml"), "--no-save"]) == 0
+    out = capsys.readouterr()
+    for metric_id in ("integrity", "depth", "breadth", "saturation"):
+        assert f"[OK] {metric_id}" in out.err + out.out
+
+
+def test_a_pinned_round_scores_the_baseline_and_its_snapshot_comparably(
+    tmp_path, saturation_report, classification_paths, capsys,
+):
+    config_path, snapshot = _integrated_round(tmp_path, saturation_report, classification_paths, [
+        {"id": "integrity", "params": {"dataset": "original", "fuzzy_threshold": 85}},
+        {"id": "depth", "params": {"dataset": "original"}},
+        {"id": "breadth", "params": {"target": "original", "matching_method": "lexical"}},
+        {"id": "saturation", "params": {"baseline": "original", "incoming": ["skillsfuture"]}},
+    ], metric_definitions_version=METRIC_DEFINITIONS_VERSION)
+    baseline, enriched = tmp_path / "baseline.json.gz", tmp_path / "enriched.json"
+    assert main(["run", "--config", str(config_path), "--output", str(baseline), "--no-save"]) == 0
+    assert main(["run", "--config", str(snapshot / "enriched.yaml"), "--output", str(enriched), "--no-save"]) == 0
+    capsys.readouterr()
+
+    assert main(["check-comparable", str(baseline), str(enriched)]) == 0
+    out = capsys.readouterr().out
+    assert [line for line in out.splitlines() if line.startswith("[")] == [
+        "[OK] integrity", "[OK] depth", "[OK] breadth", "[OK] saturation",
+    ]
+    version = f"definitions v{METRIC_DEFINITIONS_VERSION}"
+    assert f"(original, {version}), after" in out and f"(enriched, {version})" in out
+
+    # Scoring the snapshot another way is flagged, with what changed.
+    config = yaml.safe_load((snapshot / "enriched.yaml").read_text())
+    next(entry for entry in config["metrics"] if entry["id"] == "breadth")["params"]["threshold"] = 60
+    (snapshot / "lenient.yaml").write_text(yaml.safe_dump(config))
+    main(["run", "--config", str(snapshot / "lenient.yaml"), "--output", str(tmp_path / "lenient.json"), "--no-save"])
+    capsys.readouterr()
+
+    assert main(["check-comparable", str(baseline), str(tmp_path / "lenient.json")]) == 1
+    out = capsys.readouterr().out
+    assert "[FLAGGED] breadth: scored with different settings: threshold 75.0 -> 60" in out
+    assert "NOT comparable" in out
+
+
+def test_check_comparable_reads_runs_from_history_by_id(tmp_path, isolated_db, capsys):
+    from taxonomy_pipeline import db
+
+    config_path = _write_config(tmp_path, [{"id": "integrity", "params": {"dataset": "original"}}])
+    main(["run", "--config", str(config_path)])
+    main(["run", "--config", str(config_path)])
+    newer, older = (record.run_id for record in db.list_runs())
+    capsys.readouterr()
+
+    assert main(["check-comparable", older, newer]) == 0
+    assert "[OK] integrity" in capsys.readouterr().out
+
+
+def test_check_comparable_fails_cleanly_for_an_unknown_report(tmp_path, isolated_db, capsys):
+    config_path = _write_config(tmp_path, [{"id": "integrity", "params": {"dataset": "original"}}])
+    main(["run", "--config", str(config_path)])  # creates run history, so the run ID is looked up
+    capsys.readouterr()
+
+    assert main(["check-comparable", "no-such-run", str(tmp_path / "missing.json")]) == 1
+    assert "neither a report file nor a run ID" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("source", ["baselines/x.json", "reports/run", "baseline.json.gz"])
+def test_check_comparable_reports_a_mistyped_path_as_missing_without_creating_run_history(
+    isolated_db, capsys, source,
+):
+    assert main(["check-comparable", source, source]) == 1
+
+    assert f"report file {source} does not exist" in capsys.readouterr().err
+    assert not isolated_db.exists()
+
+
+def test_check_comparable_never_creates_run_history_to_look_up_a_run_id(isolated_db, capsys):
+    assert main(["check-comparable", "abc123", "def456"]) == 1
+
+    assert "there is no run history" in capsys.readouterr().err
+    assert not isolated_db.exists()
+
+
+def test_library_logs_print_to_stdout_as_bare_lines_without_repeating(capsys):
+    import logging
+
+    from taxonomy_pipeline import cli
+
+    logger = logging.getLogger("taxonomy_pipeline.enrichment.case_b")
+    cli._show_library_logs(logging.INFO)
+    cli._show_library_logs(logging.INFO)  # a second command in the same process must not double the output
+    logger.info("Processed %d/%d", 1, 2)
+    logger.debug("Raw model response")
+
+    assert capsys.readouterr().out == "Processed 1/2\n"
+    cli._show_library_logs(logging.DEBUG)
+    logger.debug("Raw model response")
+    assert capsys.readouterr().out == "Raw model response\n"

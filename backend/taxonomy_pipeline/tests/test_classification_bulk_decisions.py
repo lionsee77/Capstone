@@ -2,15 +2,16 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
 
-from taxonomy_pipeline.classification.bulk_decisions import draft_decisions
-from taxonomy_pipeline.classification.models import ReviewDecision, SourceTagRef, TaxonomyPath
-from taxonomy_pipeline.classification.routing import load_saturation, mark_ambiguous
-from taxonomy_pipeline.classification.runner import run_merge_preview
-from taxonomy_pipeline.datasets.base import TaxonomyDataset
+from taxonomy_pipeline.enrichment.bulk_decisions import draft_decisions
+from taxonomy_pipeline.enrichment.models import PlacementPath, ReviewDecision, SourceTagRef
+from taxonomy_pipeline.enrichment.routing import load_saturation, mark_ambiguous
+from taxonomy_pipeline.enrichment.runner import run_merge_preview
+from taxonomy_pipeline.taxonomy.base import TaxonomyDataset
 
 FIXTURES = Path(__file__).parent / "fixtures" / "classification"
 
@@ -66,6 +67,39 @@ def merge(tmp_path, baseline, saturation_report):
     return report, run
 
 
+# Once the hierarchy hold is reviewed, bulk drafting can address the independent producer tag hold.
+def test_hierarchy_decisions_are_preserved_and_resolved_holds_do_not_block_bulk_drafts(
+    tmp_path: Path, baseline: TaxonomyDataset, saturation_report: Callable,
+) -> None:
+    saturation = load_saturation(saturation_report(CONCEPTS), "skillsfuture")
+    path = tmp_path / "producer.json"
+    path.write_text(json.dumps(mark_ambiguous([
+        _record("11", "Fire Prevention", "Data analytics", "Data presentatio", 0.8),
+    ], saturation)), encoding="utf-8")
+    first = run_merge_preview([path], baseline, out_dir=tmp_path / "first").preview.resolution
+    proposal = next(item for item in first.screening.proposals if item.level == "speciality")
+    assert proposal.status == "review"
+    target = next(match.concept.id for match in proposal.matches if match.same_parent)
+    choice = ReviewDecision(proposal_id=proposal.proposal_id, action="reuse", existing_concept_id=target,
+                            reason="Confirmed the hierarchy match")
+    reviewed = run_merge_preview([path], baseline, out_dir=tmp_path / "reviewed", decisions=[choice]).preview.resolution
+    assert reviewed.counts["pending_sources"] == 1  # Producer review still applies to the tag.
+    draft = draft_decisions(reviewed, saturation, baseline, create_below=0.5, existing=[choice])
+    assert choice in draft.decisions
+    assert len(draft.drafted) == 1 and draft.drafted[0].members[0].tag_id == "11"
+
+    # Without --decisions the draft still carries the saved hierarchy approval, so applying it alone works.
+    alone = draft_decisions(reviewed, saturation, baseline, create_below=0.5)
+    assert alone.decisions == [choice, *alone.drafted] and alone.drafted == draft.drafted
+    applied = run_merge_preview([path], baseline, out_dir=tmp_path / "applied", decisions=alone.decisions)
+    assert applied.preview.resolution.counts["pending_sources"] == 0
+
+    # A supplied decision that changes a saved one is a conflict, not silently merged.
+    changed = choice.model_copy(update={"action": "defer", "existing_concept_id": None, "reason": "Not sure"})
+    with pytest.raises(ValueError, match="changes a decision this merge run already applied"):
+        draft_decisions(reviewed, saturation, baseline, create_below=0.5, existing=[changed])
+
+
 def test_creates_loose_matches_and_reuses_near_certain_tags(baseline, merge):
     report, run = merge
     draft = draft_decisions(run().preview.resolution, report, baseline, create_below=0.5, reuse_at_or_above=0.9)
@@ -74,7 +108,7 @@ def test_creates_loose_matches_and_reuses_near_certain_tags(baseline, merge):
     assert set(by_tag) == {"11", "12"}
     assert by_tag["11"].action == "create"
     assert by_tag["11"].approved_paths == [  # the higher-confidence of its two placements
-        TaxonomyPath(service="Subject", category="Data analytics", speciality="Data presentation"),
+        PlacementPath(service="Subject", category="Data analytics", speciality="Data presentation"),
     ]
     assert by_tag["12"].action == "reuse" and by_tag["12"].existing_tag_id == 200
     assert "semantic similarity 0.93 to existing tag 'SQL'" in by_tag["12"].reason
@@ -119,6 +153,43 @@ def test_leaves_tags_held_for_a_duplicate_pair_to_a_person(tmp_path, baseline, s
 
     assert draft.drafted == []
     assert draft.counts["held_for_another_reason"] == 2
+
+
+# Screening holds must prevent bulk approval even when the reason codes say only the producer flagged the tag.
+def test_bulk_decisions_skip_hierarchy_holds_with_combined_reasons(
+    tmp_path: Path, baseline: TaxonomyDataset, saturation_report: Callable,
+) -> None:
+    report = load_saturation(saturation_report([_concept(11, 0.2, "Zoology", "specialities")]), "skillsfuture")
+    rows = mark_ambiguous([_record("11", "Fire Prevention", "Data analytics", "Zoology", 0.7)], report)
+    producer = tmp_path / "producer.json"
+    producer.write_text(json.dumps(rows), encoding="utf-8")
+    resolution = run_merge_preview([producer], baseline, out_dir=tmp_path / "merge").preview.resolution
+    assert resolution.dispositions[0].reason_codes == ["hierarchy_review", "producer_flagged"]
+    resolution.dispositions[0].reason_codes = ["producer_flagged"]
+    draft = draft_decisions(resolution, report, baseline, create_below=0.5)
+    assert draft.drafted == [] and draft.counts["held_for_another_reason"] == 1
+
+
+def test_reads_why_a_tag_is_held_from_its_reason_codes_not_its_wording(baseline, merge):
+    report, run = merge
+    resolution = run().preview.resolution
+    for disposition in resolution.dispositions:
+        disposition.reason = "Reworded."
+
+    draft = draft_decisions(resolution, report, baseline, create_below=0.5, reuse_at_or_above=0.9)
+
+    assert draft.counts == {"create": 1, "reuse": 1, "left_for_review": 2}
+
+
+def test_a_merge_run_saved_before_reason_codes_is_read_from_its_reason_text(baseline, merge):
+    report, run = merge
+    resolution = run().preview.resolution
+    for disposition in resolution.dispositions:
+        disposition.reason_codes = []
+
+    draft = draft_decisions(resolution, report, baseline, create_below=0.5, reuse_at_or_above=0.9)
+
+    assert draft.counts == {"create": 1, "reuse": 1, "left_for_review": 2}
 
 
 def test_a_strong_spelling_match_keeps_a_tag_for_review_despite_a_weak_meaning_match(

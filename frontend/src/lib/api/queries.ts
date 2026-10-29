@@ -4,8 +4,8 @@
  */
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
-import { api } from "./client";
-import { isRunFinished, type PipelineConfig, type RunStatus } from "./schemas";
+import { api, type TaxonomySource } from "./client";
+import { type ConceptLevel, isRunFinished, type PipelineConfig, type RunStatus } from "./schemas";
 
 export const RUN_POLL_INTERVAL_MS = 2_000;
 
@@ -31,6 +31,10 @@ export const queryKeys = {
   runs: ["runs"] as const,
   runList: (limit: number) => ["runs", "list", limit] as const,
   run: (runId: string) => ["runs", "detail", runId] as const,
+  taxonomySearch: (source: TaxonomySource | null, q: string, level: ConceptLevel | "") =>
+    ["taxonomy", "search", source?.runId, source?.dataset, q, level] as const,
+  taxonomyConcept: (source: TaxonomySource | null, level: ConceptLevel, conceptId: string) =>
+    ["taxonomy", "concept", source?.runId, source?.dataset, level, conceptId] as const,
 };
 
 export function useMetricCatalogue() {
@@ -66,11 +70,16 @@ function runListQuery(limit: number) {
   return { queryKey: queryKeys.runList(limit), queryFn: () => api.listRuns(limit) };
 }
 
-/** Polls while the run is queued/running, stops once it is done or failed. */
+export function runQuery(runId: string) {
+  return { queryKey: queryKeys.run(runId), queryFn: () => api.getRun(runId), enabled: runId !== "" };
+}
+
+/** Polls while the run is queued/running, stops once it is done or failed.
+ * An empty `runId` (nothing picked yet) disables the query instead of
+ * requesting `/runs/`. */
 export function useRun(runId: string) {
   return useQuery({
-    queryKey: queryKeys.run(runId),
-    queryFn: () => api.getRun(runId),
+    ...runQuery(runId),
     refetchInterval: (query) => pollWhileActive(query.state.data && [query.state.data]),
   });
 }
@@ -80,5 +89,23 @@ export function useCreateRun() {
   return useMutation({
     mutationFn: (config: PipelineConfig) => api.createRun(config),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: queryKeys.runs }),
+  });
+}
+
+/** Name search over `source`'s dataset; disabled until a run and dataset are both chosen. */
+export function useTaxonomySearch(source: TaxonomySource | null, q: string, level: ConceptLevel | "") {
+  return useQuery({
+    queryKey: queryKeys.taxonomySearch(source, q, level),
+    queryFn: () => api.searchTaxonomy(source as TaxonomySource, { q: q || undefined, level: level || undefined }),
+    enabled: source !== null,
+  });
+}
+
+/** One concept's detail; disabled until `source` (the run + dataset it was found in) is known. */
+export function useTaxonomyConcept(source: TaxonomySource | null, level: ConceptLevel, conceptId: string) {
+  return useQuery({
+    queryKey: queryKeys.taxonomyConcept(source, level, conceptId),
+    queryFn: () => api.getTaxonomyConcept(source as TaxonomySource, level, conceptId),
+    enabled: source !== null,
   });
 }

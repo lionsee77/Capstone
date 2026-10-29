@@ -1,7 +1,7 @@
 # Saturation: options for deciding "good coverage"
 
 Reference notes for future work, not a description of current behaviour. The
-`saturation` metric (`src/taxonomy_pipeline/metrics/saturation.py`) produces a
+`saturation` metric (`src/taxonomy_pipeline/quality/saturation.py`) produces a
 new-items curve. These notes collect options for turning that curve into a
 defensible answer to the question: *at what point does the taxonomy have
 good coverage?*
@@ -37,7 +37,7 @@ SQLite).
 ### Caveats that apply to every option below
 
 - **The pool grows by the whole source, not by what was accepted.**
-  `_KnownPool.add` adds every concept from source *k*, including unapproved
+  `KnownPool.add` (`matching/engine.py`) adds every concept from source *k*, including unapproved
   `ADD_CANDIDATE` / `REVIEW_AMBIGUOUS` items. The curve measures newness
   against *everything seen*, not against the curated taxonomy.
 - **`cumulative_known_concepts` counts distinct match keys per level.** A
@@ -129,7 +129,7 @@ coverage ≈ 69%
 
 - **Suggested rule:** estimated coverage ≥ **90%** (95% if the matcher has
   been calibrated).
-- **Supported today:** no. `_KnownPool` keeps only the *first* source of each
+- **Supported today:** no. `KnownPool` (`matching/engine.py`) keeps only the *first* source of each
   concept, not how many sources contain it.
 - **Weakness:** unreliable with few sources. It becomes meaningful at around
   4 or more.
@@ -284,7 +284,7 @@ Without these, any coverage number should be reported as provisional:
 
 ## Suggested pipeline changes (future work)
 
-All in `src/taxonomy_pipeline/metrics/saturation.py` unless noted:
+All in `src/taxonomy_pipeline/quality/saturation.py` and the comparison engine it uses (`matching/engine.py`) unless noted:
 
 - **Per-concept source counts** (unlocks option 2): track, per known
   concept, the set of sources it appeared in (including via fuzzy/semantic

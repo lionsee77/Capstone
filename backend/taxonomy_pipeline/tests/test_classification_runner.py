@@ -7,16 +7,15 @@ from pathlib import Path
 
 import pytest
 
-from taxonomy_pipeline.classification.models import ReviewDecision, TaxonomyPath
-from taxonomy_pipeline.classification.runner import (
+from taxonomy_pipeline.enrichment.runner import (
     MixedSaturationRunsError,
     load_decisions,
+    load_merge_run,
     run_merge_preview,
 )
-from taxonomy_pipeline.datasets.base import TaxonomyDataset
-
-FIXTURES = Path(__file__).parent / "fixtures" / "classification"
-PRODUCER_FILES = [FIXTURES / "case_a.json", FIXTURES / "case_b.json"]
+from taxonomy_pipeline.taxonomy.base import TaxonomyDataset
+from tests.conftest import CLASSIFICATION_FIXTURES as FIXTURES
+from tests.conftest import PRODUCER_FILES, approve_data_analytics, review_candidate_file
 
 
 @pytest.fixture
@@ -41,32 +40,6 @@ def test_writes_every_stage_report_and_leaves_duplicate_candidates_pending(tmp_p
     assert run.preview.counts.pending_sources > 0
     with (tmp_path / "run" / "preview.csv").open(encoding="utf-8-sig") as stream:
         assert any(row["status"] == "pending" for row in csv.DictReader(stream))
-
-
-def review_candidate_file(tmp_path: Path) -> Path:
-    """A producer file like Case A's: one tag offered under two candidate categories, flagged for review,
-    next to an ordinary placement that needs nothing."""
-    def record(tag_id: str, tag: str, category: str, speciality: str, **extra: object) -> dict[str, object]:
-        return {
-            "source_dataset": "case-a", "tag_id": tag_id, "tag": tag, "original_classification": "classified",
-            "service": "Subject", "category": category, "speciality": speciality, "confidence": 0.5,
-            "reason": "Proposal", **extra,
-        }
-
-    path = tmp_path / "case_a_output.json"
-    path.write_text(json.dumps([
-        record("9", "Fire Prevention", "Data analytics", "Fire Prevention", needs_review=True),
-        record("9", "Fire Prevention", "Biology", "Fire Prevention", needs_review=True),
-        record("10", "Spreadsheet Modelling", "Data analytics", "Data presentation"),
-    ]), encoding="utf-8")
-    return path
-
-
-def approve_data_analytics() -> ReviewDecision:
-    return ReviewDecision(
-        members=[{"source_dataset": "case-a", "tag_id": "9"}], action="create", reason="Reviewed",
-        approved_paths=[TaxonomyPath(service="Subject", category="Data analytics", speciality="Fire Prevention")],
-    )
 
 
 def _placement_rows(out_dir: Path) -> dict[tuple[str, str], dict[str, str]]:
@@ -121,6 +94,28 @@ def test_records_the_saturation_run_and_review_state_for_integrate(tmp_path, bas
     assert info["baseline_snapshot_id"] == run.preview.baseline_snapshot_id
 
 
+def test_a_saved_merge_run_reads_back_typed_with_its_run_info(tmp_path, baseline):
+    inputs = [_stamped(tmp_path, path, "run-1") for path in PRODUCER_FILES]
+    run = run_merge_preview(inputs, baseline, out_dir=tmp_path / "run")
+
+    resolution, info = load_merge_run(tmp_path / "run")
+
+    assert resolution.baseline_snapshot_id == run.preview.baseline_snapshot_id
+    assert info.saturation_run_ids == ["run-1"] and info.inputs == [str(path) for path in inputs]
+
+
+def test_a_merge_run_from_before_run_json_or_its_fields_still_loads(tmp_path, baseline):
+    run_merge_preview(PRODUCER_FILES, baseline, out_dir=tmp_path / "run")
+    (tmp_path / "run" / "run.json").write_text(json.dumps({"saturation_run_ids": ["old"], "note": "kept"}))
+
+    _, info = load_merge_run(tmp_path / "run")
+    assert info.pending_sources == 0  # a default, not read from the file
+    assert info.model_dump(exclude_unset=True) == {"saturation_run_ids": ["old"], "note": "kept"}
+
+    (tmp_path / "run" / "run.json").unlink()
+    assert load_merge_run(tmp_path / "run")[1] is None
+
+
 def test_accepts_outputs_from_one_saturation_run_without_warnings(tmp_path, baseline):
     inputs = [_stamped(tmp_path, path, "run-1") for path in PRODUCER_FILES]
 
@@ -160,17 +155,6 @@ def test_blocked_preview_fails_the_run(tmp_path, baseline):
     assert run.preview.blocked and not run.ok
 
 
-def test_legacy_exports_go_through_their_adapters(tmp_path, baseline):
-    run = run_merge_preview(
-        [], baseline, out_dir=tmp_path, legacy_case_a=[FIXTURES / "legacy_case_a.json"],
-        legacy_case_b={FIXTURES / "legacy_case_b.json": "skillsfuture"}, skip_case_a_handoffs=True,
-    )
-
-    assert run.validation.complete
-    assert run.validation.counts["skipped"] == 1
-    assert {output.source_dataset for output in run.validation.merged_outputs} >= {"skillsfuture"}
-
-
 def test_the_same_file_cannot_be_given_twice(tmp_path, baseline):
     with pytest.raises(ValueError, match="only once"):
-        run_merge_preview([PRODUCER_FILES[0]], baseline, out_dir=tmp_path, legacy_case_a=[PRODUCER_FILES[0]])
+        run_merge_preview([PRODUCER_FILES[0], PRODUCER_FILES[0]], baseline, out_dir=tmp_path)

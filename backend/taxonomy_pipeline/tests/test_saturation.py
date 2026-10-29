@@ -1,9 +1,13 @@
+import sys
+import types
+
 import numpy as np
 import pytest
 
-from taxonomy_pipeline.datasets.base import TaxonomyDataset
-from taxonomy_pipeline.metrics import saturation
-from taxonomy_pipeline.metrics.saturation import SaturationMetric
+from taxonomy_pipeline.matching import embeddings, names
+from taxonomy_pipeline.quality import saturation
+from taxonomy_pipeline.quality.saturation import SaturationMetric
+from taxonomy_pipeline.taxonomy.base import TaxonomyDataset
 
 
 def _datasets() -> dict[str, TaxonomyDataset]:
@@ -79,7 +83,7 @@ def test_invalid_threshold_reports_an_error():
 
 def test_semantic_candidates_are_reported_separately_from_lexical_matches(monkeypatch):
     class FakeSemanticMatcher:
-        def __init__(self, model_name):
+        def __init__(self, model_name, revision=None):
             assert model_name == "test-model"
 
         def best_matches(self, queries, choices):
@@ -119,6 +123,80 @@ def test_semantic_candidates_are_reported_separately_from_lexical_matches(monkey
     assert levels["specialities"]["ambiguous_concepts"][0]["recommended_action"] == "REVIEW_AMBIGUOUS"
 
 
+def test_a_pinned_model_revision_is_loaded_and_recorded(monkeypatch):
+    loaded = []
+
+    class RecordingSemanticMatcher:
+        def __init__(self, model_name, revision=None):
+            loaded.append((model_name, revision))
+
+        def best_matches(self, queries, choices):
+            return [(None, None) for _ in queries]
+
+        def similarity(self, queries, choices):
+            return np.zeros((len(queries), len(choices)))
+
+    monkeypatch.setattr(saturation, "SemanticMatcher", RecordingSemanticMatcher)
+    result = SaturationMetric().run(_datasets(), {
+        "baseline": "original", "incoming": "skillsfuture",
+        "semantic_model": "test-model", "semantic_model_revision": "abc123",
+    })
+
+    assert result.status == "ok"
+    assert loaded == [("test-model", "abc123")]
+    assert result.details["semantic_model_revision"] == "abc123"
+
+
+@pytest.mark.parametrize("model", ["all-MiniLM-L6-v2", "sentence-transformers/all-MiniLM-L6-v2"])
+def test_an_unpinned_config_loads_the_model_at_the_revision_pinned_in_code(monkeypatch, model):
+    loaded = []
+
+    class RecordingSemanticMatcher:
+        def __init__(self, model_name, revision=None):
+            loaded.append((model_name, revision))
+
+        def best_matches(self, queries, choices):
+            return [(None, None) for _ in queries]
+
+        def similarity(self, queries, choices):
+            return np.zeros((len(queries), len(choices)))
+
+    monkeypatch.setattr(saturation, "SemanticMatcher", RecordingSemanticMatcher)
+    result = SaturationMetric().run(_datasets(), {
+        "baseline": "original", "incoming": "skillsfuture", "semantic_model": model,
+    })
+
+    assert loaded == [(model, embeddings.MODEL_REVISION)]
+    assert result.details["semantic_model_revision"] == embeddings.MODEL_REVISION
+
+
+def test_the_shared_matcher_defaults_to_the_pinned_revision_for_case_a_and_merge_preview(monkeypatch):
+    loaded = []
+
+    class FakeSentenceTransformer:
+        def __init__(self, model_name, revision=None):
+            loaded.append((model_name, revision))
+
+    monkeypatch.setitem(sys.modules, "sentence_transformers", types.SimpleNamespace(
+        SentenceTransformer=FakeSentenceTransformer,
+    ))
+    saturation.SemanticMatcher("all-MiniLM-L6-v2")
+    saturation.SemanticMatcher("some-other-model")
+
+    assert loaded == [("all-MiniLM-L6-v2", embeddings.MODEL_REVISION), ("some-other-model", None)]
+
+
+@pytest.mark.parametrize(("params", "message"), [
+    ({"semantic_model_revision": "abc123"}, "semantic_model_revision needs semantic_model"),
+    ({"semantic_model": "test-model", "semantic_model_revision": " "}, "must be a model commit"),
+])
+def test_a_model_revision_must_pin_a_configured_model(params, message):
+    result = SaturationMetric().run(_datasets(), {"baseline": "original", "incoming": "skillsfuture", **params})
+
+    assert result.status == "error"
+    assert message in result.summary
+
+
 def test_invalid_semantic_threshold_reports_an_error():
     result = SaturationMetric().run(
         _datasets(),
@@ -153,14 +231,14 @@ def test_empty_baseline_level_with_incoming_records_reports_an_error():
 
 
 def test_batches_lexical_comparisons_with_cdist(monkeypatch):
-    original_cdist = saturation.process.cdist
+    original_cdist = names.process.cdist
     calls = []
 
     def recording_cdist(*args, **kwargs):
         calls.append((args, kwargs))
         return original_cdist(*args, **kwargs)
 
-    monkeypatch.setattr(saturation.process, "cdist", recording_cdist)
+    monkeypatch.setattr(names.process, "cdist", recording_cdist)
     result = SaturationMetric().run(
         _datasets(), {"baseline": "original", "incoming": "skillsfuture", "threshold": 90}
     )
@@ -182,7 +260,7 @@ def test_invalid_add_candidate_threshold_reports_an_error():
 def _fake_matcher(monkeypatch, results, parent_similarity=None):
     parent_similarity = parent_similarity or {}
     class FakeSemanticMatcher:
-        def __init__(self, model_name):
+        def __init__(self, model_name, revision=None):
             pass
 
         def best_matches(self, queries, choices):
@@ -603,3 +681,220 @@ def test_best_matches_reuses_cached_embeddings():
     assert sorted(matcher.model.encoded) == ["ab", "abc", "abcd"]
     assert matcher.best_matches([], ["abc"]) == []
     assert matcher.best_matches(["ab"], []) == [(None, None)]
+
+
+def test_top_matches_returns_the_k_closest_choices_in_order():
+    class UnitModel:
+        def encode(self, names, normalize_embeddings):
+            vectors = {"a": [1.0, 0.0], "b": [0.8, 0.6], "c": [0.0, 1.0], "q": [1.0, 0.0]}
+            return [np.array(vectors[name]) for name in names]
+
+    matcher = object.__new__(saturation.SemanticMatcher)
+    matcher.model, matcher._cache = UnitModel(), {}
+    assert matcher.top_matches(["q"], ["c", "b", "a"], 2) == [[("a", 1.0), ("b", 0.8)]]
+    assert matcher.top_matches([], ["a"], 2) == []
+    assert matcher.top_matches(["q"], [], 2) == [[]]
+
+
+# --- Optional Decisions API judge -------------------------------------------------
+
+_JUDGE_BASE = {
+    "categories": [{"id": 1, "name": "Finance"}],
+    "specialities": [
+        {"id": 10, "name": "Corporate Finance", "category_id": 1},
+        {"id": 11, "name": "Trade Marketing", "category_id": 1},
+    ],
+    "tags": [{"id": 100, "name": "prompt"}, {"id": 101, "name": "budgeting"}],
+    "speciality_tags": [{"speciality_id": 10, "tag_id": 101}],
+}
+_JUDGE_INCOMING = {
+    "specialities": [{"id": 50, "name": "Trade Finance Manager"}],
+    "tags": [
+        {"id": 1, "name": "Prompt Engineering"},
+        {"id": 2, "name": "Render Management"},
+        {"id": 3, "name": "Trade Finance Management"},
+        {"id": 4, "name": "Carbon Ledger Audit"},
+        {"id": 5, "name": "Zymurgy"},
+    ],
+    "speciality_tags": [{"speciality_id": 50, "tag_id": 3}],
+}
+# Meaning scores in the ambiguous band (0.5-0.7) for every tag but Zymurgy, which nothing is close to.
+_JUDGE_MEANING = {
+    "prompt engineering": [("prompt", 0.68), ("trade marketing", 0.2)],
+    "render management": [("trade marketing", 0.55), ("corporate finance", 0.3)],
+    "trade finance management": [("corporate finance", 0.67), ("trade marketing", 0.6)],
+    "carbon ledger audit": [("budgeting", 0.52)],
+    "zymurgy": [("budgeting", 0.1)],
+    "trade finance manager": [("corporate finance", 0.6)],
+}
+
+
+class FakeJudge:
+    """Answers by concept name; records the questions it was asked."""
+
+    def __init__(self, answers):
+        self.model = "fake-judge"
+        self.answers = answers
+        self.questions = []
+
+    def judge(self, questions):
+        from taxonomy_pipeline.matching.judge import JudgeVerdict
+
+        self.questions.extend(questions)
+        verdicts = []
+        for question in questions:
+            answer = self.answers.get(question.name)
+            if isinstance(answer, Exception):
+                raise answer
+            choice, probability, error = answer or (None, None, "no answer")
+            verdicts.append(JudgeVerdict(choice=choice, probability=probability, error=error))
+        return verdicts
+
+
+def _judge_matcher(monkeypatch):
+    class FakeSemanticMatcher:
+        def __init__(self, model_name, revision=None):
+            pass
+
+        def _scores(self, query):
+            return _JUDGE_MEANING.get(query, [])
+
+        def best_matches(self, queries, choices):
+            return [next(((n, s) for n, s in self._scores(q) if n in choices), (None, None)) for q in queries]
+
+        def top_matches(self, queries, choices, k):
+            return [[(n, s) for n, s in self._scores(q) if n in choices][:k] for q in queries]
+
+        def similarity(self, queries, choices):
+            return np.zeros((len(queries), len(choices)))
+
+    monkeypatch.setattr(saturation, "SemanticMatcher", FakeSemanticMatcher)
+
+
+def _with_judge(monkeypatch, answers, **judge):
+    _judge_matcher(monkeypatch)
+    fake = FakeJudge(answers)
+    built = {}
+
+    def factory(model, *, workers, cache_path):
+        built.update(model=model, workers=workers, cache_path=cache_path)
+        return fake
+
+    monkeypatch.setattr(saturation, "DecisionsJudge", factory)
+    result = _run(_pair(_JUDGE_BASE, _JUDGE_INCOMING), semantic_model="m", judge=judge)
+    return result, fake, built
+
+
+_ANSWERS = {
+    "Prompt Engineering": ("1", 0.93, None),          # the same as tag "prompt"
+    "Render Management": ("none", 0.95, None),       # only sounds like Trade Marketing
+    "Trade Finance Management": ("1", 0.55, None),   # leaning, but not confident enough
+    "Carbon Ledger Audit": (None, None, "API error 500: boom"),
+}
+
+
+def test_judge_settles_ambiguous_tags_and_reports_both_counts(monkeypatch):
+    result, _, _ = _with_judge(monkeypatch, _ANSWERS)
+    assert result.status == "ok"
+    tags = result.details["by_concept_level"]["tags"]
+
+    assert tags["review_ambiguous_before_judge"] == 4
+    assert tags["judge_counts"] == {"asked": 4, "judged_duplicate": 1, "judged_new": 1, "unsure": 1, "failed": 1}
+    assert tags["recommended_action_counts"]["REVIEW_AMBIGUOUS"] == 2
+    assert tags["recommended_action_counts"]["ADD_CANDIDATE"] == 2
+    assert tags["recommended_action_counts"]["SKIP_SEMANTIC_DUPLICATE"] == 1
+
+    duplicate = tags["judged_match_details"][0]
+    assert (duplicate["incoming_name"], duplicate["baseline_name"]) == ("Prompt Engineering", "prompt")
+    assert duplicate["match_type"] == "judged" and duplicate["recommended_action"] == "SKIP_SEMANTIC_DUPLICATE"
+    assert duplicate["judge_probability"] == 0.93 and duplicate["semantic_score"] == 0.68
+    assert duplicate["judge"] == {"model": "fake-judge", "choice": "1", "probability": 0.93,
+                                  "candidates": ["prompt", "Trade Marketing"]}
+    assert "Prompt Engineering" not in {entry["incoming_name"] for entry in tags["ambiguous_concepts"]}
+
+    new = _ambiguous(tags, "Render Management")
+    assert (new["recommended_action"], new["reason"]) == ("ADD_CANDIDATE", "judged_new")
+    assert new["judge"] == {"model": "fake-judge", "choice": "none", "probability": 0.95,
+                            "candidates": ["Trade Marketing", "Corporate Finance"]}
+    assert _ambiguous(tags, "Trade Finance Management")["reason"] == "judge_unsure"
+    failed = _ambiguous(tags, "Carbon Ledger Audit")
+    assert (failed["recommended_action"], failed["reason"]) == ("REVIEW_AMBIGUOUS", "judge_failed")
+    assert failed["judge"]["error"] == "API error 500: boom"
+
+    point = result.details["curve"][-1]
+    assert point["review_ambiguous_before_judge"] == 5  # 4 tags + 1 speciality the judge didn't look at
+    assert point["review_ambiguous"] == 3
+    # Out of the 4 tags it was asked about, not the 5 ambiguous concepts across every level.
+    assert "Judge (gpt-6-luna) settled 2 of 4 ambiguous concepts it was asked about (tags)" in result.summary
+    assert result.details["judge"]["model"] == "gpt-6-luna"
+
+
+def test_judge_sees_only_review_ambiguous_concepts_with_their_context(monkeypatch):
+    _, fake, _ = _with_judge(monkeypatch, _ANSWERS)
+    asked = {question.name: question for question in fake.questions}
+    assert set(asked) == {"Prompt Engineering", "Render Management", "Trade Finance Management", "Carbon Ledger Audit"}
+    question = asked["Trade Finance Management"]
+    assert question.level == "tags" and question.parents == ("Trade Finance Manager",)
+    assert [(c.name, c.level, c.parents) for c in question.candidates] == [
+        ("Corporate Finance", "specialities", ("Finance",)), ("Trade Marketing", "specialities", ("Finance",)),
+    ]
+    assert [c.parents for c in asked["Carbon Ledger Audit"].candidates] == [("Corporate Finance",)]
+
+
+def test_judge_only_runs_on_the_configured_levels(monkeypatch):
+    result, fake, _ = _with_judge(monkeypatch, {"Trade Finance Manager": ("none", 0.9, None)}, levels=["specialities"])
+    levels = result.details["by_concept_level"]
+    assert [question.name for question in fake.questions] == ["Trade Finance Manager"]
+    assert _ambiguous(levels["specialities"], "Trade Finance Manager")["reason"] == "judged_new"
+    assert "judge_counts" not in levels["tags"]
+
+
+def test_judge_thresholds_and_settings_are_passed_through(monkeypatch):
+    result, fake, built = _with_judge(
+        monkeypatch, _ANSWERS, same_at_or_above=0.5, candidates=1, cache="judge_cache.json", workers=2,
+    )
+    tags = result.details["by_concept_level"]["tags"]
+    assert tags["judge_counts"]["judged_duplicate"] == 2  # Trade Finance Management's 0.55 now counts
+    assert all(len(question.candidates) == 1 for question in fake.questions)
+    assert built == {"model": "gpt-6-luna", "workers": 2, "cache_path": "judge_cache.json"}
+
+
+def test_without_a_judge_the_report_has_no_judge_fields(monkeypatch):
+    _judge_matcher(monkeypatch)
+    result = _run(_pair(_JUDGE_BASE, _JUDGE_INCOMING), semantic_model="m")
+    tags = result.details["by_concept_level"]["tags"]
+    assert tags["recommended_action_counts"]["REVIEW_AMBIGUOUS"] == 4
+    assert not {"judge_counts", "review_ambiguous_before_judge", "judged_match_details"} & set(tags)
+    assert "judge" not in result.details and "review_ambiguous_before_judge" not in result.details["curve"][-1]
+    assert all("judge" not in entry for entry in tags["ambiguous_concepts"])
+
+
+def test_judge_needs_the_meaning_model():
+    result = _run(_pair(_JUDGE_BASE, _JUDGE_INCOMING), judge={})
+    assert result.status == "error" and "semantic_model" in result.summary
+
+
+@pytest.mark.parametrize("judge", [
+    "yes", {"modle": "x"}, {"model": ""}, {"candidates": 0}, {"workers": True},
+    {"same_at_or_above": 1.5}, {"levels": []}, {"levels": ["services"]}, {"cache": 3},
+])
+def test_invalid_judge_settings_report_an_error(monkeypatch, judge):
+    _judge_matcher(monkeypatch)
+    result = _run(_pair(_JUDGE_BASE, _JUDGE_INCOMING), semantic_model="m", judge=judge)
+    assert result.status == "error" and "judge" in result.summary
+
+
+def test_a_judge_that_cannot_run_reports_an_error(monkeypatch):
+    from taxonomy_pipeline.matching.judge import JudgeError
+
+    result, _, _ = _with_judge(monkeypatch, {"Prompt Engineering": JudgeError("rejected (401): bad key")})
+    assert result.status == "error" and result.summary == "judge: rejected (401): bad key"
+
+    _judge_matcher(monkeypatch)
+
+    def no_key(model, *, workers, cache_path):
+        raise JudgeError("needs a real OPENAI_API_KEY")
+
+    monkeypatch.setattr(saturation, "DecisionsJudge", no_key)
+    result = _run(_pair(_JUDGE_BASE, _JUDGE_INCOMING), semantic_model="m", judge={})
+    assert result.status == "error" and "OPENAI_API_KEY" in result.summary

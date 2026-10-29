@@ -13,7 +13,7 @@ from pathlib import Path
 
 from openpyxl import load_workbook
 
-from taxonomy_pipeline.datasets.skillsfuture import build_skill_tag_mapping
+from taxonomy_pipeline.providers.skillsfuture import build_skill_tag_mapping
 
 
 ROOT = Path(__file__).parent

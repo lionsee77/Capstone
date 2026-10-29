@@ -1,8 +1,8 @@
 import numpy as np
 
-from taxonomy_pipeline.datasets.base import TaxonomyDataset
-from taxonomy_pipeline.metrics import category_adaptation
-from taxonomy_pipeline.metrics.category_adaptation import CategoryAdaptationMetric
+from taxonomy_pipeline.enrichment import category_adaptation
+from taxonomy_pipeline.enrichment.category_adaptation import CategoryAdaptationMetric
+from taxonomy_pipeline.taxonomy.base import TaxonomyDataset
 
 
 def _datasets() -> dict[str, TaxonomyDataset]:
