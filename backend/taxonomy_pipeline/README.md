@@ -310,6 +310,14 @@ such as `service` are also rejected before any model call; delete the checkpoint
 to reclassify those tags. Each record also carries an `action`:
 `assign_existing`, `propose_new_speciality` or `propose_new_category`.
 
+Each batch makes at most three API attempts, with SDK retries disabled.
+Authentication, permission, invalid-request and exhausted-quota errors stop
+immediately. HTTP 408/409/429, 5xx and transport failures retry with exponential
+backoff and jitter (about 1 then 2 seconds). A valid `Retry-After` in seconds
+or HTTP-date form takes precedence; waits above 60 seconds stop the run for
+later resumption instead of retrying early. Invalid or incomplete JSON can
+retry within the same attempt budget, retaining proposals already accepted.
+
 ### Merge preview
 
 `merge-preview` chains the five merge stages and writes each one's report to

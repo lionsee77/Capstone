@@ -16,10 +16,15 @@ responses at DEBUG), never printed. The OpenAI client comes from `llm.py`; the S
 """
 from __future__ import annotations
 
+import asyncio
 import csv
 import json
 import logging
+import math
 import os
+import random
+from datetime import UTC, datetime
+from email.utils import parsedate_to_datetime
 from pathlib import Path
 from typing import Any
 
@@ -74,17 +79,36 @@ def proposal_is_well_formed(proposal: dict[str, Any]) -> bool:
 async def classify_batch(
     client: Any, prompt: str, batch: list[dict[str, Any]], model: str,
 ) -> list[dict[str, Any]]:
-    """Call the model, retrying when it omits or invents tag IDs."""
+    """Bound API attempts while retaining accepted proposals across response retries."""
     expected = {item["tag_id"] for item in batch}
     collected: dict[str, dict[str, Any]] = {}
+    if hasattr(client, "with_options"):
+        client = client.with_options(max_retries=0)
     for attempt in range(1, 4):
         try:
             response = await client.chat.completions.create(
                 model=model, messages=[{"role": "user", "content": prompt}], temperature=0,
             )
+        except Exception as exc:
+            if not _transient_error(exc):
+                status = getattr(exc, "status_code", None)
+                raise CaseBError(
+                    f"Case B request failed ({type(exc).__name__}, HTTP {status}); not retrying. "
+                    "Check credentials, permissions, model, request settings and quota."
+                ) from exc
+            if attempt == 3:
+                raise CaseBError("Case B request failed after 3 attempts; resume using the checkpoint.") from exc
+            delay = _retry_delay(exc, attempt)
+            logger.info("Temporary API failure (%s); retrying in %.2fs", type(exc).__name__, delay)
+            await asyncio.sleep(delay)
+            continue
+        try:
             raw = response.choices[0].message.content or ""
             logger.debug("  Raw model response:\n%s", raw[:4000] if raw else "  <empty response>")
-            proposals = parse_json(raw).get("proposals", [])
+            payload = parse_json(raw)
+            if not isinstance(payload, dict) or not isinstance(payload.get("proposals"), list):
+                raise ValueError("Expected a JSON object with a proposals array")
+            proposals = payload["proposals"]
             for proposal in proposals:
                 if isinstance(proposal, dict) and proposal.get("tag_id") in expected and proposal_is_well_formed(
                     proposal
@@ -98,9 +122,46 @@ async def classify_batch(
                 f"values: {missing}. Do not include any other tag IDs."
             )
             logger.info("  Incomplete response; retrying (%d/3), missing %d", attempt, len(missing))
-        except Exception as exc:  # noqa: BLE001 - retry transient API and response errors
+        except (ValueError, TypeError, AttributeError, IndexError) as exc:
             logger.info("  Invalid model response; retrying (%d/3): %s", attempt, exc)
     raise CaseBError(f"Model failed to return one valid proposal for every tag in batch: {sorted(expected)}")
+
+
+def _transient_error(exc: Exception) -> bool:
+    """Retry temporary HTTP/transport failures, excluding exhausted billing quota."""
+    if getattr(exc, "code", None) in {"insufficient_quota", "billing_hard_limit_reached"}:
+        return False
+    status = getattr(exc, "status_code", None)
+    if status is not None:
+        return status in {408, 409, 429} or 500 <= status < 600
+    if isinstance(exc, (ConnectionError, TimeoutError)):
+        return True
+    try:
+        from openai import APIConnectionError
+    except ImportError:
+        return False
+    return isinstance(exc, APIConnectionError)
+
+
+def _retry_delay(exc: Exception, attempt: int) -> float:
+    """Honor Retry-After without retrying earlier than a long server-requested wait."""
+    headers = getattr(getattr(exc, "response", None), "headers", {})
+    retry_after = headers.get("retry-after")
+    delay = None
+    if retry_after is not None:
+        try:
+            delay = float(retry_after)
+        except (ValueError, TypeError):
+            try:
+                date = parsedate_to_datetime(retry_after)
+                delay = (date - datetime.now(UTC)).total_seconds()
+            except (ValueError, TypeError, OverflowError):
+                pass
+    if delay is not None and math.isfinite(delay) and delay > 60:
+        raise CaseBError("Server requested a wait above 60 seconds; resume later using the checkpoint.") from exc
+    if delay is not None and math.isfinite(delay) and delay >= 0:
+        return delay
+    return min(2 ** (attempt - 1) + random.uniform(0, 0.5), 60.0)
 
 
 def baseline_hierarchy(
@@ -194,7 +255,7 @@ def write_outputs(records: list[dict[str, Any]], output: Path) -> None:
 
 def _openai_client() -> Any:
     try:
-        client = llm.openai_client("Case B", async_client=True)
+        client = llm.openai_client("Case B", async_client=True, max_retries=0)
     except llm.LLMError as exc:
         raise CaseBError(str(exc)) from exc
     logger.debug("OpenAI endpoint: %s\nAPI key loaded: yes", llm.base_url())
