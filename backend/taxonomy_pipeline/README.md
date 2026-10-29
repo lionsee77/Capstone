@@ -142,6 +142,10 @@ stages' rules and the review-decision format are in the
 
 ### Case B (LLM classification)
 
+Case B and the SQL generator share the skill-to-tag mapping in
+`datasets/skillsfuture.py`. Both exclude workbook rows without a skill ID or
+title before assigning IDs, so missing titles cannot shift description lookups.
+
 `case-b` asks an OpenAI model to place each parentless new tag into the
 baseline's existing categories and specialities, or to propose a new one,
 using the SkillsFuture unique-skills workbook (`--unique`, defaults to the one

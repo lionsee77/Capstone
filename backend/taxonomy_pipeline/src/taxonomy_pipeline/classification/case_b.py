@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import Any
 
 from ..datasets.base import TaxonomyDataset
+from ..datasets.skillsfuture import build_skill_tag_mapping, normalise_skill_text
 from .models import CLASSIFICATION_OUTPUTS
 from .routing import RUN_ID_FIELD, case_b_tag_ids, load_saturation, mark_ambiguous
 
@@ -43,8 +44,6 @@ RESPONSE_SCHEMA = {
     }, "required": list(PROPOSAL_FIELDS), "additionalProperties": False}}},
     "required": ["proposals"], "additionalProperties": False,
 }
-# The tag IDs the SkillsFuture generator assigns: 3000 + position in the sorted unique-skills list.
-TAG_ID_OFFSET = 3000
 ENV_FILE = Path(__file__).resolve().parents[4] / ".env"
 
 
@@ -112,8 +111,8 @@ def source_skills(path: str | Path) -> dict[str, dict[str, str]]:
         result = {}
         for values in rows:
             row = dict(zip(headers, values, strict=False))
-            skill_id = str(row.get("skill_id") or "").strip()
-            if skill_id:
+            skill_id = normalise_skill_text(row.get("skill_id"))
+            if skill_id and normalise_skill_text(row.get("skill_title")):
                 result[skill_id] = {
                     field: str(row.get(f"skill_{field}") or "").strip() for field in ("title", "description", "type")
                 }
@@ -318,7 +317,10 @@ async def run_case_b(
     print(f"Using {len(input_tag_ids)} Case B tag(s) from {report_path} (NO_PARENT; {ambiguous} need review)")
 
     skills = source_skills(unique_skills)
-    tag_to_skill = {str(TAG_ID_OFFSET + index): skill_id for index, skill_id in enumerate(sorted(skills))}
+    tag_to_skill = {
+        str(tag_id): skill_id
+        for skill_id, tag_id in build_skill_tag_mapping({key: skill["title"] for key, skill in skills.items()}).items()
+    }
     services, categories, specialities = baseline_hierarchy(datasets[baseline])
     if client is None:
         client = _openai_client(debug)

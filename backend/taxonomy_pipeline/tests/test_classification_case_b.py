@@ -74,6 +74,8 @@ def workbook(tmp_path):
     sheet.append(["skill_id", "skill_title", "skill_description", "skill_type"])
     sheet.append(["SK-B", "Loan Processing", "Processes loans", "Technical"])
     sheet.append(["SK-A", "Unrelated Skill", "Not a Case B tag", "Technical"])
+    # An untitled row sorts before real skills but must not consume a generated tag ID.
+    sheet.append(["SK-0", None, "Must never shift the description lookup", "Technical"])
     path = tmp_path / "unique.xlsx"
     book.save(path)
     return path
