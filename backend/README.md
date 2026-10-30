@@ -32,13 +32,13 @@ dependencies and run:
 
 ```bash
 pip install -r requirements.txt
-pip install -e ./taxonomy_pipeline
 python skillsfuture/generate_skillsfuture_taxonomy.py
 ```
 
 This reads the workbooks and writes `skillsfuture/skillsfuture_taxonomy.sql`.
-The generator and Case B share `taxonomy_pipeline.providers.skillsfuture` for
-skill-to-tag ID assignment, including filtering untitled workbook rows.
+The generator remains standalone and needs only the dependencies above.
+A pipeline regression test compares its generated tag IDs and titles with
+Case B's SkillsFuture context loader, including untitled rows and whitespace.
 It does not connect to MySQL or modify the existing database. The generated SQL
 creates parallel `sf_categories`, `sf_specialities`, `sf_tags`, and
 `sf_speciality_tags` tables, using the existing `services` table. Review the

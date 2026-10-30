@@ -36,6 +36,7 @@ from .models import CLASSIFICATION_OUTPUTS
 from .routing import RUN_ID_FIELD, case_b_tag_ids, load_saturation, mark_ambiguous
 
 logger = logging.getLogger(__name__)
+CONTEXT_SCHEMA_VERSION = 2
 ACTIONS = ["assign_existing", "propose_new_speciality", "propose_new_category"]
 VALID_ACTIONS = set(ACTIONS)
 PROPOSAL_FIELDS = ("tag", "tag_id", "action", "service", "category", "speciality", "confidence", "reason")
@@ -82,8 +83,6 @@ async def classify_batch(
     """Bound API attempts while retaining accepted proposals across response retries."""
     expected = {item["tag_id"] for item in batch}
     collected: dict[str, dict[str, Any]] = {}
-    if hasattr(client, "with_options"):
-        client = client.with_options(max_retries=0)
     for attempt in range(1, 4):
         try:
             response = await client.chat.completions.create(
@@ -92,6 +91,10 @@ async def classify_batch(
         except Exception as exc:
             if not _transient_error(exc):
                 status = getattr(exc, "status_code", None)
+                if status not in {400, 401, 403, 404, 422} and getattr(exc, "code", None) not in {
+                    "insufficient_quota", "billing_hard_limit_reached",
+                }:
+                    raise
                 raise CaseBError(
                     f"Case B request failed ({type(exc).__name__}, HTTP {status}); not retrying. "
                     "Check credentials, permissions, model, request settings and quota."
@@ -132,6 +135,20 @@ def _transient_error(exc: Exception) -> bool:
     if getattr(exc, "code", None) in {"insufficient_quota", "billing_hard_limit_reached"}:
         return False
     status = getattr(exc, "status_code", None)
+    if status in {400, 401, 403, 404, 422}:
+        return False
+    retry_hint = getattr(getattr(exc, "response", None), "headers", {}).get("x-should-retry")
+    if retry_hint == "false":
+        return False
+    if retry_hint == "true":
+        return True
+    try:
+        from openai import APIResponseValidationError
+    except ImportError:
+        pass
+    else:
+        if isinstance(exc, APIResponseValidationError):
+            return True
     if status is not None:
         return status in {408, 409, 429} or 500 <= status < 600
     if isinstance(exc, (ConnectionError, TimeoutError)):
@@ -146,9 +163,17 @@ def _transient_error(exc: Exception) -> bool:
 def _retry_delay(exc: Exception, attempt: int) -> float:
     """Honor Retry-After without retrying earlier than a long server-requested wait."""
     headers = getattr(getattr(exc, "response", None), "headers", {})
-    retry_after = headers.get("retry-after")
+    retry_after = headers.get("retry-after-ms")
     delay = None
     if retry_after is not None:
+        try:
+            delay = float(retry_after) / 1000
+        except (ValueError, TypeError):
+            pass
+    if delay is not None and (math.isnan(delay) or delay < 0):
+        delay = None
+    retry_after = headers.get("retry-after")
+    if delay is None and retry_after is not None:
         try:
             delay = float(retry_after)
         except (ValueError, TypeError):
@@ -157,7 +182,7 @@ def _retry_delay(exc: Exception, attempt: int) -> float:
                 delay = (date - datetime.now(UTC)).total_seconds()
             except (ValueError, TypeError, OverflowError):
                 pass
-    if delay is not None and math.isfinite(delay) and delay > 60:
+    if delay is not None and delay > 60:
         raise CaseBError("Server requested a wait above 60 seconds; resume later using the checkpoint.") from exc
     if delay is not None and math.isfinite(delay) and delay >= 0:
         return delay
@@ -290,7 +315,7 @@ def _load_checkpoint(path: Path, provenance: dict[str, Any]) -> dict[str, dict[s
         raise CaseBError(f"Checkpoint {path} has invalid proposals; delete it to start this run from scratch.")
     required_fields = {"tag_id", "action", "service", "category", "speciality", "confidence", "reason"}
     incompatible = [
-        str(proposal.get("tag_id", "<unknown>"))
+        str(proposal.get("tag_id", "<unknown>")) if isinstance(proposal, dict) else "<unknown>"
         for proposal in proposals
         if not isinstance(proposal, dict) or not required_fields.issubset(proposal)
     ]
@@ -362,7 +387,10 @@ async def run_case_b(
         client = _openai_client()
     logger.debug("Model: %s", model)
 
-    provenance = {"saturation_run_id": saturation.run_id, "incoming": incoming, "model": model}
+    provenance = {
+        "saturation_run_id": saturation.run_id, "incoming": incoming, "model": model,
+        "context_schema_version": CONTEXT_SCHEMA_VERSION,
+    }
     wanted = set(input_tag_ids)
     proposals = {
         tag_id: proposal for tag_id, proposal in _load_checkpoint(checkpoint, provenance).items() if tag_id in wanted
@@ -374,7 +402,7 @@ async def run_case_b(
     for start in range(0, len(pending), batch_size):
         batch = []
         for tag_id in pending[start:start + batch_size]:
-            batch.append({"tag_id": tag_id, "title": tags[tag_id], **provider.context_for(contexts, tag_id)})
+            batch.append({**provider.context_for(contexts, tag_id), "tag_id": tag_id, "title": tags[tag_id]})
         prompt = build_prompt(services, categories, specialities, batch, source_name=provider.display_name)
         for proposal in await classify_batch(client, prompt, batch, model):
             proposals[proposal["tag_id"]] = proposal

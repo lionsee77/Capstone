@@ -5,7 +5,10 @@ import asyncio
 import csv
 import json
 import logging
+from datetime import UTC, datetime, timedelta
+from email.utils import format_datetime
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
 from openpyxl import Workbook
@@ -289,6 +292,7 @@ def test_refuses_a_checkpoint_without_service_before_calling_the_model(tmp_path,
     checkpoint = output.with_name(".case_b_output.checkpoint.json")
     checkpoint.write_text(json.dumps({
         "saturation_run_id": "run-1", "incoming": "skillsfuture", "model": "gpt-4o-mini",
+        "context_schema_version": case_b.CONTEXT_SCHEMA_VERSION,
         "proposals": [{key: value for key, value in PROPOSAL.items() if key != "service"}],
     }), encoding="utf-8")
     client = StubClient()
@@ -344,3 +348,189 @@ def test_flags_ambiguous_tags_for_review_in_the_json_and_csv(tmp_path, workbook,
     assert "tag 'Lighting Design' in meaning (0.61)" in records[1]["reason"]
     with output.with_suffix(".csv").open(encoding="utf-8") as stream:
         assert [row["needs_review"] for row in csv.DictReader(stream)] == ["", "True"]
+
+
+RETRY_PROPOSAL = {
+    "tag": "Skill", "tag_id": "1", "action": "assign_existing", "service": "Subject",
+    "category": "Finance", "speciality": "Analysis", "confidence": 0.8, "reason": "Matches",
+}
+
+
+class RequestFailure(Exception):
+    """Represent HTTP errors without requiring the optional OpenAI SDK."""
+
+    def __init__(self, status: int, retry_after: str | None = None, code: str | None = None) -> None:
+        self.status_code = status
+        self.code = code
+        self.response = SimpleNamespace(headers={} if retry_after is None else {"retry-after": retry_after})
+
+
+class Client:
+    """Return scripted errors and JSON, and record the SDK retry configuration."""
+
+    def __init__(self, *events: Any) -> None:
+        self.events = list(events)
+        self.calls = 0
+        self.options: dict[str, Any] = {}
+        self.chat = SimpleNamespace(completions=SimpleNamespace(create=self.create))
+
+    def with_options(self, **options: Any) -> Client:
+        self.options = options
+        return self
+
+    async def create(self, **kwargs: Any) -> Any:
+        self.calls += 1
+        event = self.events.pop(0)
+        if isinstance(event, Exception):
+            raise event
+        return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=event))])
+
+
+@pytest.fixture
+def waits(monkeypatch: pytest.MonkeyPatch) -> list[float]:
+    recorded: list[float] = []
+
+    async def sleep(delay: float) -> None:
+        recorded.append(delay)
+
+    monkeypatch.setattr(case_b.asyncio, "sleep", sleep)
+    monkeypatch.setattr(case_b.random, "uniform", lambda *_: 0)
+    return recorded
+
+
+@pytest.mark.parametrize("status", [400, 401, 403, 404, 422])
+def test_permanent_errors_are_attempted_once(status: int, waits: list[float]) -> None:
+    client = Client(RequestFailure(status))
+    with pytest.raises(case_b.CaseBError, match="not retrying"):
+        asyncio.run(case_b.classify_batch(client, "prompt", [{"tag_id": "1"}], "model"))
+    assert client.calls == 1
+    assert waits == []
+
+
+@pytest.mark.parametrize("error", [RequestFailure(429), RequestFailure(503), ConnectionError(), TimeoutError()])
+def test_transient_errors_have_three_attempts_with_backoff(error: Exception, waits: list[float]) -> None:
+    client = Client(error, error, error)
+    with pytest.raises(case_b.CaseBError, match="after 3 attempts"):
+        asyncio.run(case_b.classify_batch(client, "prompt", [{"tag_id": "1"}], "model"))
+    assert client.calls == 3
+    assert waits == [1, 2]
+    assert client.options == {}
+
+
+def test_retry_after_controls_the_delay_before_recovery(waits: list[float]) -> None:
+    client = Client(RequestFailure(429, "7"), json.dumps({"proposals": [RETRY_PROPOSAL]}))
+    assert asyncio.run(case_b.classify_batch(client, "prompt", [{"tag_id": "1"}], "model")) == [RETRY_PROPOSAL]
+    assert waits == [7]
+
+
+def test_long_retry_after_stops_without_sleeping_or_retrying(waits: list[float]) -> None:
+    client = Client(RequestFailure(429, "120"))
+    with pytest.raises(case_b.CaseBError, match="above 60 seconds"):
+        asyncio.run(case_b.classify_batch(client, "prompt", [{"tag_id": "1"}], "model"))
+    assert client.calls == 1
+    assert waits == []
+
+
+def test_retry_after_parses_http_dates() -> None:
+    date = format_datetime(datetime.now(UTC) + timedelta(seconds=30), usegmt=True)
+    assert 28 <= case_b._retry_delay(RequestFailure(429, date), 1) <= 30
+
+
+def test_quota_errors_are_not_retried(waits: list[float]) -> None:
+    client = Client(RequestFailure(429, code="insufficient_quota"))
+    with pytest.raises(case_b.CaseBError, match="not retrying"):
+        asyncio.run(case_b.classify_batch(client, "prompt", [{"tag_id": "1"}], "model"))
+    assert client.calls == 1
+    assert waits == []
+
+
+def test_partial_results_survive_malformed_json_and_transient_failures(waits: list[float]) -> None:
+    other = {**RETRY_PROPOSAL, "tag_id": "2"}
+    client = Client(
+        json.dumps({"proposals": [RETRY_PROPOSAL]}), RequestFailure(503), json.dumps({"proposals": [other]}),
+    )
+    result = asyncio.run(case_b.classify_batch(client, "prompt", [{"tag_id": "1"}, {"tag_id": "2"}], "model"))
+    assert result == [RETRY_PROPOSAL, other]
+
+
+def test_malformed_json_can_recover(waits: list[float]) -> None:
+    client = Client("[]", "not JSON", json.dumps({"proposals": [RETRY_PROPOSAL]}))
+    assert asyncio.run(case_b.classify_batch(client, "prompt", [{"tag_id": "1"}], "model")) == [RETRY_PROPOSAL]
+
+
+def test_old_context_checkpoint_is_rejected_before_model_calls(tmp_path, workbook, saturation_report):
+    output = tmp_path / "out.json"
+    checkpoint = output.with_name(".out.checkpoint.json")
+    checkpoint.write_text(json.dumps({
+        "saturation_run_id": "run-1", "incoming": "skillsfuture", "model": "test-model",
+        "proposals": [PROPOSAL],
+    }), encoding="utf-8")
+    client = StubClient()
+    with pytest.raises(CaseBError, match="context_schema_version"):
+        _run(saturation_report(CONCEPTS), output, client, workbook=workbook, model="test-model")
+    assert client.prompts == []
+
+
+def test_retry_after_milliseconds_takes_precedence(waits: list[float]) -> None:
+    error = RequestFailure(429, "1")
+    error.response.headers["retry-after-ms"] = "8000"
+    client = Client(error, json.dumps({"proposals": [RETRY_PROPOSAL]}))
+    asyncio.run(classify_batch(client, "prompt", [{"tag_id": "1"}], "model"))
+    assert waits == [8]
+
+
+@pytest.mark.parametrize("value", ["inf", "1e999"])
+def test_infinite_retry_after_stops_the_run(value: str, waits: list[float]) -> None:
+    client = Client(RequestFailure(429, value))
+    with pytest.raises(CaseBError, match="above 60 seconds"):
+        asyncio.run(classify_batch(client, "prompt", [{"tag_id": "1"}], "model"))
+    assert client.calls == 1
+    assert waits == []
+
+
+def test_server_retry_false_prevents_retry(waits: list[float]) -> None:
+    error = RequestFailure(503)
+    error.response.headers["x-should-retry"] = "false"
+    client = Client(error)
+    with pytest.raises(RequestFailure):
+        asyncio.run(classify_batch(client, "prompt", [{"tag_id": "1"}], "model"))
+    assert client.calls == 1
+    assert waits == []
+
+
+def test_programming_errors_keep_the_original_message(waits: list[float]) -> None:
+    client = Client(TypeError("unexpected argument"))
+    with pytest.raises(TypeError, match="unexpected argument"):
+        asyncio.run(classify_batch(client, "prompt", [{"tag_id": "1"}], "model"))
+    assert client.calls == 1
+
+
+def test_injected_mock_client_is_not_replaced():
+    from unittest.mock import AsyncMock, MagicMock
+
+    client = MagicMock()
+    client.chat.completions.create = AsyncMock(return_value=SimpleNamespace(
+        choices=[SimpleNamespace(message=SimpleNamespace(content=json.dumps({"proposals": [RETRY_PROPOSAL]})))],
+    ))
+    assert asyncio.run(classify_batch(client, "prompt", [{"tag_id": "1"}], "model")) == [RETRY_PROPOSAL]
+    client.with_options.assert_not_called()
+
+
+def test_server_can_request_a_retry_for_an_otherwise_unclassified_status(waits: list[float]) -> None:
+    error = RequestFailure(418)
+    error.response.headers["x-should-retry"] = "true"
+    client = Client(error, json.dumps({"proposals": [RETRY_PROPOSAL]}))
+    asyncio.run(classify_batch(client, "prompt", [{"tag_id": "1"}], "model"))
+    assert waits == [1]
+
+
+def test_sdk_response_validation_error_can_recover(waits: list[float]) -> None:
+    sdk = pytest.importorskip("openai")
+    import httpx
+
+    response = httpx.Response(200, request=httpx.Request("POST", "https://example.test"))
+    client = Client(
+        sdk.APIResponseValidationError(response=response, body={}), json.dumps({"proposals": [RETRY_PROPOSAL]}),
+    )
+    assert asyncio.run(classify_batch(client, "prompt", [{"tag_id": "1"}], "model")) == [RETRY_PROPOSAL]
+    assert waits == [1]

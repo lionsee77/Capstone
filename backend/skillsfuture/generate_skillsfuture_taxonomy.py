@@ -13,8 +13,6 @@ from pathlib import Path
 
 from openpyxl import load_workbook
 
-from taxonomy_pipeline.providers.skillsfuture import build_skill_tag_mapping
-
 
 ROOT = Path(__file__).parent
 DEFAULT_UNIQUE = ROOT / "jobsandskills-skillsfuture-unique-skills-list.xlsx"
@@ -81,7 +79,7 @@ def main() -> None:
     sectors = sorted({sector for sector, _ in roles})
     category_id = {sector: 1000 + i for i, sector in enumerate(sectors)}
     role_id = {key: 2000 + i for i, key in enumerate(sorted(roles))}
-    tag_id = build_skill_tag_mapping(unique)
+    tag_id = {skill_id: 3000 + i for i, skill_id in enumerate(sorted(unique))}
 
     links = set()
     for code, role_rows in tsc_to_roles.items():

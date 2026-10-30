@@ -24,7 +24,7 @@ def normalise_skill_text(value: Any) -> str:
 
 
 def build_skill_tag_mapping(skills: Mapping[str, str]) -> dict[str, int]:
-    """Share stable tag IDs between SQL generation and classification context loading."""
+    """Mirror standalone generation; cross-reader parity is enforced by tests."""
     eligible = {
         normalise_skill_text(skill_id)
         for skill_id, title in skills.items()
@@ -53,7 +53,7 @@ def source_skills(path: str | Path) -> dict[str, dict[str, str]]:
             skill_id = normalise_skill_text(row.get("skill_id"))
             if skill_id and normalise_skill_text(row.get("skill_title")):
                 result[skill_id] = {
-                    field: str(row.get(f"skill_{field}") or "").strip() for field in ("title", "description", "type")
+                    field: normalise_skill_text(row.get(f"skill_{field}")) for field in ("title", "description", "type")
                 }
         return result
     finally:
