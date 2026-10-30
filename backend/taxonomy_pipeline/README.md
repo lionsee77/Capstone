@@ -498,6 +498,39 @@ src/taxonomy_pipeline/enrichment/
   change_log.py  # append submitted decisions to the run's local audit log
 ```
 
+### Governance storage decision (PB09: #89)
+
+**Decision recorded 30 October 2026:** governance storage is pipeline-owned SQLite,
+in the existing `taxonomy_pipeline.sqlite3`, pending migration to the client DB.
+The user confirmed that Ankit's `taxonomy_proposals` schema has **not been received**;
+use provisional pipeline proposal references until it arrives. Client-schema alignment
+is pending, not claimed complete. PB07/synonym matching is paused. The planned audit contract will accept
+synonym actions without introducing a synonym matcher or management workflow.
+
+The `taxonomy_change_log` table is planned with indexed
+`event_id` (primary key), UTC `occurred_at`, `dataset`, `snapshot_id`, `concept_level`,
+nullable `concept_id`, `concept_ref`, `action`, and `proposal_namespace`. A JSON
+`payload` contains the complete change event, including concept name, before/after
+values, reason, actor, operation ID, proposal IDs, decision IDs and optional full
+review decision. Multiple proposal/decision references can explain one change.
+Concept IDs are strings and are scoped by dataset, snapshot and level; an unresolved
+proposal/source tag has a stable `concept_ref` and no fabricated numeric ID.
+`proposal_namespace=pipeline` identifies today's references, not foreign keys to
+an assumed client table. A future client adapter can use its own namespace.
+
+**Storage sketches for the remaining #89 coordination:** review decisions will live in
+audit event payloads and run artifacts; screened proposals remain in saved
+`resolution.json` until a client proposal adapter is agreed. The following are
+proposed future SQLite tables, not created or claimed agreed with the client:
+
+| Future table | Proposed columns and keys |
+|---|---|
+| `taxonomy_synonyms` (PB07 paused) | ID PK; dataset, snapshot, level, concept ID, alias, normalized alias, parent scope, creation event ID; unique (dataset, snapshot, level, parent scope, normalized alias), with ambiguity resolved before approval. |
+| `taxonomy_deprecations` (PB08) | ID PK; dataset, snapshot, level, concept ID, replacement reference (nullable), reason, actor, timestamp, event ID; unique (dataset, snapshot, level, concept ID) for a current-state projection; deprecation/reactivation history always stays append-only in the log. |
+
+Client schema mapping, agreement on these deferred table sketches, and propagating
+the decision to GitHub issues #55–#66 remain coordination work. The implementation follows in #65 and #66; remote issue updates are pending. Synonym behavior remains paused.
+
 ### Read the proposal review view (#58)
 
 Read a saved merge run to see each category/speciality proposal beside every
