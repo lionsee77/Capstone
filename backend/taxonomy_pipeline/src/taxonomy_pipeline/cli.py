@@ -16,8 +16,9 @@ import sys
 from pathlib import Path
 
 from .app import enrichment as use_cases
-from .app.changes import sync_changes
+from .app.changes import changes, sync_changes
 from .app.scoring import check_runs, result_labels, run_config, write_report
+from .audit.models import ChangeQuery
 
 
 def _cmd_run(args: argparse.Namespace) -> int:
@@ -202,6 +203,17 @@ def _add_dataset_args(parser: argparse.ArgumentParser, *, incoming: bool = True)
         parser.add_argument("--incoming", default="skillsfuture", help="taxonomy dataset the new tags come from")
 
 
+# Print filtered audit history through the same use case as GET /changes.
+def _cmd_changes(args: argparse.Namespace) -> int:
+    try:
+        query = ChangeQuery(**{key: getattr(args, key) for key in ChangeQuery.model_fields})
+        print(changes(query).model_dump_json(indent=2))
+    except (OSError, ValueError, sqlite3.Error) as exc:
+        print(f"[FAILED] changes: {exc}", file=sys.stderr)
+        return 1
+    return 0
+
+
 # Retry delivery from saved audit events without changing taxonomy artifacts.
 def _cmd_sync_changes(args: argparse.Namespace) -> int:
     try:
@@ -305,6 +317,13 @@ def build_parser() -> argparse.ArgumentParser:
     integrate.add_argument("--actor", default="unspecified", help="self-reported operator identity for audit events")
     integrate.set_defaults(func=_cmd_integrate)
 
+    history = subparsers.add_parser("changes", help="read audit history without changing the taxonomy")
+    for field in ChangeQuery.model_fields:
+        if field not in {"limit", "offset"}:
+            history.add_argument("--" + field.replace("_", "-"))
+    history.add_argument("--offset", type=int, default=0)
+    history.add_argument("--limit", type=int, default=50, help="page size, 1-200")
+    history.set_defaults(func=_cmd_changes)
     sync = subparsers.add_parser("sync-changes", help="retry SQLite delivery of a saved audit_events.json file")
     sync.add_argument("--events", required=True)
     sync.set_defaults(func=_cmd_sync_changes)

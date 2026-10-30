@@ -18,7 +18,8 @@ PB09 audit response contracts (`changeEventSchema`, `changeHistorySchema`) mirro
 the backend's `audit/models.py`, including snapshot-scoped concept IDs, proposal
 references and review-versus-snapshot scope. The existing review event schema also
 accepts the self-reported `actor` field (default `unspecified` for old records).
-The history API and CLI follow in #66; no dashboard history screen or proxy route is added here.
+Audit history is currently available through the backend `GET /changes` and CLI;
+no dashboard history screen or proxy route is added here.
 
 ## Setup
 

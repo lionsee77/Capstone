@@ -86,7 +86,7 @@ taxonomy_pipeline/
 │   │   ├── models.py                 #   ChangeEvent, ChangeQuery, ChangeHistory contracts
 │   │   └── store.py                  #   append-only SQLite writer and read-only history queries
 │   ├── app/                          # use cases: what every CLI command and API route calls
-│   │   ├── changes.py                #   durable audit-event recovery
+│   │   ├── changes.py                #   history queries and durable audit-event recovery
 │   │   ├── scoring.py                #   run_pipeline(config) -> RunReport; dataset/report I/O; check_runs; run history
 │   │   ├── enrichment.py             #   case_a, case_b, merge_preview, review_proposals, bulk_decide, integrate
 │   │   └── browse.py                 #   taxonomy search/detail over a past run's dataset (/taxonomy)
@@ -98,6 +98,7 @@ taxonomy_pipeline/
 │   ├── api/
 │   │   ├── app.py                    #   FastAPI: /metrics, /runs, /taxonomy routes over app/
 │   │   ├── proposals.py              #   /proposals: which merge runs a request may read, over app.enrichment
+│   │   ├── changes.py                #   authenticated, read-only GET /changes over app.changes
 │   │   └── security.py               #   API token and allowed data directories
 │   └── cli.py                        # `taxonomy-pipeline run|check-comparable|serve|case-a|case-b|merge-preview|review-proposals|bulk-decide|integrate`
 ├── schemas/
@@ -506,7 +507,7 @@ src/taxonomy_pipeline/enrichment/
   change_log.py  # append submitted decisions to the run's local audit log
 ```
 
-### Audit logging and storage decision (PB09: #89, #65)
+### Audit history and storage decision (PB09: #89, #65, #66)
 
 **Decision recorded 30 October 2026:** governance storage is pipeline-owned SQLite,
 in the existing `taxonomy_pipeline.sqlite3`, pending migration to the client DB.
@@ -516,7 +517,7 @@ is pending, not claimed complete. PB07/synonym matching is paused. The log accep
 synonym actions without introducing a synonym matcher or management workflow.
 
 `audit/` has no dependency on enrichment. `enrichment/audit.py` translates workflow
-evidence into its contract; `app/changes.py` provides audit delivery recovery. The
+evidence into its contract; `app/changes.py` is the shared CLI/API use case. The
 existing context dependency direction remains unchanged, with `audit/` available
 to governance operations as an independent storage context.
 
@@ -572,6 +573,30 @@ taxonomy-pipeline sync-changes --events merge_runs/reviewed/audit_events.json
 Repeating this command inserts only missing events. Original JSONL histories are
 not automatically bulk-migrated: retained decisions are imported when their merge
 run is rerun. Keep the old files for decisions outside the current submission.
+
+History is available through the authenticated **read-only** `GET /changes` endpoint
+and matching CLI. Filters are combined with AND: `dataset`, `snapshot_id`,
+`concept_level` (singular, also `speciality_tag`), `concept_id`, `concept_ref`,
+`action`, `proposal_id`, `proposal_namespace`, `decision_id`, `since`, and `until`.
+Date bounds are inclusive ISO timestamps with an explicit timezone (e.g. `Z`).
+`offset` defaults to 0; `limit` defaults to 50, maximum 200. The response contains
+`total`, `offset`, `limit` and `changes`, ordered oldest first by UTC time then event
+ID. Follow all pages to see every change for a proposal. A decision reference lets
+you follow source-tag reviews that do not have a hierarchy proposal ID.
+
+```bash
+taxonomy-pipeline changes --proposal-id <proposal-id> --limit 200
+taxonomy-pipeline changes --dataset original --concept-level category --concept-id 42
+taxonomy-pipeline changes --action add --since 2026-10-30T00:00:00Z
+curl -H "Authorization: Bearer $TAXONOMY_API_TOKEN" \
+    'http://localhost:8000/changes?proposal_id=<proposal-id>&limit=200'
+```
+
+Queries open SQLite with `mode=ro`, never load or write taxonomy files, and do not
+create a missing database or migrate an existing run-history-only database. There
+are no HTTP audit mutation routes. Tests verify unchanged database/taxonomy bytes
+after querying, authenticated access, all action types, filtering, lineage,
+append-only enforcement, concurrent retries and recovery after failed delivery.
 
 **Storage sketches for the remaining #89 coordination:** review decisions live in
 audit event payloads and run artifacts; screened proposals remain in saved
