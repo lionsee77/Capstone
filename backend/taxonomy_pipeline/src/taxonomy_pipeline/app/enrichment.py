@@ -67,6 +67,7 @@ def merge_preview(
     decisions: str | Path | None = None, semantic_model: str | None = None,
     screening_lexical: float | None = None, screening_semantic: float | None = None,
     change_log: str | Path | None = None,
+    actor: str = "unspecified",
 ) -> MergeRun:
     """Validate, deduplicate and resolve producer outputs into `out_dir` (default `merge_runs/<timestamp>`)."""
     from ..matching.semantic import SemanticMatcher
@@ -82,7 +83,7 @@ def merge_preview(
         list(inputs), taxonomy, out_dir=out_dir or _timestamped("merge_runs"),
         decisions=load_decisions(decisions) if decisions else [],
         semantic_matcher=SemanticMatcher(semantic_model) if semantic_model else None,
-        screening_settings=screening_settings, change_log=change_log,
+        screening_settings=screening_settings, change_log=change_log, actor=actor,
     )
 
 
@@ -138,6 +139,7 @@ class IntegrateResult:
 
 def integrate(
     config_path: str | Path, merge_run: str | Path, *, baseline: str, out_dir: str | Path | None = None,
+    actor: str = "unspecified",
 ) -> IntegrateResult:
     """Turn a fully reviewed merge run into an enriched snapshot (default `integrations/<timestamp>`)."""
     merge_run = Path(merge_run)
@@ -147,7 +149,7 @@ def integrate(
     if dataset is None:
         raise IntegrationError(f"{config_path} declares no dataset named {baseline!r}")
     result = integrate_snapshot(
-        resolution, dataset, out_dir=out_dir or _timestamped("integrations"), scoring_config=config,
+        resolution, dataset, out_dir=out_dir or _timestamped("integrations"), scoring_config=config, actor=actor,
         provenance={
             "merge_run": str(merge_run), "scoring_config": str(config_path),
             **(info.model_dump(exclude_unset=True) if info else {}),

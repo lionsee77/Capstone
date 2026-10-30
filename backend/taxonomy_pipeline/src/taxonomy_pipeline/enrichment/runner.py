@@ -20,6 +20,7 @@ from pydantic import TypeAdapter
 
 from ..matching.semantic import SimilarityMatcher
 from ..taxonomy.base import TaxonomyDataset
+from .audit import record_review_changes
 from .change_log import append_review_decisions
 from .deduplication import deduplicate_outputs
 from .export import export_preview_csv
@@ -116,6 +117,7 @@ def run_merge_preview(
     semantic_matcher: SimilarityMatcher | None = None,
     screening_settings: ScreeningSettings | None = None,
     change_log: str | Path | None = None,
+    actor: str = "unspecified",
 ) -> MergeRun:
     """Chain the stages over producer files and write validation, deduplication,
     resolution and the preview CSV to `out_dir`.
@@ -123,6 +125,8 @@ def run_merge_preview(
     `inputs` follow the nine-field contract. Decisions not yet in `change_log` (default `out_dir/change_log.jsonl`) are
     appended to it; point several runs at one log to keep a reviewer's history.
     """
+    if not actor.strip():
+        raise ValueError("actor must not be blank")
     paths = [Path(path) for path in inputs]
     if len(set(paths)) != len(paths):
         raise ValueError("Each input file may be given only once")
@@ -157,6 +161,9 @@ def run_merge_preview(
     (out_dir / "run.json").write_text(json.dumps(run_info.model_dump(), indent=2), encoding="utf-8")
     append_review_decisions(
         Path(change_log) if change_log else out_dir / "change_log.jsonl", resolution.decisions,
-        baseline_snapshot_id=resolution.baseline_snapshot_id,
+        baseline_snapshot_id=resolution.baseline_snapshot_id, actor=actor,
+    )
+    record_review_changes(
+        resolution, Path(change_log) if change_log else out_dir / "change_log.jsonl", out_dir,
     )
     return MergeRun(out_dir=out_dir, validation=validation, preview=preview, warnings=warnings)

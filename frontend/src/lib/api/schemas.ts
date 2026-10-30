@@ -228,6 +228,7 @@ export const reviewDecisionEventSchema = z.object({
   submission_id: reviewTextSchema,
   recorded_at: z.string().datetime({ offset: true }),
   baseline_snapshot_id: reviewTextSchema,
+  actor: reviewTextSchema.default("unspecified"),
   event_type: z.literal("review_decision").default("review_decision"),
   decision: reviewDecisionSchema,
 }).strict();
@@ -261,6 +262,44 @@ export const proposalReviewReportSchema = z.object({
   proposals: z.array(proposalReviewItemSchema),
 });
 export type ProposalReviewReport = z.infer<typeof proposalReviewReportSchema>;
+
+/** PB09 audit facts use snapshot-scoped string IDs and provisional pipeline proposal references. */
+export const changeEventSchema = z.object({
+  event_id: reviewTextSchema,
+  operation_id: reviewTextSchema,
+  dataset: reviewTextSchema,
+  snapshot_id: reviewTextSchema,
+  concept_level: z.enum(["service", "category", "speciality", "tag", "speciality_tag"]),
+  concept_id: reviewTextSchema.nullable().default(null),
+  concept_ref: reviewTextSchema,
+  concept_name: reviewTextSchema,
+  action: z.enum(["add", "remove", "merge", "synonym_add", "synonym_remove", "deprecate", "reactivate", "review_decision"]),
+  before: z.record(z.string(), z.unknown()).nullable().default(null),
+  after: z.record(z.string(), z.unknown()).nullable().default(null),
+  reason: reviewTextSchema,
+  actor: reviewTextSchema.default("unspecified"),
+  occurred_at: z.string().datetime({ offset: true }),
+  proposal_ids: z.array(reviewTextSchema).default([]),
+  proposal_namespace: reviewTextSchema.default("pipeline"),
+  decision_ids: z.array(reviewTextSchema).default([]),
+  decision: z.record(z.string(), z.unknown()).nullable().default(null),
+  scope: z.enum(["review", "snapshot", "live"]),
+}).strict().superRefine((event, context) => {
+  if ((event.action === "review_decision") !== (event.scope === "review")) {
+    context.addIssue({ code: "custom", message: "Review decisions require review scope", path: ["scope"] });
+  }
+  if (event.action === "review_decision" && event.decision === null) {
+    context.addIssue({ code: "custom", message: "Review decisions require a payload", path: ["decision"] });
+  }
+});
+
+export const changeHistorySchema = z.object({
+  total: z.number().int().nonnegative(),
+  offset: z.number().int().nonnegative(),
+  limit: z.number().int().min(1).max(200),
+  changes: z.array(changeEventSchema),
+});
+export type ChangeHistory = z.infer<typeof changeHistorySchema>;
 
 export function isRunFinished(status: RunStatus): boolean {
   return status === "done" || status === "failed";

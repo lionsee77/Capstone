@@ -32,15 +32,18 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 import yaml
 
+from ..audit import log_changes
 from ..config import DatasetConfig, PipelineConfig
 from ..matching.names import collation_key
 from ..quality.integrity import IntegrityMetric
 from ..quality.registry import METRICS
 from ..taxonomy.base import CONCEPTS, TaxonomyDataset
 from ..taxonomy.sql_dump import SqlDumpSource
+from .audit import EVENTS, integration_events
 from .models import MergePreview, ResolutionReport
 from .preview import build_preview
 from .resolution import taxonomy_snapshot_id
@@ -92,6 +95,7 @@ def integrate(
     out_dir: str | Path,
     provenance: dict[str, Any] | None = None,
     scoring_config: PipelineConfig | None = None,
+    actor: str = "unspecified",
 ) -> Integration:
     """Write the enriched snapshot for a fully reviewed merge run.
 
@@ -103,6 +107,8 @@ def integrate(
     are scored the same way, and so is its `metric_definitions_version` pin if it
     has one. Without it, `enriched.yaml` runs integrity and depth.
     """
+    if not actor.strip():
+        raise IntegrationError("actor must not be blank")
     if baseline.type != "sql_dump":
         raise IntegrationError(f"Baseline {baseline.name!r} must be a sql_dump dataset, not {baseline.type!r}")
     out_dir = Path(out_dir)
@@ -138,6 +144,10 @@ def integrate(
             resolution, baseline, copies, additions, id_map, enriched, provenance or {}, staging,
         )
         manifest["exact_duplicate_rows"] = duplicates
+        operation_id = str(uuid4())
+        events = integration_events(resolution, additions, id_map, manifest, operation_id=operation_id, actor=actor)
+        manifest["audit"] = {"operation_id": operation_id, "events_file": "audit_events.json"}
+        (staging / "audit_events.json").write_bytes(EVENTS.dump_json(events, indent=2))
         (staging / "manifest.json").write_text(json.dumps(manifest, indent=2, ensure_ascii=False), encoding="utf-8")
         (staging / "enriched.yaml").write_text(
             _config_yaml(copies, staging, source.table_map, baseline.name, scoring_config), encoding="utf-8",
@@ -146,6 +156,14 @@ def integrate(
     except BaseException:
         shutil.rmtree(staging, ignore_errors=True)
         raise
+    # Publish the verified snapshot before recording additions; its durable events allow retry after a DB failure.
+    try:
+        log_changes(events)
+    except Exception as exc:
+        raise IntegrationError(
+            f"Snapshot saved at {out_dir}, but audit delivery failed. Retry with "
+            f"taxonomy-pipeline sync-changes --events \"{out_dir / 'audit_events.json'}\": {exc}"
+        ) from exc
     return Integration(out_dir=out_dir, manifest=manifest)
 
 

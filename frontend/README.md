@@ -14,6 +14,12 @@ and this UI all agree on what a run is.
 boundary validation) · zustand (client state) · shadcn/ui on Base UI + Tailwind v4 ·
 Vitest · bun.
 
+PB09 audit response contracts (`changeEventSchema`, `changeHistorySchema`) mirror
+the backend's `audit/models.py`, including snapshot-scoped concept IDs, proposal
+references and review-versus-snapshot scope. The existing review event schema also
+accepts the self-reported `actor` field (default `unspecified` for old records).
+The history API and CLI follow in #66; no dashboard history screen or proxy route is added here.
+
 ## Setup
 
 ```bash

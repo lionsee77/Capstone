@@ -1,7 +1,7 @@
 """Persist review submissions without coupling pure resolution to audit storage.
 
-The merge-run JSONL file is the local change log until PB09 provides shared
-storage. Events embed the same ReviewDecision used by the resolver. Preview
+The merge-run JSONL file remains a compatibility handoff; enrichment.audit
+delivers its decisions to PB09 SQLite. Events embed the same ReviewDecision used by the resolver. Preview
 and integration replay never append events. A rerun of merge-preview with the
 same decisions file is a replay too: only decisions the log doesn't already
 hold for that baseline are recorded, so each event is one reviewer decision.
@@ -28,6 +28,7 @@ def _logged(path: Path, baseline_snapshot_id: str) -> set[str]:
 # Append one event per newly submitted reviewer decision while preserving earlier submissions.
 def append_review_decisions(
     path: Path, decisions: Sequence[ReviewDecision], *, baseline_snapshot_id: str,
+    actor: str = "unspecified",
 ) -> int:
     """Log the decisions not yet logged for this baseline as one submission; returns how many were new.
 
@@ -47,7 +48,7 @@ def append_review_decisions(
     recorded_at = datetime.now(UTC)
     events = [ReviewDecisionEvent(
         event_id=str(uuid4()), submission_id=submission_id, recorded_at=recorded_at,
-        baseline_snapshot_id=baseline_snapshot_id, decision=decision,
+        baseline_snapshot_id=baseline_snapshot_id, decision=decision, actor=actor,
     ) for decision in new]
     with path.open("a", encoding="utf-8") as stream:
         stream.write("".join(event.model_dump_json() + "\n" for event in events))

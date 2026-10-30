@@ -2,11 +2,14 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 from pathlib import Path
 
 import pytest
 
+from taxonomy_pipeline.app.changes import sync_changes
 from taxonomy_pipeline.app.scoring import load_datasets
+from taxonomy_pipeline.audit import ChangeEvent, ChangeQuery, read_changes
 from taxonomy_pipeline.config import DatasetConfig, MetricConfig, PipelineConfig, load_config
 from taxonomy_pipeline.enrichment import integrate as integrate_module
 from taxonomy_pipeline.enrichment.integrate import IntegrationError, _additions_sql, integrate
@@ -73,7 +76,9 @@ def test_writes_a_snapshot_of_baseline_plus_reviewed_additions(tmp_path, baselin
     result = integrate(_resolution(tmp_path, baseline), baseline, out_dir=tmp_path / "out")
 
     out = tmp_path / "out"
-    assert sorted(p.name for p in out.iterdir()) == ["additions.sql", "baseline", "enriched.yaml", "manifest.json"]
+    assert sorted(p.name for p in out.iterdir()) == [
+        "additions.sql", "audit_events.json", "baseline", "enriched.yaml", "manifest.json",
+    ]
     assert (out / "baseline" / "baseline.sql").read_bytes() == Path(baseline.paths[0]).read_bytes()
     # "Data visualization" and one shared "Python", each linked.
     assert result.counts["tags"] == 2
@@ -115,6 +120,65 @@ def test_rerunning_the_same_merge_run_gives_identical_ids(tmp_path, baseline):
     assert first.manifest["enriched_snapshot_id"] == second.manifest["enriched_snapshot_id"]
 
 
+# Each generated row is audited with its concrete snapshot ID and recoverable proposal references.
+def test_snapshot_additions_are_audited_and_traceable(tmp_path: Path, baseline: DatasetConfig) -> None:
+    resolution = _resolution(tmp_path, baseline)
+    snapshot = integrate(resolution, baseline, out_dir=tmp_path / "out", actor="Bryan")
+    events = read_changes(ChangeQuery(action="add", limit=200)).changes
+    assert len(events) == sum(snapshot.counts.values())
+    assert all(event.scope == "snapshot" and event.actor == "Bryan" for event in events)
+    assert all(event.snapshot_id == snapshot.manifest["enriched_snapshot_id"] for event in events)
+    assert all(event.concept_id == str(event.after["id"]) for event in events)
+    assert {event.concept_level for event in events} == {"tag", "speciality_tag"}
+    proposal = next(p for p in resolution.screening.proposals if any(p.proposal_id in e.proposal_ids for e in events))
+    history = read_changes(ChangeQuery(proposal_id=proposal.proposal_id, limit=200))
+    assert any(event.action == "add" for event in history.changes)
+    reviewed = read_changes(ChangeQuery(action="review_decision", limit=200)).changes
+    decision_ids = {reference for event in reviewed for reference in event.decision_ids}
+    assert any(decision_ids.intersection(event.decision_ids) for event in events)
+    assert sync_changes(snapshot.out_dir / "audit_events.json") == 0
+
+
+# Newly created hierarchy concepts retain their own proposal and the parent that enabled them.
+def test_new_hierarchy_rows_keep_proposal_lineage(tmp_path: Path, baseline: DatasetConfig) -> None:
+    taxonomy = SqlDumpSource(baseline.name, baseline.paths).load()
+    producer = tmp_path / "new.json"
+    producer.write_text(json.dumps([{
+        "source_dataset": "feed", "tag_id": "1", "tag": "Qubit measurement", "original_classification": "classified",
+        "service": "Subject", "category": "Quantum tooling", "speciality": "Qubit calibration",
+        "confidence": 0.9, "reason": "New field",
+    }]), encoding="utf-8")
+    run_merge_preview([producer], taxonomy, out_dir=tmp_path / "merge")
+    resolution = ResolutionReport.model_validate_json((tmp_path / "merge" / "resolution.json").read_bytes())
+    integrate(resolution, baseline, out_dir=tmp_path / "out")
+    events = read_changes(ChangeQuery(action="add")).changes
+    by_level = {event.concept_level: event for event in events}
+    assert set(by_level) == {"category", "speciality", "tag", "speciality_tag"}
+    proposals = {p.level: p.proposal_id for p in resolution.screening.proposals}
+    assert by_level["category"].proposal_ids == [proposals["category"]]
+    assert set(by_level["speciality"].proposal_ids) == set(proposals.values())
+    assert set(by_level["speciality_tag"].proposal_ids) == set(proposals.values())
+
+
+# A failed audit delivery must never destroy a verified snapshot or invent a second integration.
+def test_snapshot_survives_audit_delivery_failure_and_can_be_synced(
+    tmp_path: Path, baseline: DatasetConfig, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    resolution = _resolution(tmp_path, baseline)
+
+    # Fail only the SQLite delivery, after the staged snapshot is published.
+    def unavailable(events: list[ChangeEvent]) -> int:
+        raise sqlite3.OperationalError("database unavailable")
+
+    monkeypatch.setattr(integrate_module, "log_changes", unavailable)
+    with pytest.raises(IntegrationError, match="sync-changes"):
+        integrate(resolution, baseline, out_dir=tmp_path / "out")
+    assert (tmp_path / "out" / "enriched.yaml").exists()
+    assert read_changes(ChangeQuery(action="add")).total == 0
+    assert sync_changes(tmp_path / "out" / "audit_events.json") > 0
+    assert sync_changes(tmp_path / "out" / "audit_events.json") == 0
+
+
 def test_manifest_records_where_the_snapshot_came_from(tmp_path, baseline):
     resolution = _resolution(tmp_path, baseline)
     manifest = integrate(
@@ -137,6 +201,7 @@ def test_refuses_while_sources_are_pending_review(tmp_path, baseline):
     with pytest.raises(IntegrationError, match=r"still pending review .*rerun merge-preview with --decisions"):
         integrate(resolution, baseline, out_dir=tmp_path / "out")
     assert not (tmp_path / "out").exists()
+    assert read_changes(ChangeQuery(action="add")).total == 0
 
 
 def test_refuses_when_the_baseline_changed_since_the_merge_run(tmp_path, baseline):
@@ -228,6 +293,9 @@ def test_refuses_flagged_review_candidates_until_a_reviewer_approves_one_path(tm
     assert [categories[row["category_id"]] for row in fire] == ["Data analytics"]  # the approved candidate only
     assert {row["name"] for row in enriched.tags[len(taxonomy.tags):]} == {"Fire Prevention", "Spreadsheet Modelling"}
     assert result.counts["tags"] == 2
+    resolution = ResolutionReport.model_validate_json((tmp_path / "reviewed" / "resolution.json").read_bytes())
+    rejected = next(p for p in resolution.screening.proposals if p.path == ["Subject", "biology", "fire prevention"])
+    assert read_changes(ChangeQuery(action="add", proposal_id=rejected.proposal_id)).total == 0
 
 
 def test_a_reviewer_can_map_an_ambiguous_tag_onto_the_existing_tag_it_resembles(tmp_path, baseline):

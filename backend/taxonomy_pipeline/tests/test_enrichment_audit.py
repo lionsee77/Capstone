@@ -1,0 +1,58 @@
+"""Review evidence is durable, retryable, and distinct from snapshot changes."""
+from __future__ import annotations
+
+import json
+import sqlite3
+from pathlib import Path
+
+import pytest
+
+from taxonomy_pipeline.app.changes import sync_changes
+from taxonomy_pipeline.audit import ChangeEvent, ChangeQuery, read_changes
+from taxonomy_pipeline.enrichment import audit
+from taxonomy_pipeline.enrichment.audit import record_review_changes
+from taxonomy_pipeline.enrichment.runner import load_merge_run, run_merge_preview
+from taxonomy_pipeline.taxonomy.base import TaxonomyDataset
+
+
+# Replaying a saved review retains the original actor, timestamp and decision reference without additions.
+def test_review_retry_keeps_original_event_and_never_logs_additions(saved_proposal_run: Path) -> None:
+    resolution, _ = load_merge_run(saved_proposal_run)
+    before = read_changes(ChangeQuery())
+    record_review_changes(resolution, saved_proposal_run / "change_log.jsonl", saved_proposal_run)
+    assert read_changes(ChangeQuery()) == before
+    assert before.total == 1
+    event = before.changes[0]
+    assert event.action == "review_decision" and event.scope == "review"
+    assert event.concept_level == "speciality" and event.concept_id == "20"
+    assert event.proposal_ids == [resolution.decisions[0].proposal_id]
+    assert event.decision_ids and event.decision["reason"] == resolution.decisions[0].reason
+    assert sync_changes(saved_proposal_run / "audit_events.json") == 0
+
+
+# Failed delivery leaves replayable evidence and a later recovery records it exactly once.
+def test_review_database_failure_can_be_recovered_without_rerunning_classification(
+    saved_proposal_run: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = saved_proposal_run.parents[1]
+    baseline = TaxonomyDataset.model_validate_json((root / "baseline.json").read_text(encoding="utf-8"))
+    resolution, _ = load_merge_run(saved_proposal_run)
+    changed = resolution.decisions[0].model_copy(update={"reason": "Confirmed by client"})
+
+    # Simulate SQLite being unavailable only after the durable review artifacts have been saved.
+    def unavailable(events: list[ChangeEvent]) -> int:
+        raise sqlite3.OperationalError("database unavailable")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(audit, "log_changes", unavailable)
+        with pytest.raises(sqlite3.OperationalError):
+            run_merge_preview(
+                [root / "producer.json"], baseline, out_dir=saved_proposal_run, decisions=[changed], actor="Bryan",
+            )
+    assert read_changes(ChangeQuery()).total == 1
+    assert sync_changes(saved_proposal_run / "audit_events.json") == 1
+    assert sync_changes(saved_proposal_run / "audit_events.json") == 0
+    events = read_changes(ChangeQuery()).changes
+    assert events[-1].actor == "Bryan" and events[-1].reason == "Confirmed by client"
+    legacy = [json.loads(line) for line in (saved_proposal_run / "change_log.jsonl").read_text().splitlines()]
+    assert len(legacy) == 2
