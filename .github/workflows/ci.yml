@@ -106,6 +106,12 @@ jobs:
           cache: pip
           cache-dependency-path: backend/taxonomy_pipeline/pyproject.toml
 
+      # sentence-transformers pulls in torch, whose default Linux wheel bundles
+      # ~3 GB of CUDA libraries the tests never use. On a pip-cache miss that
+      # fills the runner's disk, so install the CPU-only build first.
+      - name: Install CPU-only torch
+        run: python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
+
       - name: Install taxonomy_pipeline with dev dependencies
         run: python -m pip install -e ".[dev]"
 
