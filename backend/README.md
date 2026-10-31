@@ -14,8 +14,10 @@ backend/
 │   ├── AI_TAXONOMY_PIPELINE_PLAN.md
 │   └── *.xlsx              # SkillsFuture source workbooks
 ├── audit/                # Taxonomy audit module and report notebook
+├── loader/               # load_snapshot.sh: rebuild a database from one pipeline snapshot
+├── onet/                # O*NET source prepared for the pipeline's import-source
 ├── taxonomy_pipeline/    # Quality scoring + Case A/B classification and merge preview (CLI + FastAPI) - own README, own deps
-├── compose.yaml          # MySQL, Adminer and audit services
+├── compose.yaml          # MySQL, Adminer, audit and snapshot-loader services
 ├── Dockerfile            # MySQL image and ordered imports
 ├── Dockerfile.python     # Python audit image
 └── requirements.txt      # Python deps for audit/ and skillsfuture/ data prep
@@ -124,6 +126,38 @@ source .venv/bin/activate
 python -m pip install -r requirements.txt
 python audit/taxonomy_audit.py
 ```
+
+## Load a pipeline snapshot
+
+Each classification round ends with an `integrate` snapshot in
+`taxonomy_pipeline/integrations/<name>/`. It holds everything that stage of the
+taxonomy needs: the original dumps and every earlier round's `additions.sql`
+in `baseline/`, plus that round's own `additions.sql`, in the order its
+`enriched.yaml` lists. To see a stage in MySQL:
+
+```bash
+docker compose --profile tools run --rm loader onet-1031     # original + SkillsFuture + O*NET
+docker compose --profile tools run --rm loader judged-1015   # original + SkillsFuture
+docker compose --profile tools run --rm -e TARGET_DATABASE=taxonomy_r1 loader judged-1015   # another database
+```
+
+- It **drops and rebuilds** the target database (default `taxonomy_latest`)
+  from that one folder, rather than applying `additions.sql` to whatever is
+  there. The database then always equals exactly one snapshot, a round can't be
+  applied twice or out of order, and going back a stage is loading an older
+  snapshot. Never load files from two snapshot folders into one database: the
+  later snapshot already contains the earlier one's rows.
+- `greygigz_beta` (the original import) is never a valid target, nor are
+  MySQL's own databases. It runs as root because it creates databases.
+- It prints each table's row count and records the snapshot name in a
+  `_snapshot` table. Browse it in Adminer as user `root` (password
+  `MYSQL_ROOT_PASSWORD`, default `localrootpassword`), database
+  `taxonomy_latest`.
+- Run without a name, or with an unknown one, it lists the available snapshots.
+
+This is for local inspection. The client's live database can't be rebuilt:
+there, apply each round's `additions.sql` once, in order, and only while the
+database still matches the snapshot named in that file's header.
 
 ## Stop or reset
 

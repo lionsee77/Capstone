@@ -774,10 +774,12 @@ taxonomy-pipeline import-source --mapping ../onet/onet_mapping.yaml \
   round is the same as the first: `merge-preview`, review / `bulk-decide`,
   `integrate --config <round config> --baseline round_baseline`.
 
-Only at handover does any of this touch a database: load the original dumps,
-then each round's `additions.sql` in order, into MySQL (the files are
-MySQL/phpMyAdmin syntax). Each `additions.sql` header names the snapshot it
-applies to.
+Nothing here touches a database. To look at a stage in MySQL locally, rebuild
+one from its snapshot with the Docker loader (`docker compose --profile tools
+run --rm loader <snapshot>`, see "Load a pipeline snapshot" in
+`../README.md`). At handover, apply each round's `additions.sql` once, in
+order, to the client's database (the files are MySQL/phpMyAdmin syntax); each
+header names the snapshot it applies to.
 
 ## Setup
 
