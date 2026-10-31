@@ -13,7 +13,7 @@ def test_registers_each_provider_under_its_own_name() -> None:
 
 
 def test_an_unknown_provider_lists_the_registered_ones() -> None:
-    with pytest.raises(ValueError, match=r"No source provider 'nope'; registered: \['skillsfuture'\]"):
+    with pytest.raises(ValueError, match=r"No source provider 'nope'; registered: \['skillsfuture', 'tag_context'\]"):
         get_provider("nope")
 
 

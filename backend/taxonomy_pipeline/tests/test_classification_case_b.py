@@ -209,6 +209,18 @@ def test_run_accepts_a_registered_provider_by_name(tmp_path, workbook, saturatio
     assert [record["tag_id"] for record in records] == ["3001", "3002"]
 
 
+def test_run_names_an_imported_source_and_adds_its_descriptions_to_the_prompt(tmp_path, saturation_report):
+    context = tmp_path / "esco_tag_context.json"
+    context.write_text(json.dumps({"display_name": "ESCO", "tags": {"3001": {"description": "Approves loans"}}}),
+                       encoding="utf-8")
+    client = StubClient(_response(PROPOSAL, {**PROPOSAL, "tag_id": "3002"}))
+    asyncio.run(run_case_b(
+        _datasets(), saturation_report(CONCEPTS), baseline="original", incoming="skillsfuture",
+        provider="tag_context", context=context, output=tmp_path / "out.json", client=client,
+    ))
+    assert "incoming ESCO skills" in client.prompts[0] and "Approves loans" in client.prompts[0]
+
+
 def test_run_refuses_an_unregistered_provider_name(tmp_path, workbook, saturation_report):
     with pytest.raises(ValueError, match="No source provider 'nope'"):
         asyncio.run(run_case_b(
