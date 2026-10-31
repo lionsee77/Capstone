@@ -72,6 +72,7 @@ def import_source(
         round_path = Path(round_config or Path("configs") / f"{snapshot.name}_vs_{mapping.name}.yaml")
         if round_path.exists():
             raise ValueError(f"{round_path} already exists; delete it or pass another --round-config")
+        _template_roles(mapping.name, template_config)  # refuse a clashing name before writing anything
 
     out = Path(out_dir) if out_dir is not None else mapping_path.parent
     out.mkdir(parents=True, exist_ok=True)
@@ -118,14 +119,7 @@ def write_round_config(
     datasets (ssic, ssoc) are kept. Paths are written relative to `path`.
     """
     template = Path(template) if template is not None else DEFAULT_TEMPLATE
-    raw = yaml.safe_load(template.read_text(encoding="utf-8"))
-    saturation = [m for m in raw.get("metrics", []) if m.get("id") == "saturation"]
-    if len(saturation) != 1:
-        raise ValueError(f"{template} needs exactly one saturation metric to tell its baseline from its incoming")
-    params = saturation[0].get("params", {})
-    incoming = params.get("incoming")
-    rename = {params.get("baseline"): ROUND_BASELINE}
-    rename.update({name: source_dataset["name"] for name in (incoming if isinstance(incoming, list) else [incoming])})
+    raw, rename = _template_roles(source_dataset["name"], template)
 
     snapshot_config = snapshot / "enriched.yaml"
     if not snapshot_config.exists():
@@ -159,6 +153,29 @@ def write_round_config(
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(header + yaml.safe_dump(config, sort_keys=False, allow_unicode=True), encoding="utf-8")
     load_config(path)  # fail now, not at `run`, if the result isn't a valid config
+
+
+def _template_roles(source: str, template: str | Path | None) -> tuple[dict[str, Any], dict[str, str]]:
+    """The template config and its dataset renames: saturation's baseline -> `round_baseline`, incoming -> `source`.
+
+    Refuses a source named like a dataset the round config keeps (`round_baseline`,
+    or a template dataset such as `ssic`): two datasets with one name would make
+    the later one silently replace the other when the config loads.
+    """
+    template = Path(template) if template is not None else DEFAULT_TEMPLATE
+    raw = yaml.safe_load(template.read_text(encoding="utf-8"))
+    saturation = [m for m in raw.get("metrics", []) if m.get("id") == "saturation"]
+    if len(saturation) != 1:
+        raise ValueError(f"{template} needs exactly one saturation metric to tell its baseline from its incoming")
+    params = saturation[0].get("params", {})
+    incoming = params.get("incoming")
+    rename = {params.get("baseline"): ROUND_BASELINE}
+    rename.update({name: source for name in (incoming if isinstance(incoming, list) else [incoming])})
+    kept = {ROUND_BASELINE} | {d.get("name") for d in raw.get("datasets", []) if d.get("name") not in rename}
+    if source in kept:
+        raise ValueError(f"source name {source!r} is already a dataset in the round config ({sorted(kept)}); "
+                         "rename it in the mapping")
+    return raw, rename
 
 
 def _relative(paths: list[str], base: Path, target_dir: Path) -> list[str]:

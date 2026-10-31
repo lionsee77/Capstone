@@ -145,6 +145,19 @@ def test_refuses_to_overwrite_an_existing_round_config_before_writing_anything(s
     assert not source.with_name("demo_taxonomy.sql").exists()
 
 
+@pytest.mark.parametrize("name", ["ssic", ROUND_BASELINE])
+def test_refuses_a_source_named_like_a_dataset_the_round_config_keeps(
+    source: Path, snapshot: Path, template: Path, tmp_path: Path, name: str,
+) -> None:
+    raw = yaml.safe_load(source.read_text())
+    source.write_text(yaml.safe_dump({**raw, "name": name}), encoding="utf-8")
+    with pytest.raises(ValueError, match=f"source name '{name}' is already a dataset in the round config"):
+        import_source(source, baseline_snapshot=snapshot, template_config=template,
+                      round_config=tmp_path / "round.yaml")
+    assert not (tmp_path / "round.yaml").exists()
+    assert not source.with_name(f"{name}_taxonomy.sql").exists()
+
+
 def test_refuses_a_folder_that_is_not_an_integrate_snapshot(source, template, tmp_path):
     with pytest.raises(ValueError, match="not an integrate snapshot"):
         import_source(source, baseline_snapshot=tmp_path, template_config=template,
