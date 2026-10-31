@@ -89,7 +89,7 @@ taxonomy_pipeline/
 │   │   ├── browse.py                 #   taxonomy search/detail over a past run's dataset (/taxonomy)
 │   │   └── sources.py                #   import_source: flat source -> dump, tag context, next round's config
 │   ├── config.py                     # YAML/JSON pipeline config (datasets + metrics + optional definitions pin)
-│   ├── models.py                     # shared run reports, comparability checks, API response shapes
+│   ├── models.py                     # shared run reports, comparability checks, API response shapes, import results
 │   ├── db.py                         # SQLite run history
 │   ├── env.py                        # loads backend/.env for `serve` and llm.py
 │   ├── llm.py                        # the one OpenAI client setup (judge + Case B): key check, base URL

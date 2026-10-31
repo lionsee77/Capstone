@@ -12,13 +12,13 @@ from __future__ import annotations
 
 import json
 import os
-from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 import yaml
 
 from ..config import load_config
+from ..models import SourceImport
 from ..taxonomy.flat_import import (
     COLUMNS,
     build_flat_taxonomy,
@@ -33,18 +33,6 @@ from ..taxonomy.sql_dump import SqlDumpSource
 # The dataset name a generated round config gives the previous round's snapshot.
 ROUND_BASELINE = "round_baseline"
 DEFAULT_TEMPLATE = Path(__file__).resolve().parents[3] / "configs" / "original_vs_skillsfuture.yaml"
-
-
-@dataclass
-class SourceImport:
-    """What `import_source` wrote, plus anything a person should check before using it."""
-
-    name: str
-    sql_path: Path
-    context_path: Path
-    counts: dict[str, int]
-    round_config: Path | None = None
-    warnings: list[str] = field(default_factory=list)
 
 
 def import_source(
@@ -102,7 +90,10 @@ def import_source(
         if undescribed:
             warnings.append(f"{undescribed} tag(s) have no description; Case B sees only their names")
 
-    result = SourceImport(mapping.name, sql_path, context_path, taxonomy.counts, warnings=warnings)
+    result = SourceImport(
+        name=mapping.name, sql_path=sql_path, context_path=context_path, counts=taxonomy.counts,
+        warnings=warnings,
+    )
     if round_path is not None:
         source_dataset = {"name": mapping.name, "type": "sql_dump", "paths": [str(sql_path.resolve())],
                           "table_map": mapping.table_map}
