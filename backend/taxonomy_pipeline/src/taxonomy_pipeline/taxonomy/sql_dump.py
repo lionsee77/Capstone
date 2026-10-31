@@ -184,6 +184,26 @@ def _convert_field(raw: str) -> Any:
         return value
 
 
+def sql_literal(value: Any) -> str:
+    """A MySQL literal that `sql_dump` decodes back to the same value.
+
+    Quotes are doubled (valid in every SQL mode). Backslash escapes for
+    backslash and control characters rely on the default mode, which the
+    files written with it (`integrate`'s `additions.sql`, `flat_import`'s
+    dumps) set in their header like the client's own dumps do. Kept next to
+    the parser so the two can't drift apart.
+    """
+    if value is None:
+        return "NULL"
+    if type(value) is int:
+        return str(value)
+    escaped = (
+        str(value).replace("\\", "\\\\").replace("'", "''").replace("\0", "\\0")
+        .replace("\n", "\\n").replace("\r", "\\r").replace("\x1a", "\\Z")
+    )
+    return f"'{escaped}'"
+
+
 def iter_insert_statements(sql_text: str) -> Iterator[tuple[str, list[dict[str, Any]]]]:
     """Yield (table_name, rows) for every INSERT INTO statement in `sql_text`.
 
