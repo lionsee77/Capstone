@@ -1,8 +1,9 @@
-"""`taxonomy-pipeline run|check-comparable|serve|case-a|case-b|merge-preview|review-proposals|bulk-decide|integrate`
+"""`taxonomy-pipeline run|check-comparable|serve|import-source|case-a|case-b|merge-preview|review-proposals|
+bulk-decide|integrate`
 
 A thin adapter over `app/`: each command parses its flags, calls the one use
-case behind it (`app.scoring` for `run` and `check-comparable`,
-`app.enrichment` for the classification commands) and turns the result into
+case behind it (`app.scoring` for `run` and `check-comparable`, `app.sources`
+for `import-source`, `app.enrichment` for the classification commands) and turns the result into
 printed text and an exit code. `run` calls the same `run_pipeline` the FastAPI
 `/runs` route calls. Anything else a command does - loading, checks, writing
 outputs - belongs in its use case, not here.
@@ -16,6 +17,7 @@ from pathlib import Path
 
 from .app import enrichment as use_cases
 from .app.scoring import check_runs, result_labels, run_config, write_report
+from .app.sources import import_source
 
 
 def _cmd_run(args: argparse.Namespace) -> int:
@@ -78,6 +80,35 @@ def _cmd_serve(args: argparse.Namespace) -> int:
     # written there apply. The --reload worker inherits this environment.
     load_env()
     uvicorn.run("taxonomy_pipeline.api.app:app", host=args.host, port=args.port, reload=args.reload)
+    return 0
+
+
+def _cmd_import_source(args: argparse.Namespace) -> int:
+    try:
+        result = import_source(
+            args.mapping, out_dir=args.out_dir, baseline_snapshot=args.baseline_snapshot,
+            template_config=args.template, round_config=args.round_config,
+        )
+    except (OSError, ValueError) as exc:
+        print(f"[FAILED] import-source: {exc}", file=sys.stderr)
+        return 1
+    for warning in result.warnings:
+        print(f"[WARN] {warning}", file=sys.stderr)
+    counts = result.counts
+    print(
+        f"[OK] {counts['categories']} categories, {counts['specialities']} specialities, {counts['tags']} tags, "
+        f"{counts['speciality_tags']} links",
+        file=sys.stderr,
+    )
+    print(f"wrote {result.sql_path} and {result.context_path}")
+    if result.round_config:
+        names = f"--config {result.round_config} --baseline round_baseline --incoming {result.name}"
+        print(f"wrote {result.round_config}; next:")
+        print(f"  taxonomy-pipeline run --config {result.round_config} --output judged_report_{result.name}.json")
+        print(f"  taxonomy-pipeline case-a {names} --report judged_report_{result.name}.json "
+              f"--output case_a_{result.name}.json")
+        print(f"  taxonomy-pipeline case-b {names} --report judged_report_{result.name}.json "
+              f"--provider tag_context --context {result.context_path} --output case_b_{result.name}.json")
     return 0
 
 
@@ -223,6 +254,17 @@ def build_parser() -> argparse.ArgumentParser:
     serve_parser.add_argument("--port", type=int, default=8000)
     serve_parser.add_argument("--reload", action="store_true")
     serve_parser.set_defaults(func=_cmd_serve)
+
+    source = subparsers.add_parser("import-source", help="turn a flat CSV/xlsx source into a taxonomy SQL dump")
+    source.add_argument("--mapping", required=True, help="source mapping YAML: file, columns, service, filters")
+    source.add_argument("--out-dir", help="where to write <name>_taxonomy.sql and <name>_tag_context.json "
+                        "(default: the mapping's folder)")
+    source.add_argument("--baseline-snapshot",
+                        help="previous round's integrate snapshot (integrations/<name>); also writes a round config")
+    source.add_argument("--round-config", help="round config to write (default: configs/<snapshot>_vs_<name>.yaml)")
+    source.add_argument("--template", help="round config whose metrics to copy "
+                        "(default: configs/original_vs_skillsfuture.yaml)")
+    source.set_defaults(func=_cmd_import_source)
 
     report_help = "saved `run` report whose saturation result decides which tags are new"
     case_a = subparsers.add_parser("case-a", help="place new tags that have their own source category")

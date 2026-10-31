@@ -462,3 +462,34 @@ def test_library_logs_print_to_stdout_as_bare_lines_without_repeating(capsys):
     cli._show_library_logs(logging.DEBUG)
     logger.debug("Raw model response")
     assert capsys.readouterr().out == "Raw model response\n"
+
+
+def test_import_source_writes_the_dump_and_prints_the_next_round_commands(tmp_path, capsys):
+    (tmp_path / "flat.csv").write_text("Sector,Role,Skill\nICT,Data Analyst,SQL\n", encoding="utf-8")
+    (tmp_path / "mapping.yaml").write_text(yaml.safe_dump({
+        "name": "demo", "display_name": "Demo", "source": "flat.csv", "service_id": 1,
+        "columns": {"category": "Sector", "speciality": "Role", "tag": "Skill"},
+    }), encoding="utf-8")
+    snapshot = tmp_path / "snapshot"
+    snapshot.mkdir()
+    (snapshot / "enriched.yaml").write_text(yaml.safe_dump({
+        "datasets": [{"name": "enriched", "paths": [str(FIXTURES / "mini_original.sql")]}], "metrics": [],
+    }), encoding="utf-8")
+    round_config = tmp_path / "round.yaml"
+
+    assert main(["import-source", "--mapping", str(tmp_path / "mapping.yaml"), "--baseline-snapshot",
+                 str(snapshot), "--round-config", str(round_config)]) == 0
+    out, err = capsys.readouterr()
+    assert "[OK] 1 categories, 1 specialities, 1 tags, 1 links" in err
+    assert (tmp_path / "demo_taxonomy.sql").exists() and round_config.exists()
+    assert "--provider tag_context --context" in out and "--incoming demo" in out
+
+
+def test_import_source_fails_cleanly_for_a_missing_column(tmp_path, capsys):
+    (tmp_path / "flat.csv").write_text("Sector,Role\nICT,Data Analyst\n", encoding="utf-8")
+    (tmp_path / "mapping.yaml").write_text(yaml.safe_dump({
+        "name": "demo", "display_name": "Demo", "source": "flat.csv", "service_id": 1,
+        "columns": {"category": "Sector", "speciality": "Role", "tag": "Skill"},
+    }), encoding="utf-8")
+    assert main(["import-source", "--mapping", str(tmp_path / "mapping.yaml")]) == 1
+    assert "[FAILED] import-source:" in capsys.readouterr().err
