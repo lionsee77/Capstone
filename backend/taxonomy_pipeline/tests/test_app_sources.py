@@ -70,7 +70,7 @@ def template(tmp_path: Path) -> Path:
     return path
 
 
-def test_writes_the_dump_and_tag_context_next_to_the_mapping(source):
+def test_writes_the_dump_and_tag_context_next_to_the_mapping(source: Path) -> None:
     result = import_source(source)
 
     assert result.sql_path == source.parent / "demo_taxonomy.sql" and result.sql_path.exists()
@@ -83,15 +83,15 @@ def test_writes_the_dump_and_tag_context_next_to_the_mapping(source):
     ]
 
 
-def test_refuses_a_source_with_no_usable_rows(source):
+def test_refuses_a_source_with_no_usable_rows(source: Path) -> None:
     source.with_name("flat.csv").write_text("Sector,Role,Skill,Desc\n,,Orphan,\n", encoding="utf-8")
     with pytest.raises(ValueError, match="no row has a category, speciality and tag"):
         import_source(source)
 
 
 def test_round_config_compares_the_source_against_the_snapshot_with_the_templates_metrics(
-    source, snapshot, template, tmp_path,
-):
+    source: Path, snapshot: Path, template: Path, tmp_path: Path,
+) -> None:
     round_path = tmp_path / "configs" / "round2.yaml"
     result = import_source(source, baseline_snapshot=snapshot, template_config=template, round_config=round_path)
 
@@ -117,7 +117,7 @@ def test_round_config_compares_the_source_against_the_snapshot_with_the_template
     assert yaml.safe_load(round_path.read_text())["datasets"][1]["paths"] == ["../demo/demo_taxonomy.sql"]
 
 
-def test_two_template_incomings_collapse_into_the_one_new_source(source, snapshot, tmp_path):
+def test_two_template_incomings_collapse_into_the_one_new_source(source: Path, snapshot: Path, tmp_path: Path) -> None:
     raw = {**TEMPLATE, "datasets": [*TEMPLATE["datasets"], {"name": "onet", "paths": ["onet.sql"]}]}
     raw["metrics"] = [
         {"id": "integrity", "params": {"dataset": "skillsfuture"}},
@@ -136,7 +136,9 @@ def test_two_template_incomings_collapse_into_the_one_new_source(source, snapsho
     ]
 
 
-def test_refuses_to_overwrite_an_existing_round_config_before_writing_anything(source, snapshot, template, tmp_path):
+def test_refuses_to_overwrite_an_existing_round_config_before_writing_anything(
+    source: Path, snapshot: Path, template: Path, tmp_path: Path,
+) -> None:
     round_path = tmp_path / "round.yaml"
     round_path.write_text("keep me", encoding="utf-8")
     with pytest.raises(ValueError, match="already exists"):
@@ -158,13 +160,13 @@ def test_refuses_a_source_named_like_a_dataset_the_round_config_keeps(
     assert not source.with_name(f"{name}_taxonomy.sql").exists()
 
 
-def test_refuses_a_folder_that_is_not_an_integrate_snapshot(source, template, tmp_path):
+def test_refuses_a_folder_that_is_not_an_integrate_snapshot(source: Path, template: Path, tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="not an integrate snapshot"):
         import_source(source, baseline_snapshot=tmp_path, template_config=template,
                       round_config=tmp_path / "round.yaml")
 
 
-def test_refuses_a_template_without_one_saturation_metric(source, snapshot, tmp_path):
+def test_refuses_a_template_without_one_saturation_metric(source: Path, snapshot: Path, tmp_path: Path) -> None:
     template = tmp_path / "plain.yaml"
     template.write_text(yaml.safe_dump({**TEMPLATE, "metrics": TEMPLATE["metrics"][:1]}), encoding="utf-8")
     with pytest.raises(ValueError, match="exactly one saturation metric"):
@@ -172,7 +174,7 @@ def test_refuses_a_template_without_one_saturation_metric(source, snapshot, tmp_
                       round_config=tmp_path / "round.yaml")
 
 
-def test_warns_about_code_prefixes_the_labels_file_does_not_name(tmp_path):
+def test_warns_about_code_prefixes_the_labels_file_does_not_name(tmp_path: Path) -> None:
     (tmp_path / "flat.csv").write_text("Code,Role,Skill\n15-1,Analyst,SQL\n99-1,Mystery,Excel\n", encoding="utf-8")
     (tmp_path / "soc.csv").write_text("code,label\n15,Computer and Mathematical\n", encoding="utf-8")
     (tmp_path / "mapping.yaml").write_text(yaml.safe_dump({

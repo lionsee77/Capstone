@@ -464,7 +464,9 @@ def test_library_logs_print_to_stdout_as_bare_lines_without_repeating(capsys):
     assert capsys.readouterr().out == "Raw model response\n"
 
 
-def test_import_source_writes_the_dump_and_prints_the_next_round_commands(tmp_path, capsys):
+def test_import_source_writes_the_dump_and_prints_the_next_round_commands(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str],
+) -> None:
     (tmp_path / "flat.csv").write_text("Sector,Role,Skill\nICT,Data Analyst,SQL\n", encoding="utf-8")
     (tmp_path / "mapping.yaml").write_text(yaml.safe_dump({
         "name": "demo", "display_name": "Demo", "source": "flat.csv", "service_id": 1,
@@ -485,7 +487,7 @@ def test_import_source_writes_the_dump_and_prints_the_next_round_commands(tmp_pa
     assert "--provider tag_context --context" in out and "--incoming demo" in out
 
 
-def test_import_source_fails_cleanly_for_a_missing_column(tmp_path, capsys):
+def test_import_source_fails_cleanly_for_a_missing_column(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     (tmp_path / "flat.csv").write_text("Sector,Role\nICT,Data Analyst\n", encoding="utf-8")
     (tmp_path / "mapping.yaml").write_text(yaml.safe_dump({
         "name": "demo", "display_name": "Demo", "source": "flat.csv", "service_id": 1,

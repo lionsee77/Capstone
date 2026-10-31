@@ -5,8 +5,10 @@ import asyncio
 import csv
 import json
 import logging
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from email.utils import format_datetime
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
@@ -209,7 +211,9 @@ def test_run_accepts_a_registered_provider_by_name(tmp_path, workbook, saturatio
     assert [record["tag_id"] for record in records] == ["3001", "3002"]
 
 
-def test_run_names_an_imported_source_and_adds_its_descriptions_to_the_prompt(tmp_path, saturation_report):
+def test_run_names_an_imported_source_and_adds_its_descriptions_to_the_prompt(
+    tmp_path: Path, saturation_report: Callable[..., Path],
+) -> None:
     context = tmp_path / "esco_tag_context.json"
     context.write_text(json.dumps({"display_name": "ESCO", "tags": {"3001": {"description": "Approves loans"}}}),
                        encoding="utf-8")
