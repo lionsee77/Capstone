@@ -184,3 +184,16 @@ def test_warns_about_code_prefixes_the_labels_file_does_not_name(tmp_path):
     result = import_source(tmp_path / "mapping.yaml")
     assert result.counts["categories"] == 1
     assert "no label for code prefix(es) ['99']" in " ".join(result.warnings)
+
+
+def test_warns_when_tag_spellings_are_merged_for_mysql(tmp_path: Path) -> None:
+    (tmp_path / "flat.csv").write_text("Sector,Role,Skill\nICT,Analyst,Python\nICT,Engineer,python\n", encoding="utf-8")
+    (tmp_path / "mapping.yaml").write_text(yaml.safe_dump({
+        "name": "demo", "display_name": "Demo", "source": "flat.csv", "service_id": 1,
+        "columns": {"category": "Sector", "speciality": "Role", "tag": "Skill"},
+    }), encoding="utf-8")
+
+    result = import_source(tmp_path / "mapping.yaml")
+    assert result.counts["tags"] == 1
+    assert "merged 1 tag(s) whose spellings MySQL treats as one name (case/accents): 'Python' <- ['python']" in (
+        " ".join(result.warnings))

@@ -22,6 +22,7 @@ from __future__ import annotations
 import csv
 import json
 import re
+from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -30,7 +31,7 @@ import yaml
 from openpyxl import load_workbook
 from pydantic import BaseModel, Field, model_validator
 
-from .sql_dump import sql_literal
+from .sql_dump import collation_key, sql_literal
 
 # Concept -> columns written, matching what `integrate` writes for new rows.
 COLUMNS = {
@@ -210,11 +211,13 @@ def _read_table(path: Path, sheet: str | None) -> tuple[list[str], list[dict[str
 
 @dataclass
 class FlatTaxonomy:
-    """The four tables built from a flat source, plus each tag's description and how many rows were skipped."""
+    """The four tables built from a flat source, each tag's description, skipped rows and merged tag spellings."""
 
     tables: dict[str, list[dict[str, Any]]]
     tag_context: dict[str, dict[str, str]] = field(default_factory=dict)
     skipped_rows: int = 0
+    # Kept spelling -> the other spellings folded into it ("Python" <- ["python"]).
+    merged_tags: dict[str, list[str]] = field(default_factory=dict)
 
     @property
     def counts(self) -> dict[str, int]:
@@ -226,12 +229,17 @@ def build_flat_taxonomy(rows: list[dict[str, str]], mapping: SourceMapping) -> F
 
     A category is one (service, name); a speciality one name within a category;
     a tag one name across the whole source, linked to every speciality it
-    appears under. IDs follow sorted names, so the same input always gets the
-    same IDs. Rows missing a category, speciality or tag are skipped and counted.
+    appears under. Tag names are compared like the client schema's unique
+    `tags.name` (`collation_key`: case- and accent-insensitive), so "Python" and
+    "python" are one tag, spelled as its most common form (ties: the first in
+    sorted order); otherwise MySQL would refuse the dump. IDs follow sorted
+    names, so the same input always gets the same IDs. Rows missing a category,
+    speciality or tag are skipped and counted.
     """
     keys = {level: column_key(level, spec) for level, spec in mapping.columns.specs().items()}
     links: set[tuple[tuple[int, str], str, str]] = set()
     descriptions: dict[str, str] = {}
+    spellings: dict[str, Counter[str]] = {}
     skipped = 0
     for row in rows:
         category, speciality, tag = row[keys["category"]], row[keys["speciality"]], row[keys["tag"]]
@@ -239,17 +247,24 @@ def build_flat_taxonomy(rows: list[dict[str, str]], mapping: SourceMapping) -> F
         if not (category and speciality and tag) or service is None:
             skipped += 1
             continue
-        links.add(((service, category), speciality, tag))
+        tag_key = collation_key(tag)
+        spellings.setdefault(tag_key, Counter())[tag] += 1
+        links.add(((service, category), speciality, tag_key))
         description = row.get(keys["tag_description"], "") if "tag_description" in keys else ""
         if description:
-            descriptions.setdefault(tag, description)
+            descriptions.setdefault(tag_key, description)
 
+    spelling = {key: min(counts, key=lambda name: (-counts[name], name)) for key, counts in spellings.items()}
+    merged = {
+        spelling[key]: sorted(set(counts) - {spelling[key]})
+        for key, counts in spellings.items() if len(counts) > 1
+    }
     category_keys = sorted({category for category, _, _ in links})
     speciality_keys = sorted({(category, speciality) for category, speciality, _ in links})
-    tag_names = sorted({tag for _, _, tag in links})
+    tag_keys = sorted(spelling, key=lambda key: (spelling[key], key))
     category_id = {key: ID_OFFSETS["categories"] + i for i, key in enumerate(category_keys)}
     speciality_id = {key: ID_OFFSETS["specialities"] + i for i, key in enumerate(speciality_keys)}
-    tag_id = {name: ID_OFFSETS["tags"] + i for i, name in enumerate(tag_names)}
+    tag_id = {key: ID_OFFSETS["tags"] + i for i, key in enumerate(tag_keys)}
     link_ids = sorted({(speciality_id[(category, speciality)], tag_id[tag]) for category, speciality, tag in links})
 
     tables = {
@@ -261,14 +276,14 @@ def build_flat_taxonomy(rows: list[dict[str, str]], mapping: SourceMapping) -> F
             {"id": speciality_id[key], "name": key[1], "category_id": category_id[key[0]], "status": ACTIVE_STATUS}
             for key in speciality_keys
         ],
-        "tags": [{"id": tag_id[name], "name": name} for name in tag_names],
+        "tags": [{"id": tag_id[key], "name": spelling[key]} for key in tag_keys],
         "speciality_tags": [
             {"id": ID_OFFSETS["speciality_tags"] + i, "speciality_id": sid, "tag_id": tid}
             for i, (sid, tid) in enumerate(link_ids)
         ],
     }
-    context = {str(tag_id[name]): {"description": descriptions[name]} for name in tag_names if name in descriptions}
-    return FlatTaxonomy(tables=tables, tag_context=context, skipped_rows=skipped)
+    context = {str(tag_id[key]): {"description": descriptions[key]} for key in tag_keys if key in descriptions}
+    return FlatTaxonomy(tables=tables, tag_context=context, skipped_rows=skipped, merged_tags=merged)
 
 
 def _service_id(row: dict[str, str], mapping: SourceMapping) -> int | None:

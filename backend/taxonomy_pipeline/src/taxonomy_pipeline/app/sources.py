@@ -89,6 +89,10 @@ def import_source(
     warnings = []
     if taxonomy.skipped_rows:
         warnings.append(f"skipped {taxonomy.skipped_rows} row(s) missing a category, speciality, tag or service")
+    if taxonomy.merged_tags:
+        sample = "; ".join(f"{kept!r} <- {others}" for kept, others in list(taxonomy.merged_tags.items())[:5])
+        warnings.append(f"merged {len(taxonomy.merged_tags)} tag(s) whose spellings MySQL treats as one name "
+                        f"(case/accents): {sample}")
     unlabelled = unlabelled_prefixes(rows, mapping)
     if unlabelled:
         warnings.append(f"no label for code prefix(es) {unlabelled}; their rows were skipped (check `prefix` and "

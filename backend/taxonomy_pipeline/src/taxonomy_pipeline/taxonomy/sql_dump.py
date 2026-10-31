@@ -7,6 +7,7 @@ statements with an explicit column list, which is all this parser assumes.
 from __future__ import annotations
 
 import re
+import unicodedata
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
@@ -182,6 +183,16 @@ def _convert_field(raw: str) -> Any:
         return float(value)
     except ValueError:
         return value
+
+
+def collation_key(name: Any) -> str:
+    """Approximate MySQL's utf8mb4_general_ci comparison: case- and accent-insensitive, trailing spaces ignored.
+
+    The client schema's `tags.name` is unique under that collation, so every
+    writer of taxonomy dumps (`integrate`, `flat_import`) checks names with it.
+    """
+    decomposed = unicodedata.normalize("NFKD", str(name))
+    return "".join(char for char in decomposed if not unicodedata.combining(char)).casefold().rstrip(" ")
 
 
 def sql_literal(value: Any) -> str:

@@ -752,7 +752,10 @@ taxonomy-pipeline import-source --mapping ../onet/onet_mapping.yaml \
   fails unless every row reads back unchanged.
 - Categories are unique per (service, name), specialities per name within a
   category, tags per name across the source; a tag under several specialities
-  gets one row and several links. IDs follow sorted names from 1000 / 2000 /
+  gets one row and several links. Tag names are compared the way the client
+  schema's unique `tags.name` does (case- and accent-insensitive), so "Python"
+  and "python" become one tag spelled the most common way, with a warning
+  listing the merged spellings; otherwise MySQL would refuse the dump. IDs follow sorted names from 1000 / 2000 /
   3000 / 4000 (as in the SkillsFuture dump), so the same input always gives the
   same IDs. Only what has a link is written: no empty categories or unlinked
   tags. Rows missing a level are skipped and counted in a warning, as are tags

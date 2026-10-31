@@ -221,3 +221,21 @@ def test_labels_file_needs_code_and_label_headers_and_unique_codes(tmp_path, lab
 def test_labels_path_is_resolved_against_the_mapping_file(tmp_path):
     mapping = load_mapping(_onet(tmp_path, [["15-2051.00", "Data Scientists", "Python", ""]]))
     assert Path(mapping.columns.category.labels) == (tmp_path / "soc.csv").resolve()
+
+
+def test_tags_mysql_treats_as_one_name_become_one_tag_spelled_the_most_common_way(tmp_path: Path) -> None:
+    rows = [
+        ["ICT", "Data Analyst", "Python", "Programming language", "y"],
+        ["ICT", "Data Engineer", "python", "", "y"],
+        ["ICT", "Web Developer", "Python", "", "y"],
+        ["Finance", "Auditor", "Café", "", "y"],
+        ["Finance", "Analyst", "cafe", "", "y"],
+    ]
+    mapping = _mapping(_csv(tmp_path, rows))
+    taxonomy = _build(mapping)
+
+    assert [tag["name"] for tag in taxonomy.tables["tags"]] == ["Café", "Python"]
+    assert taxonomy.merged_tags == {"Python": ["python"], "Café": ["cafe"]}
+    python_id = next(tag["id"] for tag in taxonomy.tables["tags"] if tag["name"] == "Python")
+    assert sum(link["tag_id"] == python_id for link in taxonomy.tables["speciality_tags"]) == 3
+    assert taxonomy.tag_context[str(python_id)] == {"description": "Programming language"}
