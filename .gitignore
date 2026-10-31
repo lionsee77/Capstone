@@ -107,3 +107,6 @@ backend/skillsfuture/classification_proposals*.json
 backend/skillsfuture/classification_proposals*.csv
 
 judge_cache.json
+
+# O*NET raw download (backend/onet/README.md)
+backend/onet/raw/
