@@ -272,6 +272,10 @@ stages' rules and the review-decision format are in the
 
 ### Case B (LLM classification)
 
+Case B's SkillsFuture provider mirrors the standalone generator's tag numbering.
+An end-to-end regression test checks the generated IDs and titles against the
+provider's contexts, including blank titles and whitespace normalization.
+
 `case-b` asks an OpenAI model to place each parentless new tag into the
 baseline's existing categories and specialities, or to propose a new one,
 using the incoming source's context for each tag. That comes from the source's
@@ -305,6 +309,22 @@ old proposals. Checkpoints from older proposal formats that lack required fields
 such as `service` are also rejected before any model call; delete the checkpoint
 to reclassify those tags. Each record also carries an `action`:
 `assign_existing`, `propose_new_speciality` or `propose_new_category`.
+The checkpoint also records `context_schema_version`; checkpoints made before
+the corrected skill-context mapping are rejected instead of reusing old proposals.
+
+Each batch makes at most three API attempts, with SDK retries disabled on the
+Case B client built by the pipeline. Injected clients keep their own settings;
+callers should disable their SDK retries to retain the three-attempt budget.
+Authentication, permission, invalid-request and exhausted-quota errors stop
+immediately. HTTP 408/409/429, 5xx and transport failures retry with exponential
+backoff and jitter (about 1 then 2 seconds). `retry-after-ms` takes precedence
+over `Retry-After`; `x-should-retry: false` prevents retries. A valid `Retry-After` in seconds
+or HTTP-date form takes precedence; waits above 60 seconds stop the run for
+later resumption instead of retrying early. Infinite delays also stop the run.
+Invalid or incomplete JSON and SDK response-validation errors can
+retry within the same attempt budget, retaining proposals already accepted.
+Unexpected programming errors retain their original exception and message.
+The saturation judge continues to use the SDK's own retry policy.
 
 ### Merge preview
 

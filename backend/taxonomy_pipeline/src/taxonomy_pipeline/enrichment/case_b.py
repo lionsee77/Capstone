@@ -16,10 +16,15 @@ responses at DEBUG), never printed. The OpenAI client comes from `llm.py`; the S
 """
 from __future__ import annotations
 
+import asyncio
 import csv
 import json
 import logging
+import math
 import os
+import random
+from datetime import UTC, datetime
+from email.utils import parsedate_to_datetime
 from pathlib import Path
 from typing import Any
 
@@ -31,6 +36,7 @@ from .models import CLASSIFICATION_OUTPUTS
 from .routing import RUN_ID_FIELD, case_b_tag_ids, load_saturation, mark_ambiguous
 
 logger = logging.getLogger(__name__)
+CONTEXT_SCHEMA_VERSION = 2
 ACTIONS = ["assign_existing", "propose_new_speciality", "propose_new_category"]
 VALID_ACTIONS = set(ACTIONS)
 PROPOSAL_FIELDS = ("tag", "tag_id", "action", "service", "category", "speciality", "confidence", "reason")
@@ -74,7 +80,7 @@ def proposal_is_well_formed(proposal: dict[str, Any]) -> bool:
 async def classify_batch(
     client: Any, prompt: str, batch: list[dict[str, Any]], model: str,
 ) -> list[dict[str, Any]]:
-    """Call the model, retrying when it omits or invents tag IDs."""
+    """Bound API attempts while retaining accepted proposals across response retries."""
     expected = {item["tag_id"] for item in batch}
     collected: dict[str, dict[str, Any]] = {}
     for attempt in range(1, 4):
@@ -82,9 +88,30 @@ async def classify_batch(
             response = await client.chat.completions.create(
                 model=model, messages=[{"role": "user", "content": prompt}], temperature=0,
             )
+        except Exception as exc:
+            if not _transient_error(exc):
+                status = getattr(exc, "status_code", None)
+                if status not in {400, 401, 403, 404, 422} and getattr(exc, "code", None) not in {
+                    "insufficient_quota", "billing_hard_limit_reached",
+                }:
+                    raise
+                raise CaseBError(
+                    f"Case B request failed ({type(exc).__name__}, HTTP {status}); not retrying. "
+                    "Check credentials, permissions, model, request settings and quota."
+                ) from exc
+            if attempt == 3:
+                raise CaseBError("Case B request failed after 3 attempts; resume using the checkpoint.") from exc
+            delay = _retry_delay(exc, attempt)
+            logger.info("Temporary API failure (%s); retrying in %.2fs", type(exc).__name__, delay)
+            await asyncio.sleep(delay)
+            continue
+        try:
             raw = response.choices[0].message.content or ""
             logger.debug("  Raw model response:\n%s", raw[:4000] if raw else "  <empty response>")
-            proposals = parse_json(raw).get("proposals", [])
+            payload = parse_json(raw)
+            if not isinstance(payload, dict) or not isinstance(payload.get("proposals"), list):
+                raise ValueError("Expected a JSON object with a proposals array")
+            proposals = payload["proposals"]
             for proposal in proposals:
                 if isinstance(proposal, dict) and proposal.get("tag_id") in expected and proposal_is_well_formed(
                     proposal
@@ -98,9 +125,68 @@ async def classify_batch(
                 f"values: {missing}. Do not include any other tag IDs."
             )
             logger.info("  Incomplete response; retrying (%d/3), missing %d", attempt, len(missing))
-        except Exception as exc:  # noqa: BLE001 - retry transient API and response errors
+        except (ValueError, TypeError, AttributeError, IndexError) as exc:
             logger.info("  Invalid model response; retrying (%d/3): %s", attempt, exc)
     raise CaseBError(f"Model failed to return one valid proposal for every tag in batch: {sorted(expected)}")
+
+
+def _transient_error(exc: Exception) -> bool:
+    """Retry temporary HTTP/transport failures, excluding exhausted billing quota."""
+    if getattr(exc, "code", None) in {"insufficient_quota", "billing_hard_limit_reached"}:
+        return False
+    status = getattr(exc, "status_code", None)
+    if status in {400, 401, 403, 404, 422}:
+        return False
+    retry_hint = getattr(getattr(exc, "response", None), "headers", {}).get("x-should-retry")
+    if retry_hint == "false":
+        return False
+    if retry_hint == "true":
+        return True
+    try:
+        from openai import APIResponseValidationError
+    except ImportError:
+        pass
+    else:
+        if isinstance(exc, APIResponseValidationError):
+            return True
+    if status is not None:
+        return status in {408, 409, 429} or 500 <= status < 600
+    if isinstance(exc, (ConnectionError, TimeoutError)):
+        return True
+    try:
+        from openai import APIConnectionError
+    except ImportError:
+        return False
+    return isinstance(exc, APIConnectionError)
+
+
+def _retry_delay(exc: Exception, attempt: int) -> float:
+    """Honor Retry-After without retrying earlier than a long server-requested wait."""
+    headers = getattr(getattr(exc, "response", None), "headers", {})
+    retry_after = headers.get("retry-after-ms")
+    delay = None
+    if retry_after is not None:
+        try:
+            delay = float(retry_after) / 1000
+        except (ValueError, TypeError):
+            pass
+    if delay is not None and (math.isnan(delay) or delay < 0):
+        delay = None
+    retry_after = headers.get("retry-after")
+    if delay is None and retry_after is not None:
+        try:
+            delay = float(retry_after)
+        except (ValueError, TypeError):
+            try:
+                date = parsedate_to_datetime(retry_after)
+                delay = (date - datetime.now(UTC)).total_seconds()
+            except (ValueError, TypeError, OverflowError):
+                pass
+    if delay is not None and delay > 60:
+        raise CaseBError("Server requested a wait above 60 seconds; resume later using the checkpoint.") from exc
+    if delay is not None and math.isfinite(delay) and delay >= 0:
+        return delay
+    return min(2 ** (attempt - 1) + random.uniform(0, 0.5), 60.0)
 
 
 def baseline_hierarchy(
@@ -194,7 +280,7 @@ def write_outputs(records: list[dict[str, Any]], output: Path) -> None:
 
 def _openai_client() -> Any:
     try:
-        client = llm.openai_client("Case B", async_client=True)
+        client = llm.openai_client("Case B", async_client=True, max_retries=0)
     except llm.LLMError as exc:
         raise CaseBError(str(exc)) from exc
     logger.debug("OpenAI endpoint: %s\nAPI key loaded: yes", llm.base_url())
@@ -229,7 +315,7 @@ def _load_checkpoint(path: Path, provenance: dict[str, Any]) -> dict[str, dict[s
         raise CaseBError(f"Checkpoint {path} has invalid proposals; delete it to start this run from scratch.")
     required_fields = {"tag_id", "action", "service", "category", "speciality", "confidence", "reason"}
     incompatible = [
-        str(proposal.get("tag_id", "<unknown>"))
+        str(proposal.get("tag_id", "<unknown>")) if isinstance(proposal, dict) else "<unknown>"
         for proposal in proposals
         if not isinstance(proposal, dict) or not required_fields.issubset(proposal)
     ]
@@ -301,7 +387,10 @@ async def run_case_b(
         client = _openai_client()
     logger.debug("Model: %s", model)
 
-    provenance = {"saturation_run_id": saturation.run_id, "incoming": incoming, "model": model}
+    provenance = {
+        "saturation_run_id": saturation.run_id, "incoming": incoming, "model": model,
+        "context_schema_version": CONTEXT_SCHEMA_VERSION,
+    }
     wanted = set(input_tag_ids)
     proposals = {
         tag_id: proposal for tag_id, proposal in _load_checkpoint(checkpoint, provenance).items() if tag_id in wanted
@@ -313,7 +402,7 @@ async def run_case_b(
     for start in range(0, len(pending), batch_size):
         batch = []
         for tag_id in pending[start:start + batch_size]:
-            batch.append({"tag_id": tag_id, "title": tags[tag_id], **provider.context_for(contexts, tag_id)})
+            batch.append({**provider.context_for(contexts, tag_id), "tag_id": tag_id, "title": tags[tag_id]})
         prompt = build_prompt(services, categories, specialities, batch, source_name=provider.display_name)
         for proposal in await classify_batch(client, prompt, batch, model):
             proposals[proposal["tag_id"]] = proposal
