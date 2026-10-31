@@ -149,8 +149,13 @@ docker compose --profile tools run --rm -e TARGET_DATABASE=taxonomy_r1 loader ju
   later snapshot already contains the earlier one's rows.
 - `greygigz_beta` (the original import) is never a valid target, nor are
   MySQL's own databases. It runs as root because it creates databases.
-- It prints each table's row count and records the snapshot name in a
-  `_snapshot` table. Browse it in Adminer as user `root` (password
+  Snapshot names may use letters, digits, `.`, `_` and `-`; target names
+  letters, digits and `_`.
+- The whole rebuild runs in one MySQL session holding a lock on the target, so
+  a second loader started meanwhile stops without changing anything. If a file
+  fails, the output says which one and that the target is now partial.
+- It prints each table's row count (using the snapshot's own table names) and
+  records the snapshot name in a `_snapshot` table. Browse it in Adminer as user `root` (password
   `MYSQL_ROOT_PASSWORD`, default `localrootpassword`), database
   `taxonomy_latest`.
 - Run without a name, or with an unknown one, it lists the available snapshots.
