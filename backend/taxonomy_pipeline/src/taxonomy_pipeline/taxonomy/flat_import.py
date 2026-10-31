@@ -186,7 +186,8 @@ def _read_table(path: Path, sheet: str | None) -> tuple[list[str], list[dict[str
     if path.suffix.lower() in (".xlsx", ".xlsm"):
         workbook = load_workbook(path, read_only=True, data_only=True)
         try:
-            values = workbook[sheet] if sheet else workbook.active
+            # The first sheet, not `active`: that is whichever tab was selected when the file was saved.
+            values = workbook[sheet] if sheet else workbook.worksheets[0]
             iterator = values.iter_rows(values_only=True)
             headers = [text(h) for h in next(iterator, ())]
             raw = [list(row) for row in iterator]
@@ -199,6 +200,10 @@ def _read_table(path: Path, sheet: str | None) -> tuple[list[str], list[dict[str
             raw = list(reader)
     else:
         raise ValueError(f"{path}: unsupported source type {path.suffix!r}; use .csv, .tsv or .xlsx")
+    repeated = sorted({h for h in headers if h and headers.count(h) > 1})
+    if repeated:
+        # After whitespace cleanup each header is a dict key, so a repeat would silently keep only its last column.
+        raise ValueError(f"{path} has repeated column header(s) {repeated} (after trimming spaces); rename them")
     rows = [
         {header: text(value) for header, value in zip(headers, row, strict=False)}
         for row in raw if any(text(value) for value in row)

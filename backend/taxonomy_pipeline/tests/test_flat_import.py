@@ -239,3 +239,26 @@ def test_tags_mysql_treats_as_one_name_become_one_tag_spelled_the_most_common_wa
     python_id = next(tag["id"] for tag in taxonomy.tables["tags"] if tag["name"] == "Python")
     assert sum(link["tag_id"] == python_id for link in taxonomy.tables["speciality_tags"]) == 3
     assert taxonomy.tag_context[str(python_id)] == {"description": "Programming language"}
+
+
+def test_reads_the_first_sheet_when_none_is_named_even_if_another_was_selected(tmp_path: Path) -> None:
+    book = Workbook()
+    first = book.active
+    first.title = "Links"
+    for row in [HEADERS, *ROWS]:
+        first.append(row)
+    notes = book.create_sheet("Notes")
+    notes.append(["Read me"])
+    book.active = 1  # saved with the Notes tab selected
+    path = tmp_path / "flat.xlsx"
+    book.save(path)
+
+    assert len(read_rows(_mapping(path))) == len(ROWS)
+
+
+def test_refuses_headers_that_repeat_after_trimming_spaces(tmp_path: Path) -> None:
+    path = tmp_path / "flat.csv"
+    path.write_text("Sector,Role,Skill, Role \nICT,Data Analyst,SQL,Other\n", encoding="utf-8")
+    mapping = _mapping(path, columns={"category": "Sector", "speciality": "Role", "tag": "Skill"})
+    with pytest.raises(ValueError, match=r"repeated column header\(s\) \['Role'\]"):
+        read_rows(mapping)
