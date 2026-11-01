@@ -607,6 +607,10 @@ the merge run's saved `audit_events.json`, independently of SQLite availability,
 and never updates earlier review records. Legacy resolutions without that evidence
 retain their decision payloads with null reviewer/time and empty review-event IDs.
 Previously saved additions remain unchanged and default to empty `linked_reviews`.
+Integration builds operation-local lookups for allocated IDs, approved paths,
+proposal sources and review decisions once, so each addition visits its related
+evidence instead of rescanning the complete resolution. Decision ordering and
+approved-parent attribution remain deterministic.
 
 ```bash
 taxonomy-pipeline changes --proposal-id <proposal-id> --limit 200

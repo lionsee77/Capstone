@@ -3,7 +3,10 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from collections.abc import Iterator
 from pathlib import Path
+from time import perf_counter
+from typing import Any
 
 import pytest
 
@@ -12,6 +15,8 @@ from taxonomy_pipeline.audit import ChangeEvent, ChangeQuery, read_changes
 from taxonomy_pipeline.enrichment import audit
 from taxonomy_pipeline.enrichment.audit import AuditDeliveryError, record_review_changes
 from taxonomy_pipeline.enrichment.change_log import read_review_decisions
+from taxonomy_pipeline.enrichment.models import CanonicalTag, ResolvedHierarchyNode, ResolvedLink, ReviewDecision
+from taxonomy_pipeline.enrichment.proposals.models import ScreenedProposal
 from taxonomy_pipeline.enrichment.runner import load_merge_run, run_merge_preview
 from taxonomy_pipeline.taxonomy.base import TaxonomyDataset
 
@@ -98,3 +103,58 @@ def test_review_database_failure_can_be_recovered_without_rerunning_classificati
     assert events[-1].actor == "Bryan" and events[-1].reason == "Confirmed by client"
     legacy = [json.loads(line) for line in (saved_proposal_run / "change_log.jsonl").read_text().splitlines()]
     assert len(legacy) == 2
+
+
+# Large sparse integrations must not rescan every source collection for each added concept.
+def test_large_integration_preserves_lineage_with_bounded_source_scans(saved_proposal_run: Path) -> None:
+    resolution, _ = load_merge_run(saved_proposal_run)
+
+    class CountedList(list[Any]):
+        """Count collection visits so the complexity regression does not depend on machine speed."""
+
+        visits = 0
+
+        # Track every yielded source item across all traversals of this collection.
+        def __iter__(self) -> Iterator[Any]:
+            for item in super().__iter__():
+                self.visits += 1
+                yield item
+
+    count = 5000
+    tags, links, nodes, proposals, decisions = (CountedList() for _ in range(5))
+    id_map = {}
+    additions = {"tags": [], "speciality_tags": []}
+    for number in range(count):
+        source = {"source_dataset": "feed", "tag_id": str(number)}
+        tag_id, speciality_id = f"new:tag:{number}", f"new:speciality:{number}"
+        path = ["Service", "Category", f"Speciality {number}"]
+        tags.append(CanonicalTag(id=tag_id, name=f"Tag {number}", existing=False, members=[source]))
+        nodes.append(ResolvedHierarchyNode(level="speciality", id=speciality_id, parent_id=1,
+                                           name=path[-1], path=path, existing=False))
+        links.append(ResolvedLink(speciality_id=speciality_id, tag_id=tag_id, existing=False))
+        proposals.append(ScreenedProposal(proposal_id=f"p{number}", level="speciality", name=path[-1],
+                                           path=path, source_tags=[("feed", str(number))], variants=[],
+                                           origins=[], status="new", reason="New speciality"))
+        decisions.append(ReviewDecision(members=[source], action="create", reason=f"Approved {number}"))
+        id_map.update({tag_id: number + 1, speciality_id: number + 1})
+        additions["tags"].append({"id": number + 1, "name": f"Tag {number}"})
+        additions["speciality_tags"].append({"id": number + 1, "tag_id": number + 1,
+                                              "speciality_id": number + 1})
+    resolution = resolution.model_copy(update={
+        "tags": tags, "links": links, "hierarchy": nodes, "decisions": decisions,
+        "screening": resolution.screening.model_copy(update={"proposals": proposals}),
+    })
+    manifest = {"baseline": {"dataset": resolution.evidence.taxonomy}, "enriched_snapshot_id": "large",
+                "created_at": "2026-11-01T00:00:00+00:00"}
+    started = perf_counter()
+    events = audit.integration_events(resolution, additions, id_map, manifest, operation_id="large", actor="Integrator")
+    elapsed = perf_counter() - started
+    assert len(events) == 2 * count
+    for position, event in enumerate(events):
+        number = position % count
+        assert event.proposal_ids == [f"p{number}"]
+        assert event.reason == f"Approved {number}"
+        assert len(event.decision_ids) == len(event.linked_reviews) == 1
+        assert event.linked_reviews[0].decision_id == event.decision_ids[0]
+    assert all(collection.visits <= 3 * count for collection in (tags, links, nodes, proposals, decisions))
+    print(f"Generated {len(events)} events for {count} tags in {elapsed:.3f}s")

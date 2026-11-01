@@ -10,6 +10,7 @@ import hashlib
 import json
 import sqlite3
 from collections.abc import Sequence
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -96,21 +97,62 @@ def record_review_changes(
     deliver_saved_changes(events, path)
 
 
-# Find only approved hierarchy paths involved in a row, including each speciality's parent proposal.
-def _related_paths(
-    resolution: ResolutionReport, level: str, row: dict[str, Any], id_map: dict[str, int],
-) -> set[tuple[str, ...]]:
+@dataclass
+class _IntegrationIndex:
+    """Operation-local lookups keep event construction proportional to relevant relationships."""
+
+    paths: dict[tuple[str, int | str], set[tuple[str, ...]]] = field(default_factory=dict)
+    tag_specialities: dict[int | str, set[int | str]] = field(default_factory=dict)
+    tag_sources: dict[int | str, set[tuple[str, str]]] = field(default_factory=dict)
+    proposals_by_path: dict[tuple[str, ...], set[str]] = field(default_factory=dict)
+    sources_by_path: dict[tuple[str, tuple[str, ...]], set[tuple[str, str]]] = field(default_factory=dict)
+    proposals_by_source_path: dict[tuple[tuple[str, str], tuple[str, ...]], set[str]] = field(default_factory=dict)
+    decisions_by_source: dict[tuple[str, str], set[int]] = field(default_factory=dict)
+    decisions_by_proposal: dict[str, set[int]] = field(default_factory=dict)
+    decision_refs: list[str] = field(default_factory=list)
+
+
+# Index each source collection once, preserving decision positions for deterministic output.
+def _integration_index(resolution: ResolutionReport, id_map: dict[str, int]) -> _IntegrationIndex:
+    index = _IntegrationIndex()
+    for node in resolution.hierarchy:
+        key = (node.level, id_map.get(str(node.id), node.id))
+        index.paths.setdefault(key, set()).add(tuple(node.path))
+    for link in resolution.links:
+        tag_id = id_map.get(str(link.tag_id), link.tag_id)
+        speciality_id = id_map.get(str(link.speciality_id), link.speciality_id)
+        index.tag_specialities.setdefault(tag_id, set()).add(speciality_id)
+    for tag in resolution.tags:
+        index.tag_sources[id_map.get(str(tag.id), tag.id)] = {
+            (member.source_dataset, member.tag_id) for member in tag.members
+        }
+    for proposal in resolution.screening.proposals if resolution.screening else []:
+        path = tuple(proposal.path)
+        index.proposals_by_path.setdefault(path, set()).add(proposal.proposal_id)
+        index.sources_by_path.setdefault((proposal.level, path), set()).update(proposal.source_tags)
+        for source in proposal.source_tags:
+            index.proposals_by_source_path.setdefault((source, path), set()).add(proposal.proposal_id)
+    for position, decision in enumerate(resolution.decisions):
+        index.decision_refs.append(decision_reference(resolution.baseline_snapshot_id, decision))
+        if decision.action not in {"create", "reuse"}:
+            continue
+        if decision.proposal_id:
+            index.decisions_by_proposal.setdefault(decision.proposal_id, set()).add(position)
+        for member in decision.members:
+            source = (member.source_dataset, member.tag_id)
+            index.decisions_by_source.setdefault(source, set()).add(position)
+    return index
+
+
+# Resolve approved paths through allocated IDs, retaining only the current link's speciality when appropriate.
+def _related_paths(index: _IntegrationIndex, level: str, row: dict[str, Any]) -> set[tuple[str, ...]]:
     if level in {"category", "speciality"}:
-        paths = {tuple(n.path) for n in resolution.hierarchy
-                 if n.level == level and id_map.get(str(n.id), n.id) == row["id"]}
+        paths = index.paths.get((level, row["id"]), set())
     else:
-        tag_id = row["tag_id"] if level == "speciality_tag" else row["id"]
-        speciality_ids = {id_map.get(str(link.speciality_id), link.speciality_id) for link in resolution.links
-                          if id_map.get(str(link.tag_id), link.tag_id) == tag_id}
-        if level == "speciality_tag":
-            speciality_ids &= {row["speciality_id"]}
-        paths = {tuple(n.path) for n in resolution.hierarchy
-                 if n.level == "speciality" and id_map.get(str(n.id), n.id) in speciality_ids}
+        speciality_ids = ({row["speciality_id"]} if level == "speciality_tag"
+                          else index.tag_specialities.get(row["id"], set()))
+        paths = {path for speciality_id in speciality_ids
+                 for path in index.paths.get(("speciality", speciality_id), set())}
     return paths | {path[:2] for path in paths}
 
 
@@ -120,29 +162,30 @@ def integration_events(
     manifest: dict[str, Any], *, operation_id: str, actor: str,
     review_events: Sequence[ChangeEvent] = (),
 ) -> list[ChangeEvent]:
-    proposals = resolution.screening.proposals if resolution.screening else []
+    index = _integration_index(resolution, id_map)
     reviews = linked_review_evidence(resolution, review_events)
     events = []
     for table, rows in additions.items():
         level = {"categories": "category", "specialities": "speciality", "tags": "tag",
                  "speciality_tags": "speciality_tag"}[table]
         for row in rows:
-            sources: set[tuple[str, str]] = set()
-            paths = _related_paths(resolution, level, row, id_map)
-            related = [p for p in proposals if tuple(p.path) in paths]
-            proposal_ids = {p.proposal_id for p in related}
+            paths = _related_paths(index, level, row)
             if level in {"category", "speciality"}:
-                for proposal in related:
-                    if proposal.level == level:
-                        sources.update(proposal.source_tags)
+                proposal_ids = {pid for path in paths for pid in index.proposals_by_path.get(path, ())}
+                sources = {source for path in paths for source in index.sources_by_path.get((level, path), ())}
             else:
                 tag_id = row["tag_id"] if level == "speciality_tag" else row["id"]
-                tag = next(t for t in resolution.tags if id_map.get(str(t.id), t.id) == tag_id)
-                sources = {(m.source_dataset, m.tag_id) for m in tag.members}
-                proposal_ids = {p.proposal_id for p in related if sources.intersection(p.source_tags)}
-            decisions = [d for d in resolution.decisions if d.action in {"create", "reuse"}
-                         and (d.proposal_id in proposal_ids
-                              or any((m.source_dataset, m.tag_id) in sources for m in d.members))]
+                sources = index.tag_sources[tag_id]
+                proposal_ids = {pid for path in paths for source in sources
+                                for pid in index.proposals_by_source_path.get((source, path), ())}
+            positions = set()
+            for proposal_id in proposal_ids:
+                positions.update(index.decisions_by_proposal.get(proposal_id, ()))
+            for source in sources:
+                positions.update(index.decisions_by_source.get(source, ()))
+            ordered = sorted(positions)
+            decisions = [resolution.decisions[position] for position in ordered]
+            references = [index.decision_refs[position] for position in ordered]
             name = str(row.get("name", f"speciality:{row.get('speciality_id')} -> tag:{row.get('tag_id')}"))
             events.append(ChangeEvent(
                 event_id=f"{operation_id}:{table}:{row['id']}", operation_id=operation_id,
@@ -152,9 +195,8 @@ def integration_events(
                 reason="; ".join(dict.fromkeys(d.reason for d in decisions)) or "Accepted by enrichment rules",
                 actor=actor, occurred_at=datetime.fromisoformat(manifest["created_at"]),
                 proposal_ids=sorted(proposal_ids),
-                decision_ids=[decision_reference(resolution.baseline_snapshot_id, d) for d in decisions],
-                linked_reviews=[review for d in decisions
-                                for review in reviews[decision_reference(resolution.baseline_snapshot_id, d)]],
+                decision_ids=references,
+                linked_reviews=[review for reference in references for review in reviews[reference]],
                 scope="snapshot",
             ))
     return events
