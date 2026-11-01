@@ -78,6 +78,54 @@ def test_merge_preview_applies_and_logs_hierarchy_decisions(tmp_path: Path) -> N
     assert before == (log_path.read_bytes(), (output / "resolution.json").read_bytes())
 
 
+@pytest.mark.parametrize("delivery_error", [
+    sqlite3.OperationalError("database unavailable"),
+    PermissionError("database parent access denied"),
+    ValueError("Conflicting audit event ID: example"),
+])
+# Saved previews must remain successful and recover through sync without rewriting their artifacts.
+def test_merge_preview_warns_and_recovers_when_audit_delivery_fails(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch,
+    delivery_error: Exception,
+) -> None:
+    config = _write_stage_config(tmp_path)
+    producer = tmp_path / "producer.json"
+    producer.write_text(json.dumps([{
+        "source_dataset": "skillsfuture", "tag_id": "9001", "tag": "Campaign planning",
+        "original_classification": "classified", "service": "Industry", "category": "Marketing",
+        "speciality": "Brand Strategy", "confidence": 0.8, "reason": "Known placement",
+    }]), encoding="utf-8")
+    decisions = tmp_path / "decisions.json"
+    decisions.write_text(json.dumps([{
+        "members": [{"source_dataset": "skillsfuture", "tag_id": "9001"}],
+        "action": "create", "reason": "Reviewed new skill", "approved_speciality_ids": [10],
+    }]), encoding="utf-8")
+    output = tmp_path / "merge with spaces"
+
+    # Fail only database delivery, after the run has saved its durable evidence.
+    def unavailable(events: list[ChangeEvent]) -> int:
+        raise delivery_error
+
+    with monkeypatch.context() as patch:
+        patch.setattr(audit, "log_changes", unavailable)
+        assert main(["merge-preview", "--config", str(config), "--input", str(producer),
+                     "--out-dir", str(output), "--decisions", str(decisions), "--actor", "Reviewer"]) == 0
+    printed = capsys.readouterr()
+    assert "[COMPLETE]" in printed.err and "[WARN]" in printed.err and "[FAILED]" not in printed.err
+    assert "records without saturation_run_id" in printed.err  # Existing warnings are retained.
+    assert str(delivery_error) in printed.err
+    assert f'sync-changes --events "{output / "audit_events.json"}"' in printed.err
+    assert read_changes(ChangeQuery()).total == 0
+    saved = {path.name: path.read_bytes() for path in output.iterdir()}
+    assert {"run.json", "preview.csv", "change_log.jsonl", "audit_events.json"} <= saved.keys()
+    assert main(["sync-changes", "--events", str(output / "audit_events.json")]) == 0
+    events = read_changes(ChangeQuery()).changes
+    assert len(events) == 1 and events[0].actor == "Reviewer"
+    assert main(["sync-changes", "--events", str(output / "audit_events.json")]) == 0
+    assert "recorded 0 new audit events" in capsys.readouterr().out
+    assert saved == {path.name: path.read_bytes() for path in output.iterdir()}
+
+
 @pytest.mark.parametrize(("flag", "value"), [("--screening-lexical", "1.1"), ("--screening-semantic", "nan")])
 # Invalid CLI thresholds must fail before reading inputs or creating reports.
 def test_merge_preview_rejects_invalid_screening_thresholds(

@@ -20,7 +20,7 @@ from pydantic import TypeAdapter
 
 from ..matching.semantic import SimilarityMatcher
 from ..taxonomy.base import TaxonomyDataset
-from .audit import record_review_changes
+from .audit import AuditDeliveryError, record_review_changes
 from .change_log import append_review_decisions
 from .deduplication import deduplicate_outputs
 from .export import export_preview_csv
@@ -46,6 +46,7 @@ class MergeRun:
     validation: BatchValidationReport
     preview: MergePreview
     warnings: list[str] = field(default_factory=list)
+    audit_delivery_error: str | None = None
 
     @property
     def ok(self) -> bool:
@@ -162,5 +163,10 @@ def run_merge_preview(
         log_path, resolution.decisions,
         baseline_snapshot_id=resolution.baseline_snapshot_id, actor=actor,
     )
-    record_review_changes(resolution, entries, out_dir)
-    return MergeRun(out_dir=out_dir, validation=validation, preview=preview, warnings=warnings)
+    audit_delivery_error = None
+    try:
+        record_review_changes(resolution, entries, out_dir)
+    except AuditDeliveryError as exc:
+        audit_delivery_error = str(exc)
+    return MergeRun(out_dir=out_dir, validation=validation, preview=preview, warnings=warnings,
+                    audit_delivery_error=audit_delivery_error)

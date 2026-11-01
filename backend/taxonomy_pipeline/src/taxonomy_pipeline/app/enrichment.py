@@ -90,12 +90,15 @@ def merge_preview(
         semantic_threshold=SCREENING_DEFAULTS.semantic_threshold if screening_semantic is None else screening_semantic,
     )
     taxonomy = load_taxonomies(config_path, baseline)[baseline]
-    return run_merge_preview(
+    result = run_merge_preview(
         list(inputs), taxonomy, out_dir=out_dir or _timestamped("merge_runs"),
         decisions=load_decisions(decisions) if decisions else [],
         semantic_matcher=SemanticMatcher(semantic_model) if semantic_model else None,
         screening_settings=screening_settings, change_log=change_log, actor=actor,
     )
+    if result.audit_delivery_error:
+        result.warnings.append(f"Merge preview saved at {result.out_dir}. {result.audit_delivery_error}")
+    return result
 
 
 def review_proposals(

@@ -586,8 +586,12 @@ failure (SQLite, filesystem, or conflicting/invalid event evidence) does not fai
 other quality warnings, and exits 0. Library callers can inspect
 `Integration.audit_delivery_error`; the app use case includes it in
 `IntegrateResult.warnings`. Failures before publication still fail integration.
-`merge-preview` continues to report a delivery failure as an error, preserving its
-saved JSONL and event file. Both paths include the cause and the quoted
+After saving the preview, JSONL and event file, `merge-preview` likewise returns
+its completed result and an audit `[WARN]`, keeping exit code 0 for a valid,
+unblocked preview. Library callers can inspect `MergeRun.audit_delivery_error`;
+the app use case also includes it in `MergeRun.warnings`, alongside existing
+warnings. Invalid decisions, blocked previews and failures to save the evidence
+still fail normally. Both delivery-warning paths include the cause and the quoted
 `sync-changes --events` command. Restore database access before retrying storage
 failures; conflicting or invalid event evidence needs investigation and resolution
 before retrying, since replay alone cannot repair it. Use the saved event file to

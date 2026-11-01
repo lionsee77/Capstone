@@ -13,7 +13,7 @@ import pytest
 from taxonomy_pipeline.app.changes import sync_changes
 from taxonomy_pipeline.audit import ChangeEvent, ChangeQuery, read_changes
 from taxonomy_pipeline.enrichment import audit
-from taxonomy_pipeline.enrichment.audit import AuditDeliveryError, record_review_changes
+from taxonomy_pipeline.enrichment.audit import record_review_changes
 from taxonomy_pipeline.enrichment.change_log import read_review_decisions
 from taxonomy_pipeline.enrichment.models import CanonicalTag, ResolvedHierarchyNode, ResolvedLink, ReviewDecision
 from taxonomy_pipeline.enrichment.proposals.models import ScreenedProposal
@@ -84,12 +84,12 @@ def test_review_database_failure_can_be_recovered_without_rerunning_classificati
 
     with monkeypatch.context() as patch:
         patch.setattr(audit, "log_changes", unavailable)
-        with pytest.raises(AuditDeliveryError) as failure:
-            run_merge_preview(
-                [root / "producer.json"], baseline, out_dir=saved_proposal_run, decisions=[changed], actor="Bryan",
-            )
-    assert failure.value.__cause__ is delivery_error
-    message = str(failure.value)
+        result = run_merge_preview(
+            [root / "producer.json"], baseline, out_dir=saved_proposal_run, decisions=[changed], actor="Bryan",
+        )
+    assert result.ok
+    message = result.audit_delivery_error
+    assert message is not None
     assert str(delivery_error) in message
     assert f'sync-changes --events "{saved_proposal_run / "audit_events.json"}"' in message
     if isinstance(delivery_error, ValueError):
