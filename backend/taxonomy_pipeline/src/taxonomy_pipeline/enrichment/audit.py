@@ -29,6 +29,12 @@ class AuditDeliveryError(ValueError):
 
 # Deliver already-saved events with consistent recovery guidance for expected storage failures.
 def deliver_saved_changes(events: list[ChangeEvent], events_path: Path) -> None:
+    """Deliver evidence the caller has already saved at events_path.
+
+    Expected storage or payload conflicts become AuditDeliveryError with the
+    original cause and a recovery command. Other errors propagate unchanged.
+    Callers decide whether their completed workflow can return a warning.
+    """
     try:
         log_changes(events)
     except (sqlite3.Error, OSError, ValueError) as exc:
@@ -46,6 +52,11 @@ def deliver_saved_changes(events: list[ChangeEvent], events_path: Path) -> None:
 
 # Identify the same decision across its review and all snapshots produced from it.
 def decision_reference(baseline: str, decision: ReviewDecision) -> str:
+    """Hash the baseline and full decision, independent of submission actor or time.
+
+    Edited reasons or actions produce a new reference; identical decisions from
+    separate submissions share it so their resulting changes can be traced together.
+    """
     payload = json.dumps([baseline, decision.model_dump(mode="json")], sort_keys=True)
     return "decision:" + hashlib.sha256(payload.encode()).hexdigest()
 
@@ -54,6 +65,13 @@ def decision_reference(baseline: str, decision: ReviewDecision) -> str:
 def record_review_changes(
     resolution: ResolutionReport, entries: Sequence[ReviewDecisionEvent], out_dir: Path,
 ) -> None:
+    """Save and deliver matching submissions while retaining previously saved events.
+
+    Entries may come from a shared log; only this resolution's baseline and decisions
+    are included. Missing subjects or conflicting saved evidence raise ValueError
+    before file replacement. AuditDeliveryError means the event file is saved and
+    only SQLite delivery needs recovery. Earlier file failures propagate normally.
+    """
     if not resolution.decisions:
         return
     proposals = {p.proposal_id: p for p in resolution.screening.proposals} if resolution.screening else {}
@@ -174,6 +192,12 @@ def integration_events(
     manifest: dict[str, Any], *, operation_id: str, actor: str,
     review_events: Sequence[ChangeEvent] = (),
 ) -> list[ChangeEvent]:
+    """Construct snapshot-scoped additions without publishing files or writing SQLite.
+
+    IDs and timestamps come from the integration artifacts. The caller supplies the
+    operation identity and integrator; original reviewer attribution is linked from
+    saved evidence, with unknown attribution retained for legacy resolutions.
+    """
     index = _integration_index(resolution, id_map)
     reviews = linked_review_evidence(resolution, review_events)
     events = []
@@ -218,6 +242,12 @@ def integration_events(
 def linked_review_evidence(
     resolution: ResolutionReport, review_events: Sequence[ChangeEvent],
 ) -> dict[str, list[LinkedReview]]:
+    """Return submissions keyed by decision reference for this baseline and dataset.
+
+    Reject conflicting payloads or attribution within one submission. If no saved
+    submission matches, retain the decision with unknown actor/time instead of
+    attributing the review to whoever integrates the snapshot.
+    """
     submitted: dict[str, dict[str, list[ChangeEvent]]] = {}
     for event in review_events:
         if (event.action != "review_decision" or event.dataset != resolution.evidence.taxonomy

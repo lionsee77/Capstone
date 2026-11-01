@@ -18,6 +18,11 @@ from .models import ReviewDecision, ReviewDecisionEvent
 
 # Load review submissions once so deduplication and audit translation share the same evidence.
 def read_review_decisions(path: Path) -> list[ReviewDecisionEvent]:
+    """Return validated submissions in file order, treating a missing log as empty.
+
+    Blank lines are ignored; invalid JSON or submission fields fail the read so
+    callers cannot silently discard earlier evidence while appending or replaying.
+    """
     if not path.exists():
         return []
     return [ReviewDecisionEvent.model_validate_json(line)

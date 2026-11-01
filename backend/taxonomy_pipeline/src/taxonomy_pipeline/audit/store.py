@@ -82,6 +82,12 @@ def _ensure_schema(connection: sqlite3.Connection) -> None:
 def log_change(
     event: ChangeEvent, *, db_path: Path | str | None = None, connection: sqlite3.Connection | None = None,
 ) -> int:
+    """Return 1 for an inserted event or 0 for an equivalent replay; reject conflicting IDs.
+
+    A supplied connection must already have the audit schema and an active write
+    transaction. Its owner controls commit/rollback. Without one, this function
+    delegates to the batch writer, which owns initialization and the transaction.
+    """
     if connection is None:
         return log_changes([event], db_path=db_path)
     payload = json.dumps(event.model_dump(mode="json"), sort_keys=True, ensure_ascii=False)
@@ -101,6 +107,12 @@ def log_change(
 
 # Atomically append all events for one operation; retries preserve the original rows.
 def log_changes(events: Sequence[ChangeEvent], *, db_path: Path | str | None = None) -> int:
+    """Return the number inserted, rolling back the entire batch on any failure.
+
+    Inputs must already be validated ChangeEvents. Empty batches do not touch the
+    filesystem; nonempty batches initialize the audit schema if needed and acquire
+    the writer lock before checking replay IDs, so concurrent retries cannot race.
+    """
     if not events:
         return 0
     path = Path(db_path or db.DEFAULT_DB_PATH)
@@ -114,6 +126,12 @@ def log_changes(events: Sequence[ChangeEvent], *, db_path: Path | str | None = N
 
 # Read history using SQLite read-only mode without creating a database or loading taxonomy files.
 def read_changes(query: ChangeQuery, *, db_path: Path | str | None = None) -> ChangeHistory:
+    """Return a consistent count and page from one read-only SQLite transaction.
+
+    A missing database or audit table yields empty history without creating it.
+    Filters are ANDed; concept IDs need dataset, snapshot and level filters to
+    identify one concept. Results are ordered by UTC timestamp and event ID.
+    """
     result = ChangeHistory(total=0, offset=query.offset, limit=query.limit, changes=[])
     path = Path(db_path or db.DEFAULT_DB_PATH).resolve()
     if not path.exists():

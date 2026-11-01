@@ -21,6 +21,11 @@ def get_changes(
     since: datetime | None = None, until: datetime | None = None,
     offset: int = Query(0, ge=0), limit: int = Query(50, ge=1, le=200),
 ) -> ChangeHistory:
+    """Read audit history with ANDed filters and inclusive timezone-aware date bounds.
+
+    Scope concept IDs by dataset, snapshot_id and concept_level for a unique
+    concept lookup. Invalid filters return 422; this endpoint never mutates history.
+    """
     try:
         filters = ChangeQuery(
             dataset=dataset, snapshot_id=snapshot_id, concept_level=concept_level, concept_id=concept_id,
