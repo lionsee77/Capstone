@@ -190,9 +190,12 @@ def collation_key(name: Any) -> str:
 
     The client schema's `tags.name` is unique under that collation, so every
     writer of taxonomy dumps (`integrate`, `flat_import`) checks names with it.
+    It lower-cases rather than `casefold()`s: general_ci weighs each character on
+    its own, so `ß` equals a single `s` ("Maße" = "Mase"), not casefold's "ss".
     """
     decomposed = unicodedata.normalize("NFKD", str(name))
-    return "".join(char for char in decomposed if not unicodedata.combining(char)).casefold().rstrip(" ")
+    stripped = "".join(char for char in decomposed if not unicodedata.combining(char))
+    return stripped.lower().replace("ß", "s").rstrip(" ")
 
 
 def sql_literal(value: Any) -> str:

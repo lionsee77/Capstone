@@ -264,3 +264,10 @@ def test_refuses_headers_that_repeat_after_trimming_spaces(tmp_path: Path) -> No
     mapping = _mapping(path, columns={"category": "Sector", "speciality": "Role", "tag": "Skill"})
     with pytest.raises(ValueError, match=r"repeated column header\(s\) \['Role'\]"):
         read_rows(mapping)
+
+
+def test_tags_mysql_keeps_apart_stay_separate(tmp_path: Path) -> None:
+    rows = [["Physics", "Lab", "Masse", "Bulk", "y"], ["Physics", "Lab", "Maße", "Measures", "y"]]
+    taxonomy = _build(_mapping(_csv(tmp_path, rows)))
+    assert [tag["name"] for tag in taxonomy.tables["tags"]] == ["Masse", "Maße"]
+    assert taxonomy.merged_tags == {}
