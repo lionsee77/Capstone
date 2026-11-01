@@ -82,6 +82,47 @@ export const comparabilitySchema = z.object({
 });
 export type Comparability = z.infer<typeof comparabilitySchema>;
 
+/** Mirrors `Direction`: which way a measure is better; null when neither is. */
+export const directionSchema = z.enum(["higher", "lower"]);
+
+/** Mirrors `Verdict`. "changed" is a move with no better direction; "not_compared" a pair not scored alike. */
+export const verdictSchema = z.enum(["improved", "unchanged", "deteriorated", "changed", "not_compared"]);
+export type Verdict = z.infer<typeof verdictSchema>;
+
+/** Mirrors `MeasureChange`: one headline number in both runs. `change` is null unless the pair compares. */
+export const measureChangeSchema = z.object({
+  key: z.string(),
+  label: z.string(),
+  better: directionSchema.nullable(),
+  before: z.number().nullable(),
+  after: z.number().nullable(),
+  change: z.number().nullable(),
+  relative_change: z.number().nullable(),
+  verdict: verdictSchema,
+});
+export type MeasureChange = z.infer<typeof measureChangeSchema>;
+
+/** Mirrors `MetricChange`: one paired scoring result, labelled as the CLI prints it. */
+export const metricChangeSchema = z.object({
+  metric_id: z.string(),
+  label: z.string(),
+  before_index: z.number().int().nullable(),
+  after_index: z.number().int().nullable(),
+  issues: z.array(comparabilityIssueSchema),
+  measures: z.array(measureChangeSchema),
+});
+export type MetricChange = z.infer<typeof metricChangeSchema>;
+
+/**
+ * Mirrors `RunComparison` (`GET /runs/{before_id}/compare/{after_id}`, #69): each metric's measures in two runs,
+ * with changes and verdicts only where `comparability` says the results were scored alike.
+ */
+export const runComparisonSchema = z.object({
+  comparability: comparabilitySchema,
+  metrics: z.array(metricChangeSchema),
+});
+export type RunComparison = z.infer<typeof runComparisonSchema>;
+
 /** Mirrors `RunSummary`: `GET /runs` rows - a summary, not the full report. */
 export const runSummarySchema = runReportSchema.pick({ run_id: true, status: true, created_at: true });
 export type RunSummary = z.infer<typeof runSummarySchema>;

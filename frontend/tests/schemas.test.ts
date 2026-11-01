@@ -9,6 +9,7 @@ import {
   proposalReviewReportSchema,
   reviewDecisionSchema,
   reviewDecisionEventSchema,
+  runComparisonSchema,
   runReportSchema,
   taxonomyConceptDetailSchema,
   taxonomyConceptSummarySchema,
@@ -119,6 +120,38 @@ describe("comparabilitySchema", () => {
   it("rejects an issue kind the backend doesn't report", () => {
     const bad = { ...check, issues: [{ kind: "typo", message: "x" }] };
     expect(comparabilitySchema.safeParse(bad).success).toBe(false);
+  });
+});
+
+describe("runComparisonSchema", () => {
+  // The shape `RunComparison.model_dump(mode="json")` produces for a comparable pair of runs.
+  const comparison = {
+    comparability: {
+      before_run_id: "base", after_run_id: "enriched", before_subject: "original", after_subject: "enriched",
+      before_definitions_version: 1, after_definitions_version: 1, issues: [],
+      metrics: [{ metric_id: "breadth", before_index: 2, after_index: 2, issues: [] }], comparable: true,
+    },
+    metrics: [{
+      metric_id: "breadth", label: "breadth", before_index: 2, after_index: 2, issues: [],
+      measures: [
+        { key: "occupational.matched_count", label: "SSOC occupational nodes covered", better: "higher",
+          before: 16, after: 24, change: 8, relative_change: 0.5, verdict: "improved" },
+        { key: "reviewed", label: "Incoming concepts reviewed", better: null,
+          before: 4308, after: null, change: null, relative_change: null, verdict: "not_compared" },
+      ],
+    }],
+  };
+
+  it("reads changes and verdicts, and measures one run lacks", () => {
+    const parsed = runComparisonSchema.parse(comparison);
+    expect(parsed.comparability.comparable).toBe(true);
+    expect(parsed.metrics[0].measures.map((m) => m.verdict)).toEqual(["improved", "not_compared"]);
+  });
+
+  it("rejects a verdict the backend doesn't report", () => {
+    const bad = structuredClone(comparison);
+    (bad.metrics[0].measures[0] as { verdict: string }).verdict = "better";
+    expect(runComparisonSchema.safeParse(bad).success).toBe(false);
   });
 });
 

@@ -898,3 +898,22 @@ def test_a_judge_that_cannot_run_reports_an_error(monkeypatch):
     monkeypatch.setattr(saturation, "DecisionsJudge", no_key)
     result = _run(_pair(_JUDGE_BASE, _JUDGE_INCOMING), semantic_model="m", judge={})
     assert result.status == "error" and "OPENAI_API_KEY" in result.summary
+
+
+def test_measures_read_the_last_curve_point_with_fewer_new_concepts_as_better():
+    from tests.conftest import baseline_of_record
+
+    result = next(r for r in baseline_of_record().results if r.metric_id == "saturation")
+    measures = {m.key: m for m in SaturationMetric().measures(result)}
+
+    assert (measures["add_candidates"].value, measures["add_candidates"].better) == (665, "lower")
+    assert (measures["new_rate_max"].value, measures["new_rate_max"].better) == (0.835, "lower")
+    assert (measures["reviewed"].value, measures["reviewed"].better) == (4308, None)
+
+
+def test_a_result_without_a_curve_has_no_measure_values():
+    from taxonomy_pipeline.models import MetricResult
+
+    measures = SaturationMetric().measures(MetricResult(metric_id="saturation", summary="", details={}))
+
+    assert {m.value for m in measures} == {None}

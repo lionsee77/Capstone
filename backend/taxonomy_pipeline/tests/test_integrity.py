@@ -112,3 +112,33 @@ def test_reports_orphan_categories_when_services_table_is_present_but_empty():
     result = IntegrityMetric().run({"original": dataset}, {"dataset": "original"})
     assert result.details["orphans"]["categories_without_service"] == [1]
     assert result.details["skipped_checks"] == {}
+
+
+def test_measures_count_every_defect_in_the_baseline_of_record_with_lower_as_better():
+    from tests.conftest import baseline_of_record
+
+    result = next(r for r in baseline_of_record().results if r.metric_id == "integrity")
+    measures = {m.key: m for m in IntegrityMetric().measures(result)}
+
+    # The baseline's summary: 53 rows in exact-duplicate clusters, 1 unused tag, 14 / 1 dead ends.
+    exact = sum(measures[f"exact_duplicate_rows.{level}"].value for level in ("categories", "specialities", "tags"))
+    assert exact == 53
+    assert measures["orphans.tags_unused_by_any_speciality"].value == 1
+    assert measures["dead_ends.categories_with_zero_specialities"].value == 14
+    assert measures["fuzzy_duplicate_pairs.tags"].value == 57
+    assert {m.better for m in measures.values()} == {"lower"}
+
+
+def test_a_skipped_orphan_check_has_no_measure_value():
+    ds = TaxonomyDataset(
+        name="t",
+        categories=[{"id": 1, "name": "Design"}],
+        specialities=[{"id": 10, "name": "Logo", "category_id": 1}],
+        tags=[{"id": 100, "name": "Illustrator"}],
+        speciality_tags=[{"id": 1, "speciality_id": 10, "tag_id": 100}],
+    )
+    result = IntegrityMetric().run({"t": ds}, {"dataset": "t"})
+
+    measures = {m.key: m.value for m in IntegrityMetric().measures(result)}
+    assert measures["orphans.categories_without_service"] is None
+    assert measures["orphans.specialities_without_category"] == 0

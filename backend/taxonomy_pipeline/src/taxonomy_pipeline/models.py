@@ -129,6 +129,70 @@ class Comparability(BaseModel):
         return not self.issues and not any(metric.issues for metric in self.metrics)
 
 
+Direction = Literal["higher", "lower"]
+Verdict = Literal["improved", "unchanged", "deteriorated", "changed", "not_compared"]
+
+
+class Measure(BaseModel):
+    """One headline number read from a metric result, and which way is better.
+
+    Each metric says which of its numbers matter for a version comparison by
+    overriding `Metric.measures` (`quality/base.py`); the comparison report (#69)
+    only diffs these, never a metric's raw `details`. `better` is None for a
+    number whose change is worth showing but isn't good or bad in itself (e.g.
+    how many concepts saturation reviewed). `value` is None when the result
+    couldn't measure it (e.g. a rate over an empty table).
+    """
+
+    key: str
+    label: str
+    value: float | None
+    better: Direction | None = None
+
+
+class MeasureChange(BaseModel):
+    """One measure in both runs, the change, and whether it got better.
+
+    `change` and `verdict` are only set for a pair of results scored alike
+    (`Comparability`): otherwise the verdict is "not_compared" and the values
+    are shown for reference only. "changed" is the verdict for a measure that
+    moved but has no better direction.
+    """
+
+    key: str
+    label: str
+    better: Direction | None
+    before: float | None
+    after: float | None
+    change: float | None = None
+    relative_change: float | None = Field(default=None, description="change / |before|; None when before is 0")
+    verdict: Verdict
+
+
+class MetricChange(BaseModel):
+    """One paired scoring result: its measures, compared, and any reason it doesn't compare."""
+
+    metric_id: str
+    label: str = Field(description="Display label, unique within the comparison (see `app.scoring.result_labels`)")
+    before_index: int | None = None
+    after_index: int | None = None
+    issues: list[ComparabilityIssue] = Field(default_factory=list)
+    measures: list[MeasureChange] = Field(default_factory=list)
+
+
+class RunComparison(BaseModel):
+    """A version-to-version quality comparison of two runs (PB10, #69): what a reviewer
+    reads instead of two raw reports, and what PB11's verdicts (#73) build on.
+
+    Built by `quality.comparison.compare_reports` on top of `check_comparable`,
+    which it embeds as `comparability`: no measure gets a change or a verdict
+    unless both the runs and its pair of results were scored alike.
+    """
+
+    comparability: Comparability
+    metrics: list[MetricChange] = Field(default_factory=list)
+
+
 ConceptLevel = Literal["services", "categories", "specialities", "tags"]
 
 

@@ -10,7 +10,7 @@ from rapidfuzz import fuzz, process
 
 from ..matching import embeddings
 from ..matching.preprocessing import get_normalizer
-from ..models import MetricResult
+from ..models import Measure, MetricResult
 from ..taxonomy.base import LoadedDataset, TaxonomyDataset
 from ..taxonomy.references.ssic import SsicReference
 from ..taxonomy.references.ssoc import SsocReference
@@ -117,6 +117,20 @@ class BreadthMetric(Metric):
                 "text_profile": embeddings.TEXT_PROFILE,
             },
         }
+
+    def measures(self, result: MetricResult) -> list[Measure]:
+        """Reference nodes covered, higher is better: as a count, so a gain of one node shows, and as the
+        coverage rate."""
+        measures = []
+        for dimension, reference in (("industry", "SSIC"), ("occupational", "SSOC")):
+            section = result.details.get(dimension, {})
+            measures += [
+                Measure(key=f"{dimension}.matched_count", label=f"{reference} {dimension} nodes covered",
+                        value=section.get("matched_count"), better="higher"),
+                Measure(key=f"{dimension}.coverage", label=f"{dimension.capitalize()} coverage",
+                        value=section.get("coverage"), better="higher"),
+            ]
+        return measures
 
     def run(self, datasets: dict[str, LoadedDataset], params: dict[str, Any]) -> MetricResult:
         p = self.resolve_params(params)

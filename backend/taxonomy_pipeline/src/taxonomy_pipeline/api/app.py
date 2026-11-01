@@ -1,5 +1,5 @@
 """FastAPI app: a thin HTTP layer over the `app/` use cases (`app.scoring` for metrics and runs,
-`app.browse` for taxonomy search, `app.enrichment` for proposals).
+`app.comparison` for comparing two runs, `app.browse` for taxonomy search, `app.enrichment` for proposals).
 
 A run is a batch job, not a request/response - `POST /runs` validates the
 config, schedules the work as a background task, and returns immediately
@@ -15,11 +15,12 @@ from pathlib import Path
 
 from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException
 
-from ..app import browse, scoring
+from ..app import browse, comparison, scoring
 from ..config import PipelineConfig
 from ..models import (
     ConceptLevel,
     MetricInfo,
+    RunComparison,
     RunCreated,
     RunReport,
     RunSummary,
@@ -116,6 +117,25 @@ def get_run(run_id: str) -> RunReport:
     if report is None:
         raise HTTPException(status_code=404, detail="run not found")
     return report
+
+
+@app.get("/runs/{before_id}/compare/{after_id}")
+def compare_runs(
+    before_id: str, after_id: str, before_subject: str | None = None, after_subject: str | None = None,
+) -> RunComparison:
+    """Compare two stored runs metric by metric (#69): values, changes and verdicts, embedding the
+    comparability check. Runs come from run history only - never a file path - so a request can't
+    read reports elsewhere on the server. Read `comparability.comparable` before any verdict."""
+    reports = {label: scoring.get_run(run_id) for label, run_id in (("before", before_id), ("after", after_id))}
+    missing = [label for label, report in reports.items() if report is None]
+    if missing:
+        raise HTTPException(status_code=404, detail=f"{' and '.join(missing)} run not found")
+    try:
+        return comparison.compare(
+            reports["before"], reports["after"], before_subject=before_subject, after_subject=after_subject,
+        )
+    except ValueError as exc:  # a run scoring several taxonomies needs its subject named
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @app.get("/taxonomy/search")

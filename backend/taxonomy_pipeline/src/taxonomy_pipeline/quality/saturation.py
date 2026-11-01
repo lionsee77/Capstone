@@ -50,7 +50,7 @@ from ..matching.engine import (
 )
 from ..matching.judge import DecisionsJudge, JudgeError
 from ..matching.semantic import SemanticMatcher
-from ..models import MetricResult
+from ..models import Measure, MetricResult
 from ..taxonomy.base import LoadedDataset, TaxonomyDataset
 from .base import Metric
 
@@ -143,6 +143,26 @@ class SaturationMetric(Metric):
             **super().definition(), "judge_defaults": dict(JUDGE_DEFAULTS),
             "pinned_model_revisions": dict(embeddings.PINNED_REVISIONS),
         }
+
+    def measures(self, result: MetricResult) -> list[Measure]:
+        """How much of the incoming sources the taxonomy still lacks, after the last source (the curve's last
+        point), lower is better: fewer add candidates and a lower new-items rate mean the taxonomy already
+        covers more of them. How many concepts were reviewed, placed anew or found at another level is
+        context, with no better direction."""
+        curve = result.details.get("curve") or [{}]
+        last = curve[-1]
+        return [
+            Measure(key="add_candidates", label="Add candidates", value=last.get("add_candidates"), better="lower"),
+            Measure(key="review_ambiguous", label="Concepts needing review", value=last.get("review_ambiguous"),
+                    better="lower"),
+            Measure(key="new_rate_min", label="New-items rate (min)", value=last.get("new_rate_min"), better="lower"),
+            Measure(key="new_rate_max", label="New-items rate (max)", value=last.get("new_rate_max"), better="lower"),
+            Measure(key="reviewed", label="Incoming concepts reviewed", value=last.get("reviewed")),
+            Measure(key="new_placements", label="Known concepts in a new placement",
+                    value=last.get("new_placements")),
+            Measure(key="review_other_level", label="Known concepts at another level",
+                    value=last.get("review_other_level")),
+        ]
 
     def run(self, datasets: dict[str, LoadedDataset], params: dict[str, Any]) -> MetricResult:
         p = self.resolve_params(params)

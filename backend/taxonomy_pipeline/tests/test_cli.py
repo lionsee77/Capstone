@@ -462,3 +462,56 @@ def test_library_logs_print_to_stdout_as_bare_lines_without_repeating(capsys):
     cli._show_library_logs(logging.DEBUG)
     logger.debug("Raw model response")
     assert capsys.readouterr().out == "Raw model response\n"
+
+
+def _baseline_and_enriched(tmp_path, **edits):
+    from taxonomy_pipeline.app.scoring import write_report
+    from tests.conftest import BASELINE_OF_RECORD, enriched_report
+
+    enriched = tmp_path / "enriched.json"
+    write_report(enriched_report(**edits), enriched)
+    return str(BASELINE_OF_RECORD), str(enriched)
+
+
+def test_compare_prints_a_markdown_report_of_what_changed(tmp_path, capsys):
+    before, after = _baseline_and_enriched(tmp_path, **{"breadth__occupational.matched_count": 24})
+
+    assert main(["compare", before, after]) == 0
+
+    out = capsys.readouterr().out
+    assert out.startswith("# Taxonomy quality comparison")
+    assert "| SSOC occupational nodes covered | 16 | 24 | +8 | +50.0% | improved |" in out
+
+
+@pytest.mark.parametrize(("name", "check"), [
+    ("comparison.csv", lambda text: text.startswith("metric_id,result,measure_key")),
+    ("comparison.json", lambda text: json.loads(text)["comparability"]["comparable"] is True),
+    ("comparison.md", lambda text: text.startswith("# Taxonomy quality comparison")),
+])
+def test_compare_writes_the_format_its_output_files_suffix_names(tmp_path, capsys, name, check):
+    before, after = _baseline_and_enriched(tmp_path)
+
+    assert main(["compare", before, after, "--output", str(tmp_path / name)]) == 0
+
+    assert check((tmp_path / name).read_text(encoding="utf-8"))
+    assert f"to {tmp_path / name}" in capsys.readouterr().err
+
+
+def test_compare_still_writes_the_report_but_fails_when_the_runs_are_not_comparable(tmp_path, capsys):
+    from taxonomy_pipeline.app.scoring import read_report, write_report
+
+    before, after = _baseline_and_enriched(tmp_path)
+    report = read_report(after)
+    report.metric_definitions_version = None
+    write_report(report, after)
+
+    assert main(["compare", before, after, "--format", "csv"]) == 1
+
+    out = capsys.readouterr()
+    assert "not_compared" in out.out
+    assert "[FLAGGED] NOT comparable" in out.err
+
+
+def test_compare_fails_cleanly_for_an_unknown_report(tmp_path, isolated_db, capsys):
+    assert main(["compare", str(tmp_path / "missing.json"), "no-such-run"]) == 1
+    assert "[FAILED] compare:" in capsys.readouterr().err
