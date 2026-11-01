@@ -566,7 +566,18 @@ Each reviewed merge run and integration retains `audit_events.json` as a durable
 delivery record. Integration's manifest identifies its audit operation and file.
 Filesystem publication and SQLite cannot share a transaction: if SQLite delivery
 fails (or the process stops after publication), keep the artifacts and retry only
-the audit delivery. There is no background recovery worker:
+the audit delivery. After successful snapshot publication, an expected audit delivery
+failure (SQLite, filesystem, or conflicting/invalid event evidence) does not fail
+`integrate`: it returns the snapshot, prints `[OK]` and an audit `[WARN]`, preserves
+other quality warnings, and exits 0. Library callers can inspect
+`Integration.audit_delivery_error`; the app use case includes it in
+`IntegrateResult.warnings`. Failures before publication still fail integration.
+`merge-preview` continues to report a delivery failure as an error, preserving its
+saved JSONL and event file. Both paths include the cause and the quoted
+`sync-changes --events` command. Restore database access before retrying storage
+failures; conflicting or invalid event evidence needs investigation and resolution
+before retrying, since replay alone cannot repair it. Use the saved event file to
+recover delivery rather than rerunning integration. There is no background recovery worker:
 
 ```bash
 taxonomy-pipeline sync-changes --events integrations/<run>/audit_events.json

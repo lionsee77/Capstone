@@ -36,14 +36,13 @@ from uuid import uuid4
 
 import yaml
 
-from ..audit import log_changes
 from ..config import DatasetConfig, PipelineConfig
 from ..matching.names import collation_key
 from ..quality.integrity import IntegrityMetric
 from ..quality.registry import METRICS
 from ..taxonomy.base import CONCEPTS, TaxonomyDataset
 from ..taxonomy.sql_dump import SqlDumpSource
-from .audit import EVENTS, integration_events
+from .audit import EVENTS, AuditDeliveryError, deliver_saved_changes, integration_events
 from .models import MergePreview, ResolutionReport
 from .preview import build_preview
 from .resolution import taxonomy_snapshot_id
@@ -82,12 +81,14 @@ class Integration:
 
     out_dir: Path
     manifest: dict[str, Any]
+    audit_delivery_error: str | None = None
 
     @property
     def counts(self) -> dict[str, int]:
         return self.manifest["counts"]
 
 
+# Publish a verified snapshot and report any subsequent audit delivery failure separately.
 def integrate(
     resolution: ResolutionReport,
     baseline: DatasetConfig,
@@ -157,14 +158,12 @@ def integrate(
         shutil.rmtree(staging, ignore_errors=True)
         raise
     # Publish the verified snapshot before recording additions; its durable events allow retry after a DB failure.
+    audit_delivery_error = None
     try:
-        log_changes(events)
-    except Exception as exc:
-        raise IntegrationError(
-            f"Snapshot saved at {out_dir}, but audit delivery failed. Retry with "
-            f"taxonomy-pipeline sync-changes --events \"{out_dir / 'audit_events.json'}\": {exc}"
-        ) from exc
-    return Integration(out_dir=out_dir, manifest=manifest)
+        deliver_saved_changes(events, out_dir / "audit_events.json")
+    except AuditDeliveryError as exc:
+        audit_delivery_error = str(exc)
+    return Integration(out_dir=out_dir, manifest=manifest, audit_delivery_error=audit_delivery_error)
 
 
 def _check_ready(preview: MergePreview) -> None:

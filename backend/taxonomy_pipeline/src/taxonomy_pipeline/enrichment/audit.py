@@ -21,6 +21,27 @@ from .models import ResolutionReport, ReviewDecision, ReviewDecisionEvent
 EVENTS = TypeAdapter(list[ChangeEvent])
 
 
+class AuditDeliveryError(ValueError):
+    """Saved evidence could not reach SQLite; callers decide whether the workflow can still succeed."""
+
+
+# Deliver already-saved events with consistent recovery guidance for expected storage failures.
+def deliver_saved_changes(events: list[ChangeEvent], events_path: Path) -> None:
+    try:
+        log_changes(events)
+    except (sqlite3.Error, OSError, ValueError) as exc:
+        recovery = (
+            "Resolve the conflicting or invalid audit evidence before retrying"
+            if isinstance(exc, ValueError)
+            else "Restore database access, then retry"
+        )
+        raise AuditDeliveryError(
+            f"Audit events saved at {events_path}, but audit delivery failed: {exc}. "
+            f"{recovery} with taxonomy-pipeline sync-changes --events \"{events_path}\". "
+            "Retry only audit delivery using the saved file."
+        ) from exc
+
+
 # Identify the same decision across its review and all snapshots produced from it.
 def decision_reference(baseline: str, decision: ReviewDecision) -> str:
     payload = json.dumps([baseline, decision.model_dump(mode="json")], sort_keys=True)
@@ -74,13 +95,7 @@ def record_review_changes(
     temporary = path.with_suffix(".json.tmp")
     temporary.write_bytes(EVENTS.dump_json(events, indent=2))
     temporary.replace(path)
-    try:
-        log_changes(events)
-    except sqlite3.Error as exc:
-        raise sqlite3.OperationalError(
-            f"Review artifacts saved, but audit delivery failed. Retry with "
-            f"taxonomy-pipeline sync-changes --events \"{path}\": {exc}"
-        ) from exc
+    deliver_saved_changes(events, path)
 
 
 # Find only approved hierarchy paths involved in a row, including each speciality's parent proposal.

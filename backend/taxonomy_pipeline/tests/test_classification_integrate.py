@@ -11,6 +11,7 @@ from taxonomy_pipeline.app.changes import sync_changes
 from taxonomy_pipeline.app.scoring import load_datasets
 from taxonomy_pipeline.audit import ChangeEvent, ChangeQuery, read_changes
 from taxonomy_pipeline.config import DatasetConfig, MetricConfig, PipelineConfig, load_config
+from taxonomy_pipeline.enrichment import audit
 from taxonomy_pipeline.enrichment import integrate as integrate_module
 from taxonomy_pipeline.enrichment.integrate import IntegrationError, _additions_sql, integrate
 from taxonomy_pipeline.enrichment.models import PlacementPath, ResolutionReport, ReviewDecision
@@ -160,23 +161,53 @@ def test_new_hierarchy_rows_keep_proposal_lineage(tmp_path: Path, baseline: Data
     assert set(by_level["speciality_tag"].proposal_ids) == set(proposals.values())
 
 
-# A failed audit delivery must never destroy a verified snapshot or invent a second integration.
+@pytest.mark.parametrize("delivery_error", [
+    sqlite3.OperationalError("database unavailable"),
+    PermissionError("database parent access denied"),
+    ValueError("Conflicting audit event ID: example"),
+])
+# Expected audit failures return the published snapshot and retain replayable events.
 def test_snapshot_survives_audit_delivery_failure_and_can_be_synced(
-    tmp_path: Path, baseline: DatasetConfig, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path, baseline: DatasetConfig, monkeypatch: pytest.MonkeyPatch, delivery_error: Exception,
 ) -> None:
     resolution = _resolution(tmp_path, baseline)
 
     # Fail only the SQLite delivery, after the staged snapshot is published.
     def unavailable(events: list[ChangeEvent]) -> int:
-        raise sqlite3.OperationalError("database unavailable")
+        raise delivery_error
 
-    monkeypatch.setattr(integrate_module, "log_changes", unavailable)
-    with pytest.raises(IntegrationError, match="sync-changes"):
-        integrate(resolution, baseline, out_dir=tmp_path / "out")
+    monkeypatch.setattr(audit, "log_changes", unavailable)
+    result = integrate(resolution, baseline, out_dir=tmp_path / "out")
+    assert result.out_dir == tmp_path / "out"
+    assert result.counts["tags"] == 2
+    assert str(delivery_error) in result.audit_delivery_error
+    assert f'sync-changes --events "{result.out_dir / "audit_events.json"}"' in result.audit_delivery_error
     assert (tmp_path / "out" / "enriched.yaml").exists()
+    assert load_datasets(load_config(result.out_dir / "enriched.yaml"))["enriched"].tags
     assert read_changes(ChangeQuery(action="add")).total == 0
     assert sync_changes(tmp_path / "out" / "audit_events.json") > 0
     assert sync_changes(tmp_path / "out" / "audit_events.json") == 0
+
+
+# Failure to save durable events still prevents publication and is not an audit delivery warning.
+def test_audit_artifact_write_failure_prevents_snapshot_publication(
+    tmp_path: Path, baseline: DatasetConfig, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    resolution = _resolution(tmp_path, baseline)
+    write_bytes = Path.write_bytes
+
+    # Refuse only the staged audit artifact, leaving other filesystem operations available.
+    def deny_audit_file(path: Path, data: bytes) -> int:
+        if path.name == "audit_events.json":
+            raise PermissionError("audit artifact access denied")
+        return write_bytes(path, data)
+
+    monkeypatch.setattr(Path, "write_bytes", deny_audit_file)
+    with pytest.raises(PermissionError, match="audit artifact access denied"):
+        integrate(resolution, baseline, out_dir=tmp_path / "out")
+    assert not (tmp_path / "out").exists()
+    assert not any(path.name.startswith(".out.") for path in tmp_path.iterdir())
+    assert read_changes(ChangeQuery(action="add")).total == 0
 
 
 def test_manifest_records_where_the_snapshot_came_from(tmp_path, baseline):

@@ -10,7 +10,7 @@ import pytest
 from taxonomy_pipeline.app.changes import sync_changes
 from taxonomy_pipeline.audit import ChangeEvent, ChangeQuery, read_changes
 from taxonomy_pipeline.enrichment import audit
-from taxonomy_pipeline.enrichment.audit import record_review_changes
+from taxonomy_pipeline.enrichment.audit import AuditDeliveryError, record_review_changes
 from taxonomy_pipeline.enrichment.runner import load_merge_run, run_merge_preview
 from taxonomy_pipeline.taxonomy.base import TaxonomyDataset
 
@@ -30,9 +30,14 @@ def test_review_retry_keeps_original_event_and_never_logs_additions(saved_propos
     assert sync_changes(saved_proposal_run / "audit_events.json") == 0
 
 
-# Failed delivery leaves replayable evidence and a later recovery records it exactly once.
+@pytest.mark.parametrize("delivery_error", [
+    sqlite3.OperationalError("database unavailable"),
+    PermissionError("database parent access denied"),
+    ValueError("Conflicting audit event ID: example"),
+])
+# Expected delivery failures preserve evidence and explain how to recover after fixing the cause.
 def test_review_database_failure_can_be_recovered_without_rerunning_classification(
-    saved_proposal_run: Path, monkeypatch: pytest.MonkeyPatch,
+    saved_proposal_run: Path, monkeypatch: pytest.MonkeyPatch, delivery_error: Exception,
 ) -> None:
     root = saved_proposal_run.parents[1]
     baseline = TaxonomyDataset.model_validate_json((root / "baseline.json").read_text(encoding="utf-8"))
@@ -41,14 +46,22 @@ def test_review_database_failure_can_be_recovered_without_rerunning_classificati
 
     # Simulate SQLite being unavailable only after the durable review artifacts have been saved.
     def unavailable(events: list[ChangeEvent]) -> int:
-        raise sqlite3.OperationalError("database unavailable")
+        raise delivery_error
 
     with monkeypatch.context() as patch:
         patch.setattr(audit, "log_changes", unavailable)
-        with pytest.raises(sqlite3.OperationalError):
+        with pytest.raises(AuditDeliveryError) as failure:
             run_merge_preview(
                 [root / "producer.json"], baseline, out_dir=saved_proposal_run, decisions=[changed], actor="Bryan",
             )
+    assert failure.value.__cause__ is delivery_error
+    message = str(failure.value)
+    assert str(delivery_error) in message
+    assert f'sync-changes --events "{saved_proposal_run / "audit_events.json"}"' in message
+    if isinstance(delivery_error, ValueError):
+        assert "Resolve the conflicting or invalid audit evidence before retrying" in message
+    else:
+        assert "Restore database access, then retry" in message
     assert read_changes(ChangeQuery()).total == 1
     assert sync_changes(saved_proposal_run / "audit_events.json") == 1
     assert sync_changes(saved_proposal_run / "audit_events.json") == 0

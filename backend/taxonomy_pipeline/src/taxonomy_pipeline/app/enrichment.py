@@ -137,6 +137,7 @@ class IntegrateResult:
     warnings: list[str] = field(default_factory=list)
 
 
+# Return the published snapshot with audit delivery and taxonomy quality warnings.
 def integrate(
     config_path: str | Path, merge_run: str | Path, *, baseline: str, out_dir: str | Path | None = None,
     actor: str = "unspecified",
@@ -156,6 +157,8 @@ def integrate(
         },
     )
     warnings = []
+    if result.audit_delivery_error:
+        warnings.append(f"Snapshot saved at {result.out_dir}. {result.audit_delivery_error}")
     omitted = sum(result.manifest["omitted_records"].values())
     if omitted:
         warnings.append(f"{omitted} input record(s) were omitted before review and are not in the snapshot "
