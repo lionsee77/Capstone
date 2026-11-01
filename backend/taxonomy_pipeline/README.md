@@ -538,8 +538,11 @@ and support `add`, `remove`, `merge`, `synonym_add`, `synonym_remove`, `deprecat
 exposes no update/delete methods; SQLite triggers reject ordinary SQL updates and
 deletes. This protects against application mistakes, not an administrator editing
 the database. Writers serialize concurrent deliveries and commit each batch atomically.
-An identical event ID and payload is a no-op; conflicting evidence for the same
-event ID is an error, never an overwrite.
+An existing event ID is a no-op when its stored and incoming payloads compare equal
+as parsed `ChangeEvent` models. Compatible defaults added to the model and JSON key
+ordering do not cause replay conflicts. Conflicting evidence for the same event ID
+(such as a changed reason, actor, timestamp or taxonomy value) is an error, never an
+overwrite. Replay comparison leaves the original stored payload unchanged.
 
 Connected operations:
 

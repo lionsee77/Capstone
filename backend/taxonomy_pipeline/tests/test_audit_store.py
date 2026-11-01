@@ -5,7 +5,7 @@ import sqlite3
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import get_args
+from typing import Any, get_args
 
 import pytest
 
@@ -24,12 +24,21 @@ def test_records_each_governance_action(action: str, audit_event: ChangeEvent) -
     assert read_changes(ChangeQuery()).changes == [event]
 
 
+@pytest.mark.parametrize("changed_fields", [
+    {"reason": "Rewritten history"},
+    {"actor": "another-reviewer"},
+    {"occurred_at": datetime(2026, 10, 31, tzinfo=UTC)},
+    {"concept_id": "2"},
+    {"after": {"id": 1, "name": "Changed concept"}},
+])
 # Stable IDs make an exact retry a no-op, while altered evidence aborts the whole operation.
-def test_retry_is_idempotent_and_conflict_rolls_back_the_batch(audit_event: ChangeEvent) -> None:
+def test_retry_is_idempotent_and_conflict_rolls_back_the_batch(
+    audit_event: ChangeEvent, changed_fields: dict[str, Any],
+) -> None:
     assert log_change(audit_event) == 1
     assert log_change(audit_event) == 0
     other = audit_event.model_copy(update={"event_id": "other"})
-    conflict = audit_event.model_copy(update={"reason": "Rewritten history"})
+    conflict = audit_event.model_copy(update=changed_fields)
     with pytest.raises(ValueError, match="Conflicting"):
         log_changes([other, conflict])
     assert read_changes(ChangeQuery()).changes == [audit_event]

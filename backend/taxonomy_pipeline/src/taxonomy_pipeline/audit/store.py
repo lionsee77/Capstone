@@ -50,7 +50,7 @@ def log_change(
     existing = connection.execute("SELECT payload FROM taxonomy_change_log WHERE event_id = ?", (event.event_id,))
     row = existing.fetchone()
     if row is not None:
-        if row[0] != payload:
+        if ChangeEvent.model_validate_json(row[0]) != event:
             raise ValueError(f"Conflicting audit event ID: {event.event_id}")
         return 0
     connection.execute(
