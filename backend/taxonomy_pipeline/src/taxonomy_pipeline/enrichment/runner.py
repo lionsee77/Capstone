@@ -125,8 +125,6 @@ def run_merge_preview(
     `inputs` follow the nine-field contract. Decisions not yet in `change_log` (default `out_dir/change_log.jsonl`) are
     appended to it; point several runs at one log to keep a reviewer's history.
     """
-    if not actor.strip():
-        raise ValueError("actor must not be blank")
     paths = [Path(path) for path in inputs]
     if len(set(paths)) != len(paths):
         raise ValueError("Each input file may be given only once")

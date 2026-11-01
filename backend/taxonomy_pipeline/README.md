@@ -563,6 +563,9 @@ Connected operations:
   those workflows are implemented. Their storage contract is supported and tested;
   those operations are not implemented by this change. Individual actor identity is
   self-reported, with `unspecified` as the explicit default.
+  The app use cases trim actor input and reject blank values before reading inputs
+  or writing artifacts, including operations that produce no audit events. Event
+  models retain their own constraints for constructed or loaded evidence.
 
 Each reviewed merge run and integration retains `audit_events.json` as a durable
 delivery record. Integration's manifest identifies its audit operation and file.

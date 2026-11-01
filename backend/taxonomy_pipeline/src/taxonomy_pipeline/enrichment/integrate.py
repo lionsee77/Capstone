@@ -111,8 +111,6 @@ def integrate(
     are scored the same way, and so is its `metric_definitions_version` pin if it
     has one. Without it, `enriched.yaml` runs integrity and depth.
     """
-    if not actor.strip():
-        raise IntegrationError("actor must not be blank")
     if baseline.type != "sql_dump":
         raise IntegrationError(f"Baseline {baseline.name!r} must be a sql_dump dataset, not {baseline.type!r}")
     out_dir = Path(out_dir)

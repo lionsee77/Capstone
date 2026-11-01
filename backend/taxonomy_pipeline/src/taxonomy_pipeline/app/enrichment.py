@@ -32,6 +32,14 @@ from .scoring import load_taxonomies
 SCREENING_DEFAULTS = ScreeningSettings()
 
 
+# Reject blank actor input before any use-case reads or writes and normalize attribution once.
+def _validated_actor(actor: str) -> str:
+    actor = actor.strip()
+    if not actor:
+        raise ValueError("actor must not be blank")
+    return actor
+
+
 def _timestamped(parent: str) -> str:
     return f"{parent}/{datetime.now():%Y%m%d-%H%M%S}"
 
@@ -63,6 +71,7 @@ def case_b(
     ))
 
 
+# Validate submission inputs before loading sources and running the merge workflow.
 def merge_preview(
     config_path: str | Path, inputs: list[str | Path], *, baseline: str, out_dir: str | Path | None = None,
     decisions: str | Path | None = None, semantic_model: str | None = None,
@@ -71,6 +80,7 @@ def merge_preview(
     actor: str = "unspecified",
 ) -> MergeRun:
     """Validate, deduplicate and resolve producer outputs into `out_dir` (default `merge_runs/<timestamp>`)."""
+    actor = _validated_actor(actor)
     from ..matching.semantic import SemanticMatcher
 
     if not inputs:
@@ -144,6 +154,7 @@ def integrate(
     actor: str = "unspecified",
 ) -> IntegrateResult:
     """Turn a fully reviewed merge run into an enriched snapshot (default `integrations/<timestamp>`)."""
+    actor = _validated_actor(actor)
     merge_run = Path(merge_run)
     resolution, info = load_merge_run(merge_run)
     config = load_config(config_path)
