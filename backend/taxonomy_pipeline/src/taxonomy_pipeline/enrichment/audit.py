@@ -68,13 +68,25 @@ def record_review_changes(
         decision = entry.decision
         subjects = []
         if decision.proposal_id:
-            proposal = proposals[decision.proposal_id]
+            proposal = proposals.get(decision.proposal_id)
+            if proposal is None:
+                raise ValueError(
+                    f"Cannot record review decision: proposal {decision.proposal_id!r} is missing from "
+                    f"screening evidence for baseline {resolution.baseline_snapshot_id!r}. "
+                    "Rebuild the merge resolution with matching proposals and decisions."
+                )
             target = str(decision.existing_concept_id) if decision.existing_concept_id is not None else None
             subjects.append((proposal.level, target, f"proposal:{proposal.proposal_id}", proposal.name,
                              [proposal.proposal_id]))
         else:
             for member in decision.members:
-                tag = tags[(member.source_dataset, member.tag_id)]
+                tag = tags.get((member.source_dataset, member.tag_id))
+                if tag is None:
+                    raise ValueError(
+                        f"Cannot record review decision: source tag {member.source_dataset!r}/{member.tag_id!r} "
+                        f"is missing from resolution evidence for baseline {resolution.baseline_snapshot_id!r}. "
+                        "Rebuild the merge resolution with matching source tags and decisions."
+                    )
                 target = str(decision.existing_tag_id) if decision.existing_tag_id is not None else None
                 source_ref = "source:" + json.dumps([member.source_dataset, member.tag_id], separators=(",", ":"))
                 subjects.append(("tag", target, source_ref, tag.tag, []))

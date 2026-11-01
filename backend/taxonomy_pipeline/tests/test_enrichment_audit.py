@@ -105,6 +105,40 @@ def test_review_database_failure_can_be_recovered_without_rerunning_classificati
     assert len(legacy) == 2
 
 
+@pytest.mark.parametrize("missing", ["screening", "proposal", "source_tag"])
+# Inconsistent resolutions fail before replacing saved events or delivering an incomplete audit batch.
+def test_missing_review_subjects_report_actionable_errors_without_changing_history(
+    saved_proposal_run: Path, missing: str,
+) -> None:
+    resolution, _ = load_merge_run(saved_proposal_run)
+    entries = read_review_decisions(saved_proposal_run / "change_log.jsonl")
+    if missing == "screening":
+        resolution.screening = None
+        expected = f"proposal {resolution.decisions[0].proposal_id!r}"
+    elif missing == "proposal":
+        resolution.decisions = [resolution.decisions[0].model_copy(update={"proposal_id": "missing-proposal"})]
+        expected = "proposal 'missing-proposal'"
+    else:
+        resolution.decisions = [ReviewDecision(
+            members=[{"source_dataset": "missing-feed", "tag_id": "999"}],
+            action="exclude", reason="Invalid source reference",
+        )]
+        expected = "source tag 'missing-feed'/'999'"
+    entries = [entries[0].model_copy(update={"decision": resolution.decisions[0]})]
+    original_file = (saved_proposal_run / "audit_events.json").read_bytes()
+    original_history = read_changes(ChangeQuery())
+
+    with pytest.raises(ValueError) as failure:
+        record_review_changes(resolution, entries, saved_proposal_run)
+
+    assert expected in str(failure.value)
+    assert resolution.baseline_snapshot_id in str(failure.value)
+    assert "Rebuild the merge resolution" in str(failure.value)
+    assert "sync-changes" not in str(failure.value)  # Replaying cannot repair missing subject evidence.
+    assert (saved_proposal_run / "audit_events.json").read_bytes() == original_file
+    assert read_changes(ChangeQuery()) == original_history
+
+
 # Large sparse integrations must not rescan every source collection for each added concept.
 def test_large_integration_preserves_lineage_with_bounded_source_scans(saved_proposal_run: Path) -> None:
     resolution, _ = load_merge_run(saved_proposal_run)

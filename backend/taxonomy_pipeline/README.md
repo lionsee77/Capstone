@@ -591,7 +591,11 @@ its completed result and an audit `[WARN]`, keeping exit code 0 for a valid,
 unblocked preview. Library callers can inspect `MergeRun.audit_delivery_error`;
 the app use case also includes it in `MergeRun.warnings`, alongside existing
 warnings. Invalid decisions, blocked previews and failures to save the evidence
-still fail normally. Both delivery-warning paths include the cause and the quoted
+still fail normally. A decision whose proposal or source tag is absent from the
+resolution evidence fails with the missing reference and baseline ID, before
+replacing the saved event file or delivering any events. Rebuild that resolution
+with matching evidence; replaying audit delivery cannot repair it.
+Both delivery-warning paths include the cause and the quoted
 `sync-changes --events` command. Restore database access before retrying storage
 failures; conflicting or invalid event evidence needs investigation and resolution
 before retrying, since replay alone cannot repair it. Use the saved event file to
