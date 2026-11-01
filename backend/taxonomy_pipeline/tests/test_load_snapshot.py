@@ -136,3 +136,14 @@ def test_a_failing_file_reports_the_target_as_partial(tmp_path: Path) -> None:
     process, _ = _run(tmp_path, "round1", FAKE_MYSQL_ERROR="ERROR 1062 (23000) at line 40: Duplicate entry")
     assert process.returncode == 1
     assert "Duplicate entry" in process.stderr and "'taxonomy_latest' is now partial" in process.stderr
+
+
+def test_refuses_a_listed_file_name_that_could_break_the_sql_before_dropping_anything(tmp_path: Path) -> None:
+    folder = _snapshot(tmp_path / "snapshots")
+    (folder / "baseline" / "tags.sql").rename(folder / "baseline" / "o'connor.sql")
+    text = (folder / "enriched.yaml").read_text(encoding="utf-8")
+    (folder / "enriched.yaml").write_text(text.replace("baseline/tags.sql", "baseline/o'connor.sql"), encoding="utf-8")
+
+    process, session = _run(tmp_path, "round1")
+    assert process.returncode == 1 and "unsupported file name 'baseline/o'connor.sql'" in process.stderr
+    assert session == ""

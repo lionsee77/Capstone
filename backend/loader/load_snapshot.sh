@@ -90,6 +90,11 @@ if [ "$(tail -n 1 "$WORK/order")" != "additions.sql" ]; then
     exit 1
 fi
 while IFS= read -r file; do
+    # Each path is echoed inside a SQL string as a progress line; only plain names get there.
+    if ! printf '%s' "$file" | grep -Eq '^[A-Za-z0-9._/-]+$'; then
+        echo "$DIR/enriched.yaml lists unsupported file name '$file': use letters, digits, '.', '_', '-' and '/'" >&2
+        exit 1
+    fi
     if [ ! -f "$DIR/$file" ]; then
         echo "$DIR/enriched.yaml lists $file, which is missing" >&2
         exit 1
