@@ -30,7 +30,7 @@ class LinkedReview(BaseModel):
     represent unavailable evidence rather than attributing review to the integrator.
     """
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", frozen=True)
 
     decision_id: Text
     decision: dict[str, Any]
@@ -42,7 +42,7 @@ class LinkedReview(BaseModel):
 class ChangeEvent(BaseModel):
     """One immutable fact; corrections are new events, never edits of this record."""
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", frozen=True)
 
     event_id: Text = Field(default_factory=lambda: str(uuid4()))
     operation_id: Text
@@ -86,7 +86,7 @@ class ChangeEvent(BaseModel):
 class ChangeQuery(BaseModel):
     """The same validated filters apply to CLI and HTTP queries."""
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", frozen=True)
 
     dataset: Text | None = None
     snapshot_id: Text | None = None

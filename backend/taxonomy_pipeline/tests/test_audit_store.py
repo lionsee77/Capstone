@@ -3,13 +3,14 @@ from __future__ import annotations
 
 import sqlite3
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import closing
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, get_args
 
 import pytest
 
-from taxonomy_pipeline.audit import ChangeQuery, log_change, log_changes, read_changes
+from taxonomy_pipeline.audit import ChangeQuery, log_change, log_changes, read_changes, store
 from taxonomy_pipeline.audit.models import ChangeAction, ChangeEvent
 
 
@@ -93,4 +94,77 @@ def test_reading_missing_history_does_not_write(isolated_db: Path) -> None:
         connection.execute("CREATE TABLE legacy_runs (id TEXT)")
     before = isolated_db.read_bytes()
     assert read_changes(ChangeQuery()).total == 0
+    assert isolated_db.read_bytes() == before
+
+
+# Each database initializes once; later batches use its persistent marker without executing DDL.
+def test_schema_initialization_is_per_database_and_not_per_write(
+    audit_event: ChangeEvent, isolated_db: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    statements: list[str] = []
+    connect = sqlite3.connect
+
+    # Observe SQL without changing transaction or connection behavior.
+    def traced_connect(*args: Any, **kwargs: Any) -> sqlite3.Connection:
+        connection = connect(*args, **kwargs)
+        connection.set_trace_callback(statements.append)
+        return connection
+
+    monkeypatch.setattr(store.sqlite3, "connect", traced_connect)
+    assert log_change(audit_event) == 1
+    assert any("CREATE TABLE IF NOT EXISTS taxonomy_change_log" in statement for statement in statements)
+    statements.clear()
+    assert log_change(audit_event.model_copy(update={"event_id": "second"})) == 1
+    assert not any(statement.lstrip().upper().startswith(("CREATE", "ALTER")) for statement in statements)
+    with closing(sqlite3.connect(isolated_db)) as connection:
+        assert connection.execute("SELECT version FROM taxonomy_audit_schema").fetchone() == (1,)
+    statements.clear()
+    assert log_change(audit_event, db_path=tmp_path / "another.sqlite3") == 1
+    assert any("CREATE TABLE IF NOT EXISTS taxonomy_change_log" in statement for statement in statements)
+    # Replacing a database at the same path must not be mistaken for an initialized cached connection.
+    isolated_db.unlink()
+    assert log_change(audit_event) == 1
+    assert read_changes(ChangeQuery()).total == 1
+
+
+# Adopting pre-versioning audit tables preserves their payloads and coexisting run-history data.
+def test_existing_audit_database_is_versioned_without_rewriting_history(
+    audit_event: ChangeEvent, isolated_db: Path,
+) -> None:
+    with sqlite3.connect(isolated_db) as connection:
+        connection.executescript(store.SCHEMA)
+        connection.execute("CREATE TABLE legacy_runs (id TEXT)")
+        connection.execute("INSERT INTO legacy_runs VALUES ('run1')")
+        assert log_change(audit_event, connection=connection) == 1
+        original = connection.execute("SELECT * FROM taxonomy_change_log").fetchall()
+    assert log_change(audit_event) == 0
+    with sqlite3.connect(isolated_db) as connection:
+        assert connection.execute("SELECT * FROM taxonomy_change_log").fetchall() == original
+        assert connection.execute("SELECT * FROM legacy_runs").fetchall() == [("run1",)]
+        assert connection.execute("SELECT version FROM taxonomy_audit_schema").fetchone() == (1,)
+
+
+# Interrupted schema initialization rolls back its DDL and can be retried without a partial marker.
+def test_schema_initialization_failure_rolls_back_and_can_be_retried(
+    audit_event: ChangeEvent, isolated_db: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    with monkeypatch.context() as patch:
+        patch.setattr(store, "SCHEMA", store.SCHEMA + "CREATE TABLE unfinished (")
+        with pytest.raises(ValueError, match="Incomplete audit schema"):
+            log_change(audit_event)
+    with sqlite3.connect(isolated_db) as connection:
+        assert connection.execute("SELECT name FROM sqlite_master WHERE name LIKE 'taxonomy_%'").fetchall() == []
+    assert log_change(audit_event) == 1
+
+
+# An older application must not silently write to a database using an unsupported audit schema.
+def test_future_schema_version_is_rejected_without_changing_events(
+    audit_event: ChangeEvent, isolated_db: Path,
+) -> None:
+    log_change(audit_event)
+    with sqlite3.connect(isolated_db) as connection:
+        connection.execute("UPDATE taxonomy_audit_schema SET version = 2")
+    before = isolated_db.read_bytes()
+    with pytest.raises(ValueError, match="Unsupported audit schema version 2"):
+        log_change(audit_event.model_copy(update={"event_id": "new"}))
     assert isolated_db.read_bytes() == before

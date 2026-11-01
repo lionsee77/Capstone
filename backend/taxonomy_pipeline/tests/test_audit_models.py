@@ -4,7 +4,7 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from taxonomy_pipeline.audit import ChangeEvent, ChangeQuery
+from taxonomy_pipeline.audit import ChangeEvent, ChangeQuery, LinkedReview
 
 
 @pytest.mark.parametrize("fields", [
@@ -26,3 +26,12 @@ def test_rejects_incomplete_or_misleading_events(audit_event: ChangeEvent, field
 def test_rejects_invalid_history_filters(fields: dict) -> None:
     with pytest.raises(ValidationError):
         ChangeQuery(**fields)
+
+
+# Validated models reject field reassignment before unvalidated values can reach internal adapters.
+def test_validated_audit_models_reject_field_reassignment(audit_event: ChangeEvent) -> None:
+    review = LinkedReview(decision_id="d1", decision={"action": "create"})
+    for model, field, value in ((audit_event, "actor", " "), (ChangeQuery(), "limit", -1),
+                                (review, "actor", " ")):
+        with pytest.raises(ValidationError, match="frozen"):
+            setattr(model, field, value)

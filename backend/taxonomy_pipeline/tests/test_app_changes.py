@@ -51,3 +51,14 @@ def test_sync_replays_older_events_after_a_defaulted_field_is_added(
     with sqlite3.connect(isolated_db) as connection:
         assert connection.execute("SELECT * FROM taxonomy_change_log").fetchall() == original_rows
     assert path.read_text(encoding="utf-8") == original_file
+
+
+# Removing internal model round trips must not weaken validation of external event files.
+def test_invalid_saved_event_is_rejected_before_database_initialization(
+    audit_event: ChangeEvent, tmp_path: Path, isolated_db: Path,
+) -> None:
+    path = tmp_path / "invalid-events.json"
+    path.write_text(json.dumps([audit_event.model_dump(mode="json") | {"actor": " "}]), encoding="utf-8")
+    with pytest.raises(ValueError):
+        sync_changes(path)
+    assert not isolated_db.exists()

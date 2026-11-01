@@ -531,6 +531,15 @@ Concept IDs are strings and are scoped by dataset, snapshot and level; an unreso
 proposal/source tag has a stable `concept_ref` and no fabricated numeric ID.
 `proposal_namespace=pipeline` identifies today's references, not foreign keys to
 an assumed client table. A future client adapter can use its own namespace.
+The first writer initializes the audit schema transactionally and records its
+version in `taxonomy_audit_schema`, independently of run history. Later writers
+check that marker instead of rerunning DDL; concurrent first writers recheck it
+under the SQLite writer lock. Existing unversioned audit databases are adopted
+without rewriting events. History reads never initialize or migrate either table.
+External JSON and request inputs are validated at their boundaries; internal
+writers and readers accept validated models directly. Event, linked-review and
+query model fields are frozen against reassignment. Callers must treat their nested
+collections as immutable too, and construct a new validated model for changed data.
 
 All writers call `audit.log_change()` (operations batch it through `log_changes()`)
 and support `add`, `remove`, `merge`, `synonym_add`, `synonym_remove`, `deprecate`,

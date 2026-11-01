@@ -37,6 +37,45 @@ BEGIN SELECT RAISE(ABORT, 'audit history is append-only'); END;
 CREATE TRIGGER IF NOT EXISTS change_no_delete BEFORE DELETE ON taxonomy_change_log
 BEGIN SELECT RAISE(ABORT, 'audit history is append-only'); END;
 """
+SCHEMA_VERSION = 1
+
+
+# Read the audit context's own version without claiming the shared database's global user_version.
+def _schema_version(connection: sqlite3.Connection) -> int:
+    if not connection.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='taxonomy_audit_schema'",
+    ).fetchone():
+        return 0
+    row = connection.execute("SELECT version FROM taxonomy_audit_schema WHERE singleton = 1").fetchone()
+    return row[0] if row else 0
+
+
+# Initialize an unversioned database once under a writer lock, including existing audit-only databases.
+def _ensure_schema(connection: sqlite3.Connection) -> None:
+    version = _schema_version(connection)
+    if version == SCHEMA_VERSION:
+        return
+    with connection:
+        connection.execute("BEGIN IMMEDIATE")
+        version = _schema_version(connection)
+        if version == SCHEMA_VERSION:
+            return
+        if version != 0:
+            raise ValueError(f"Unsupported audit schema version {version}; expected {SCHEMA_VERSION}")
+        # execute preserves this transaction; executescript would commit before running the schema.
+        statement = ""
+        for line in SCHEMA.splitlines(keepends=True):
+            statement += line
+            if sqlite3.complete_statement(statement):
+                connection.execute(statement)
+                statement = ""
+        if statement.strip():
+            raise ValueError("Incomplete audit schema statement")
+        connection.execute(
+            "CREATE TABLE IF NOT EXISTS taxonomy_audit_schema "
+            "(singleton INTEGER PRIMARY KEY CHECK (singleton = 1), version INTEGER NOT NULL)",
+        )
+        connection.execute("INSERT INTO taxonomy_audit_schema (singleton, version) VALUES (1, ?)", (SCHEMA_VERSION,))
 
 
 # Insert one validated event through the shared writer, optionally in an operation's transaction.
@@ -45,7 +84,6 @@ def log_change(
 ) -> int:
     if connection is None:
         return log_changes([event], db_path=db_path)
-    event = ChangeEvent.model_validate_json(event.model_dump_json())
     payload = json.dumps(event.model_dump(mode="json"), sort_keys=True, ensure_ascii=False)
     existing = connection.execute("SELECT payload FROM taxonomy_change_log WHERE event_id = ?", (event.event_id,))
     row = existing.fetchone()
@@ -68,7 +106,7 @@ def log_changes(events: Sequence[ChangeEvent], *, db_path: Path | str | None = N
     path = Path(db_path or db.DEFAULT_DB_PATH)
     path.parent.mkdir(parents=True, exist_ok=True)
     with closing(sqlite3.connect(path, timeout=30)) as connection:
-        connection.executescript(SCHEMA)
+        _ensure_schema(connection)
         with connection:
             connection.execute("BEGIN IMMEDIATE")
             return sum(log_change(event, connection=connection) for event in events)
@@ -76,7 +114,6 @@ def log_changes(events: Sequence[ChangeEvent], *, db_path: Path | str | None = N
 
 # Read history using SQLite read-only mode without creating a database or loading taxonomy files.
 def read_changes(query: ChangeQuery, *, db_path: Path | str | None = None) -> ChangeHistory:
-    query = ChangeQuery.model_validate(query.model_dump())
     result = ChangeHistory(total=0, offset=query.offset, limit=query.limit, changes=[])
     path = Path(db_path or db.DEFAULT_DB_PATH).resolve()
     if not path.exists():
