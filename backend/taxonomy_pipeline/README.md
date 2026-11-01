@@ -619,6 +619,13 @@ Date bounds are inclusive ISO timestamps with an explicit timezone (e.g. `Z`).
 `total`, `offset`, `limit` and `changes`, ordered oldest first by UTC time then event
 ID. Follow all pages to see every change for a proposal. A decision reference lets
 you follow source-tag reviews that do not have a hierarchy proposal ID.
+`concept_id` alone is a broad search, not a unique concept lookup: IDs can be
+reused across datasets, levels and snapshots. For one concept's history, supply
+`dataset`, `snapshot_id` and `concept_level` together with `concept_id`. Review
+events use the baseline snapshot and any existing target ID; addition events use
+the enriched snapshot and its allocated ID. Omitting the snapshot filter can mix
+unrelated concepts with the same numeric ID. To follow a decision across snapshots,
+use `decision_id` or `proposal_id` rather than assuming the numeric ID is stable.
 New snapshot additions also carry `linked_reviews`: the originating decision
 payloads, decision IDs, review event IDs, original reviewers and timestamps. Thus
 a concept-ID query returns the reasons and reviewers that led to that addition;
@@ -634,10 +641,12 @@ approved-parent attribution remain deterministic.
 
 ```bash
 taxonomy-pipeline changes --proposal-id <proposal-id> --limit 200
-taxonomy-pipeline changes --dataset original --concept-level category --concept-id 42
+taxonomy-pipeline changes --dataset original --snapshot-id <snapshot-id> --concept-level category --concept-id 42
 taxonomy-pipeline changes --action add --since 2026-10-30T00:00:00Z
 curl -H "Authorization: Bearer $TAXONOMY_API_TOKEN" \
     'http://localhost:8000/changes?proposal_id=<proposal-id>&limit=200'
+curl -H "Authorization: Bearer $TAXONOMY_API_TOKEN" \
+    'http://localhost:8000/changes?dataset=original&snapshot_id=<snapshot-id>&concept_level=category&concept_id=42'
 ```
 
 Queries open SQLite with `mode=ro`, never load or write taxonomy files, and do not
