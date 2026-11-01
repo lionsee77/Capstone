@@ -16,8 +16,10 @@ Vitest · bun.
 
 PB09 audit response contracts (`changeEventSchema`, `changeHistorySchema`) mirror
 the backend's `audit/models.py`, including snapshot-scoped concept IDs, proposal
-references and review-versus-snapshot scope. The existing review event schema also
-accepts the self-reported `actor` field (default `unspecified` for old records).
+references and review-versus-snapshot scope. Additions' `linked_reviews` retain the original decision, reviewer,
+timestamp and event references separately from the integration actor. Older events
+default to an empty list; unavailable legacy reviewer/time values are null.
+The review event schema accepts the self-reported `actor` field (default `unspecified` for old records).
 Audit history is currently available through the backend `GET /changes` and CLI;
 no dashboard history screen or proxy route is added here.
 

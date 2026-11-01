@@ -599,6 +599,14 @@ Date bounds are inclusive ISO timestamps with an explicit timezone (e.g. `Z`).
 `total`, `offset`, `limit` and `changes`, ordered oldest first by UTC time then event
 ID. Follow all pages to see every change for a proposal. A decision reference lets
 you follow source-tag reviews that do not have a hierarchy proposal ID.
+New snapshot additions also carry `linked_reviews`: the originating decision
+payloads, decision IDs, review event IDs, original reviewers and timestamps. Thus
+a concept-ID query returns the reasons and reviewers that led to that addition;
+the addition's own `actor` continues to identify the integrator. Integration reads
+the merge run's saved `audit_events.json`, independently of SQLite availability,
+and never updates earlier review records. Legacy resolutions without that evidence
+retain their decision payloads with null reviewer/time and empty review-event IDs.
+Previously saved additions remain unchanged and default to empty `linked_reviews`.
 
 ```bash
 taxonomy-pipeline changes --proposal-id <proposal-id> --limit 200

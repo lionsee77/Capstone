@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from ..config import load_config
+from ..enrichment.audit import EVENTS
 from ..enrichment.bulk_decisions import BulkDraft, draft_decisions
 from ..enrichment.case_a import run_case_a
 from ..enrichment.case_b import run_case_b
@@ -149,12 +150,15 @@ def integrate(
     dataset = next((d for d in config.datasets if d.name == baseline), None)
     if dataset is None:
         raise IntegrationError(f"{config_path} declares no dataset named {baseline!r}")
+    events_path = merge_run / "audit_events.json"
+    review_events = EVENTS.validate_json(events_path.read_bytes()) if events_path.exists() else []
     result = integrate_snapshot(
         resolution, dataset, out_dir=out_dir or _timestamped("integrations"), scoring_config=config, actor=actor,
         provenance={
             "merge_run": str(merge_run), "scoring_config": str(config_path),
             **(info.model_dump(exclude_unset=True) if info else {}),
         },
+        review_events=review_events,
     )
     warnings = []
     if result.audit_delivery_error:

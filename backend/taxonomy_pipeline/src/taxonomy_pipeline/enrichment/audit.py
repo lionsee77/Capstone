@@ -16,7 +16,7 @@ from typing import Any
 
 from pydantic import TypeAdapter
 
-from ..audit import ChangeEvent, log_changes
+from ..audit import ChangeEvent, LinkedReview, log_changes
 from .models import ResolutionReport, ReviewDecision, ReviewDecisionEvent
 
 EVENTS = TypeAdapter(list[ChangeEvent])
@@ -118,8 +118,10 @@ def _related_paths(
 def integration_events(
     resolution: ResolutionReport, additions: dict[str, list[dict[str, Any]]], id_map: dict[str, int],
     manifest: dict[str, Any], *, operation_id: str, actor: str,
+    review_events: Sequence[ChangeEvent] = (),
 ) -> list[ChangeEvent]:
     proposals = resolution.screening.proposals if resolution.screening else []
+    reviews = linked_review_evidence(resolution, review_events)
     events = []
     for table, rows in additions.items():
         level = {"categories": "category", "specialities": "speciality", "tags": "tag",
@@ -151,6 +153,38 @@ def integration_events(
                 actor=actor, occurred_at=datetime.fromisoformat(manifest["created_at"]),
                 proposal_ids=sorted(proposal_ids),
                 decision_ids=[decision_reference(resolution.baseline_snapshot_id, d) for d in decisions],
+                linked_reviews=[review for d in decisions
+                                for review in reviews[decision_reference(resolution.baseline_snapshot_id, d)]],
                 scope="snapshot",
             ))
     return events
+
+
+# Group original submissions by decision while preserving unknown attribution for legacy artifacts.
+def linked_review_evidence(
+    resolution: ResolutionReport, review_events: Sequence[ChangeEvent],
+) -> dict[str, list[LinkedReview]]:
+    submitted: dict[str, dict[str, list[ChangeEvent]]] = {}
+    for event in review_events:
+        if (event.action != "review_decision" or event.dataset != resolution.evidence.taxonomy
+                or event.snapshot_id != resolution.baseline_snapshot_id):
+            continue
+        for reference in event.decision_ids:
+            submitted.setdefault(reference, {}).setdefault(event.operation_id, []).append(event)
+    result = {}
+    for decision in resolution.decisions:
+        reference = decision_reference(resolution.baseline_snapshot_id, decision)
+        payload = decision.model_dump(mode="json")
+        reviews = []
+        for entries in submitted.get(reference, {}).values():
+            if any(entry.decision != payload for entry in entries):
+                raise ValueError(f"Saved review evidence conflicts with decision {reference}")
+            first = entries[0]
+            if any((entry.actor, entry.occurred_at) != (first.actor, first.occurred_at) for entry in entries):
+                raise ValueError(f"Saved review attribution conflicts for decision {reference}")
+            reviews.append(LinkedReview(
+                decision_id=reference, decision=payload, actor=first.actor, occurred_at=first.occurred_at,
+                review_event_ids=sorted({entry.event_id for entry in entries}),
+            ))
+        result[reference] = reviews or [LinkedReview(decision_id=reference, decision=payload)]
+    return result

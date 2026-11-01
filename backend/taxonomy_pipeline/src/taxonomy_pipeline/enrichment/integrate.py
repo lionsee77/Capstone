@@ -28,6 +28,7 @@ import json
 import os
 import shutil
 import tempfile
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -36,6 +37,7 @@ from uuid import uuid4
 
 import yaml
 
+from ..audit import ChangeEvent
 from ..config import DatasetConfig, PipelineConfig
 from ..matching.names import collation_key
 from ..quality.integrity import IntegrityMetric
@@ -97,6 +99,7 @@ def integrate(
     provenance: dict[str, Any] | None = None,
     scoring_config: PipelineConfig | None = None,
     actor: str = "unspecified",
+    review_events: Sequence[ChangeEvent] = (),
 ) -> Integration:
     """Write the enriched snapshot for a fully reviewed merge run.
 
@@ -146,7 +149,10 @@ def integrate(
         )
         manifest["exact_duplicate_rows"] = duplicates
         operation_id = str(uuid4())
-        events = integration_events(resolution, additions, id_map, manifest, operation_id=operation_id, actor=actor)
+        events = integration_events(
+            resolution, additions, id_map, manifest, operation_id=operation_id, actor=actor,
+            review_events=review_events,
+        )
         manifest["audit"] = {"operation_id": operation_id, "events_file": "audit_events.json"}
         (staging / "audit_events.json").write_bytes(EVENTS.dump_json(events, indent=2))
         (staging / "manifest.json").write_text(json.dumps(manifest, indent=2, ensure_ascii=False), encoding="utf-8")

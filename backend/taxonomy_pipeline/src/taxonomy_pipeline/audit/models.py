@@ -9,7 +9,7 @@ from datetime import UTC, datetime
 from typing import Annotated, Any, Literal, Self
 from uuid import uuid4
 
-from pydantic import BaseModel, ConfigDict, Field, StringConstraints, field_validator, model_validator
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, StringConstraints, field_validator, model_validator
 
 Text = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
 ChangeAction = Literal[
@@ -21,6 +21,22 @@ ChangeLevel = Literal["service", "category", "speciality", "tag", "speciality_ta
 # Supply UTC timestamps for callers that do not already have a durable operation timestamp.
 def utc_now() -> datetime:
     return datetime.now(UTC)
+
+
+class LinkedReview(BaseModel):
+    """Originating review evidence carried by an addition without rewriting earlier review events.
+
+    Legacy resolutions may lack submission artifacts; null actor/time explicitly
+    represent unavailable evidence rather than attributing review to the integrator.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    decision_id: Text
+    decision: dict[str, Any]
+    review_event_ids: list[Text] = Field(default_factory=list)
+    actor: Text | None = None
+    occurred_at: AwareDatetime | None = None
 
 
 class ChangeEvent(BaseModel):
@@ -46,6 +62,7 @@ class ChangeEvent(BaseModel):
     proposal_namespace: Text = "pipeline"
     decision_ids: list[Text] = Field(default_factory=list)
     decision: dict[str, Any] | None = None
+    linked_reviews: list[LinkedReview] = Field(default_factory=list)
     scope: Literal["review", "snapshot", "live"]
 
     @field_validator("occurred_at")

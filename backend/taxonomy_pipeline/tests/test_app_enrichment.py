@@ -79,7 +79,7 @@ def test_integrate_returns_its_warnings_and_records_the_merge_run_as_provenance(
     seen = {}
 
     # Supply an integration result with independent taxonomy and audit delivery concerns.
-    def fake_integrate(resolution, dataset, *, out_dir, scoring_config, provenance, actor):
+    def fake_integrate(resolution, dataset, *, out_dir, scoring_config, provenance, actor, review_events):
         seen.update(dataset=dataset.name, provenance=provenance, scoring=scoring_config.metrics[0].id)
         return Integration(out_dir=Path(out_dir), manifest={
             "counts": {}, "omitted_records": {"invalid": 2},

@@ -6,8 +6,11 @@ import sqlite3
 from pathlib import Path
 
 import pytest
+from fastapi.testclient import TestClient
 
+from taxonomy_pipeline.api.app import app
 from taxonomy_pipeline.app.changes import sync_changes
+from taxonomy_pipeline.app.enrichment import integrate as integrate_use_case
 from taxonomy_pipeline.app.scoring import load_datasets
 from taxonomy_pipeline.audit import ChangeEvent, ChangeQuery, read_changes
 from taxonomy_pipeline.config import DatasetConfig, MetricConfig, PipelineConfig, load_config
@@ -62,13 +65,16 @@ def _decisions(*, merge_homonyms: bool = True) -> list[ReviewDecision]:
     return [d for d in decisions if d not in pythons] + [combined]
 
 
+# Build a saved reviewed merge run with optional reviewer attribution for integration tests.
 def _resolution(
     tmp_path: Path, baseline: DatasetConfig, *, decisions: list[ReviewDecision] | None = None,
+    actor: str = "unspecified",
 ) -> ResolutionReport:
     taxonomy = SqlDumpSource(baseline.name, baseline.paths).load()
     run = run_merge_preview(
         PRODUCER_FILES, taxonomy, out_dir=tmp_path / "merge",
         decisions=_decisions() if decisions is None else decisions,
+        actor=actor,
     )
     return ResolutionReport.model_validate_json((run.out_dir / "resolution.json").read_text(encoding="utf-8"))
 
@@ -159,6 +165,57 @@ def test_new_hierarchy_rows_keep_proposal_lineage(tmp_path: Path, baseline: Data
     assert by_level["category"].proposal_ids == [proposals["category"]]
     assert set(by_level["speciality"].proposal_ids) == set(proposals.values())
     assert set(by_level["speciality_tag"].proposal_ids) == set(proposals.values())
+
+
+# A concept lookup exposes original reviewers without changing historical review rows or taxonomy artifacts.
+def test_concept_history_carries_original_reviews_and_keeps_the_integrator_separate(
+    tmp_path: Path, baseline: DatasetConfig, isolated_db: Path,
+) -> None:
+    _resolution(tmp_path, baseline, actor="Original reviewer")
+    reviews = read_changes(ChangeQuery(action="review_decision", limit=200))
+    config = tmp_path / "config.yaml"
+    config.write_text(PipelineConfig(datasets=[baseline], metrics=[]).model_dump_json(), encoding="utf-8")
+    result = integrate_use_case(config, tmp_path / "merge", baseline=baseline.name,
+                                out_dir=tmp_path / "out", actor="Integrator")
+    additions = read_changes(ChangeQuery(action="add", concept_level="tag")).changes
+    tag = next(event for event in additions if event.decision_ids)
+    before = {path: path.read_bytes() for path in result.integration.out_dir.rglob("*") if path.is_file()}
+    before[isolated_db] = isolated_db.read_bytes()
+    with TestClient(app) as client:
+        response = client.get("/changes", params={
+            "dataset": baseline.name, "snapshot_id": tag.snapshot_id, "concept_level": "tag",
+            "concept_id": tag.concept_id,
+        })
+    assert response.status_code == 200
+    assert response.json()["total"] == 1
+    event = ChangeEvent.model_validate(response.json()["changes"][0])
+    assert event.actor == "Integrator"
+    assert event.linked_reviews
+    originals = {review.event_id: review for review in reviews.changes}
+    for linked in event.linked_reviews:
+        assert linked.actor == "Original reviewer"
+        assert linked.decision_id in event.decision_ids
+        assert linked.review_event_ids
+        for event_id in linked.review_event_ids:
+            assert linked.decision == originals[event_id].decision
+            assert linked.occurred_at == originals[event_id].occurred_at
+    assert read_changes(ChangeQuery(action="review_decision", limit=200)) == reviews
+    assert {path: path.read_bytes() for path in before} == before
+    assert sync_changes(result.integration.out_dir / "audit_events.json") == 0
+
+
+# Legacy input retains the decision but does not invent a reviewer or review timestamp.
+def test_legacy_integration_preserves_decisions_with_unknown_review_attribution(
+    tmp_path: Path, baseline: DatasetConfig,
+) -> None:
+    resolution = _resolution(tmp_path, baseline)
+    integrate(resolution, baseline, out_dir=tmp_path / "out", actor="Integrator")
+    events = read_changes(ChangeQuery(action="add", limit=200)).changes
+    linked = [review for event in events for review in event.linked_reviews]
+    assert linked
+    assert all(review.actor is None and review.occurred_at is None and not review.review_event_ids for review in linked)
+    assert all(review.decision in [decision.model_dump(mode="json") for decision in resolution.decisions]
+               for review in linked)
 
 
 @pytest.mark.parametrize("delivery_error", [
