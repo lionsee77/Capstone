@@ -9,6 +9,7 @@ from __future__ import annotations
 import hashlib
 import json
 import sqlite3
+from collections.abc import Sequence
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -50,7 +51,7 @@ def decision_reference(baseline: str, decision: ReviewDecision) -> str:
 
 # Persist a complete retryable event file before delivering it to SQLite.
 def record_review_changes(
-    resolution: ResolutionReport, legacy_log: Path, out_dir: Path,
+    resolution: ResolutionReport, entries: Sequence[ReviewDecisionEvent], out_dir: Path,
 ) -> None:
     if not resolution.decisions:
         return
@@ -59,10 +60,7 @@ def record_review_changes(
     submitted = {decision_reference(resolution.baseline_snapshot_id, d) for d in resolution.decisions}
     path = out_dir / "audit_events.json"
     accumulated = {e.event_id: e for e in EVENTS.validate_json(path.read_bytes())} if path.exists() else {}
-    for line in legacy_log.read_text(encoding="utf-8").splitlines():
-        if not line.strip():
-            continue
-        entry = ReviewDecisionEvent.model_validate_json(line)
+    for entry in entries:
         reference = decision_reference(entry.baseline_snapshot_id, entry.decision)
         if entry.baseline_snapshot_id != resolution.baseline_snapshot_id or reference not in submitted:
             continue

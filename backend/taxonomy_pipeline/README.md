@@ -552,6 +552,8 @@ Connected operations:
   JSONL replay semantics are retained: an identical decision already in that log
   for that baseline is not a new submission, even if `--actor` changes. A different
   reason/action is new. A new independent output/log is a separate submission.
+  The shared JSONL is parsed once per submission; retained entries are passed to
+  audit delivery too, so a replay can recover previously undelivered decisions.
 - `integrate --actor NAME` records every added category, speciality, tag and
   speciality-tag link after the verified snapshot has been published. Events use
   real assigned IDs, the enriched snapshot fingerprint, proposal/decision lineage

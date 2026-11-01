@@ -159,11 +159,10 @@ def run_merge_preview(
     )
     # json.dumps, not model_dump_json, so run.json keeps its existing formatting (ASCII-escaped).
     (out_dir / "run.json").write_text(json.dumps(run_info.model_dump(), indent=2), encoding="utf-8")
-    append_review_decisions(
-        Path(change_log) if change_log else out_dir / "change_log.jsonl", resolution.decisions,
+    log_path = Path(change_log) if change_log else out_dir / "change_log.jsonl"
+    _, entries = append_review_decisions(
+        log_path, resolution.decisions,
         baseline_snapshot_id=resolution.baseline_snapshot_id, actor=actor,
     )
-    record_review_changes(
-        resolution, Path(change_log) if change_log else out_dir / "change_log.jsonl", out_dir,
-    )
+    record_review_changes(resolution, entries, out_dir)
     return MergeRun(out_dir=out_dir, validation=validation, preview=preview, warnings=warnings)
