@@ -576,6 +576,13 @@ Connected operations:
   or writing artifacts, including operations that produce no audit events. Event
   models retain their own constraints for constructed or loaded evidence.
 
+Actor attribution is currently exposed through the CLI's `--actor` option (or
+the Python use cases' `actor` argument). The API/dashboard can read proposals
+and change history but has no review-submission or integration route and no
+actor input. The shared API token authorizes access; it does not identify an
+individual reviewer. Calls to the use cases that omit `actor` are recorded as
+`unspecified`. Authenticated attribution from the dashboard remains future work.
+
 Each reviewed merge run and integration retains `audit_events.json` as a durable
 delivery record. Integration's manifest identifies its audit operation and file.
 Filesystem publication and SQLite cannot share a transaction: if SQLite delivery
