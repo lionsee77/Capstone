@@ -51,8 +51,8 @@ def import_source(
     mapping = load_mapping(mapping_path)
     rows = read_rows(mapping)
     taxonomy = build_flat_taxonomy(rows, mapping)
-    if not taxonomy.tables["speciality_tags"]:
-        raise ValueError(f"{mapping.source}: no row has a category, speciality and tag after filtering")
+    if not taxonomy.tables["tags"]:
+        raise ValueError(f"{mapping.source}: no row has a tag after filtering")
 
     round_path = None
     if baseline_snapshot is not None:
@@ -78,15 +78,19 @@ def import_source(
 
     warnings = []
     if taxonomy.skipped_rows:
-        warnings.append(f"skipped {taxonomy.skipped_rows} row(s) missing a category, speciality, tag or service")
+        warnings.append(f"skipped {taxonomy.skipped_rows} row(s) missing a tag")
+    linked_ids = {link["tag_id"] for link in taxonomy.tables["speciality_tags"]}
+    parentless = sum(tag["id"] not in linked_ids for tag in taxonomy.tables["tags"])
+    if parentless:
+        warnings.append(f"retained {parentless} tag(s) without complete parent paths for Case B; check source data")
     if taxonomy.merged_tags:
         sample = "; ".join(f"{kept!r} <- {others}" for kept, others in list(taxonomy.merged_tags.items())[:5])
         warnings.append(f"merged {len(taxonomy.merged_tags)} tag(s) whose spellings MySQL treats as one name "
                         f"(case/accents): {sample}")
     unlabelled = unlabelled_prefixes(rows, mapping)
     if unlabelled:
-        warnings.append(f"no label for code prefix(es) {unlabelled}; their rows were skipped (check `prefix` and "
-                        "the labels file)")
+        warnings.append(f"no label for code prefix(es) {unlabelled} (check `prefix` and "
+                        "the labels file); their tags were retained without those parent links")
     if mapping.columns.tag_description is not None:
         undescribed = len(taxonomy.tables["tags"]) - len(taxonomy.tag_context)
         if undescribed:

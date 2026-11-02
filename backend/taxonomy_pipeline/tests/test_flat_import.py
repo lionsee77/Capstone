@@ -93,19 +93,54 @@ def test_ids_follow_sorted_names_so_row_order_does_not_change_them(tmp_path: Pat
     assert forward.tables == backward.tables
 
 
-def test_skips_and_counts_rows_missing_a_level_or_a_numeric_service(tmp_path: Path) -> None:
+def test_retains_tags_with_missing_parents_but_skips_rows_without_tags(tmp_path: Path) -> None:
     rows = [*ROWS, ["", "Orphan Role", "Skill", "", "y"], ["ICT", "Data Analyst", "", "", "y"]]
     taxonomy = _build(_mapping(_csv(tmp_path, rows)))
-    assert taxonomy.skipped_rows == 2
+    assert taxonomy.skipped_rows == 1
+    assert "Skill" in {row["name"] for row in taxonomy.tables["tags"]}
+    assert "Orphan Role" not in {row["name"] for row in taxonomy.tables["specialities"]}
 
     by_column = _build(_mapping(_csv(tmp_path, ROWS), service_id=None, service_column="Keep"))
-    assert by_column.skipped_rows == len(ROWS) and not by_column.tables["categories"]
+    assert by_column.skipped_rows == 0 and not by_column.tables["categories"]
+    assert len(by_column.tables["tags"]) == 3
+    assert not by_column.tables["speciality_tags"]
 
 
 def test_a_missing_column_is_reported_with_the_headers_the_file_has(tmp_path: Path) -> None:
     mapping = _mapping(_csv(tmp_path), columns={"category": "Sector", "speciality": "Job", "tag": "Skill"})
     with pytest.raises(ValueError, match=r"no column\(s\) \['Job'\]; its headers are \['Sector', 'Role'"):
         read_rows(mapping)
+
+
+def test_parentless_tags_keep_context_and_round_trip_without_empty_parents(tmp_path: Path) -> None:
+    from taxonomy_pipeline.matching.engine import SourceParents
+
+    mapping = _mapping(_csv(tmp_path, [
+        ["", "", "Python", "Write code", "y"],
+        ["ICT", "", "SQL", "Query databases", "y"],
+        ["", "Analyst", "Excel", "Spreadsheets", "y"],
+    ]))
+    taxonomy = _build(mapping)
+    assert len(taxonomy.tables["tags"]) == 3
+    assert all(not taxonomy.tables[level] for level in ("categories", "specialities", "speciality_tags"))
+    assert len(taxonomy.tag_context) == 3
+    path = tmp_path / "parentless.sql"
+    path.write_text(dump_sql(taxonomy, mapping), encoding="utf-8")
+    reloaded = SqlDumpSource("demo", [path], mapping.table_map).load()
+    for concept in COLUMNS:
+        assert getattr(reloaded, concept) == taxonomy.tables[concept]
+    parents = SourceParents(reloaded)
+    assert all(parents.classify("tags", [tag])["parent_status"] == "NO_PARENT" for tag in reloaded.tags)
+
+
+def test_tag_seen_with_and_without_parents_is_linked_once(tmp_path: Path) -> None:
+    mapping = _mapping(_csv(tmp_path, [
+        ["", "", "Python", "Write code", "y"],
+        ["ICT", "Developer", "Python", "Write code", "y"],
+    ]))
+    taxonomy = _build(mapping)
+    assert len(taxonomy.tables["tags"]) == 1
+    assert len(taxonomy.tables["speciality_tags"]) == 1
 
 
 def test_mapping_needs_exactly_one_way_to_find_the_service(tmp_path: Path) -> None:
@@ -191,13 +226,16 @@ def test_derives_a_category_from_a_code_prefix_and_a_label_file(tmp_path: Path) 
     assert len(taxonomy.tables["speciality_tags"]) == 2
 
 
-def test_rows_whose_prefix_has_no_label_are_skipped_and_their_prefixes_reported(tmp_path: Path) -> None:
+def test_rows_whose_prefix_has_no_label_keep_their_tags_and_report_the_prefix(tmp_path: Path) -> None:
     mapping = load_mapping(_onet(tmp_path, [
         ["15-2051.00", "Data Scientists", "Python", ""],
         ["99-0000.00", "Unknown", "Excel", ""],
     ]))
     rows = read_rows(mapping)
-    assert build_flat_taxonomy(rows, mapping).skipped_rows == 1
+    taxonomy = build_flat_taxonomy(rows, mapping)
+    assert taxonomy.skipped_rows == 0
+    assert len(taxonomy.tables["tags"]) == 2
+    assert len(taxonomy.tables["speciality_tags"]) == 1
     assert unlabelled_prefixes(rows, mapping) == ["99"]
 
 

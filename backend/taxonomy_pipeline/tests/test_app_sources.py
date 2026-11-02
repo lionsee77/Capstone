@@ -75,18 +75,29 @@ def test_writes_the_dump_and_tag_context_next_to_the_mapping(source: Path) -> No
 
     assert result.sql_path == source.parent / "demo_taxonomy.sql" and result.sql_path.exists()
     assert result.context_path == source.parent / "demo_tag_context.json" and result.context_path.exists()
-    assert result.counts == {"categories": 1, "specialities": 1, "tags": 2, "speciality_tags": 2}
+    assert result.counts == {"categories": 1, "specialities": 1, "tags": 3, "speciality_tags": 2}
     assert result.round_config is None
     assert result.warnings == [
-        "skipped 1 row(s) missing a category, speciality, tag or service",
-        "1 tag(s) have no description; Case B sees only their names",
+        "retained 1 tag(s) without complete parent paths for Case B; check source data",
+        "2 tag(s) have no description; Case B sees only their names",
     ]
 
 
 def test_refuses_a_source_with_no_usable_rows(source: Path) -> None:
-    source.with_name("flat.csv").write_text("Sector,Role,Skill,Desc\n,,Orphan,\n", encoding="utf-8")
-    with pytest.raises(ValueError, match="no row has a category, speciality and tag"):
+    source.with_name("flat.csv").write_text("Sector,Role,Skill,Desc\nICT,Analyst,,\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="no row has a tag"):
         import_source(source)
+
+
+def test_imports_a_source_containing_only_parentless_tags(source: Path) -> None:
+    import json
+
+    source.with_name("flat.csv").write_text("Sector,Role,Skill,Desc\n,,Python,Write code\n", encoding="utf-8")
+    result = import_source(source)
+    assert result.counts == {"categories": 0, "specialities": 0, "tags": 1, "speciality_tags": 0}
+    context = json.loads(result.context_path.read_text())
+    assert context["tags"] == {"3000": {"description": "Write code"}}
+    assert any("without complete parent paths" in warning for warning in result.warnings)
 
 
 def test_round_config_compares_the_source_against_the_snapshot_with_the_templates_metrics(
@@ -100,7 +111,7 @@ def test_round_config_compares_the_source_against_the_snapshot_with_the_template
     assert config.dataset_names() == [ROUND_BASELINE, "demo", "ssic"]
     baseline = load_dataset(config.datasets[0])
     assert [tag["name"] for tag in baseline.tags][-1] == "audit"  # snapshot additions are part of the baseline
-    assert len(load_dataset(config.datasets[1]).tags) == 2
+    assert len(load_dataset(config.datasets[1]).tags) == 3
     assert config.datasets[2].paths == [str((template.parent / "ssic.xlsx").resolve())]
 
     metrics = [(metric.id, metric.params) for metric in config.metrics]

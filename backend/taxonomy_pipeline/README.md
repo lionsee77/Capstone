@@ -935,13 +935,15 @@ taxonomy-pipeline import-source --mapping ../onet/onet_mapping.yaml \
   and "python" become one tag spelled the most common way, with a warning
   listing the merged spellings; otherwise MySQL would refuse the dump. IDs follow sorted names from 1000 / 2000 /
   3000 / 4000 (as in the SkillsFuture dump), so the same input always gives the
-  same IDs. Only what has a link is written: no empty categories or unlinked
-  tags. Rows missing a level are skipped and counted in a warning, as are tags
-  with no description.
+  same IDs. Every non-empty tag is retained, even without a complete parent
+  path. Categories, specialities and links are created only for complete paths;
+  parentless tags and their descriptions remain available for Case B after
+  saturation routing. Missing-tag rows are skipped. Warnings identify parentless
+  tags and missing descriptions so incomplete parent data can be reviewed.
 - A mapped, derived-from or filtered column the file doesn't have fails the
   command, listing the headers it does have. A labels file needs `code` and
-  `label` headers and unique codes. Rows whose code prefix has no label are
-  skipped, and the unlabelled prefixes are named in a warning (usually a wrong
+  `label` headers and unique codes. Rows whose code prefix has no label retain
+  their tags without parent links; the prefixes are named in a warning (usually a wrong
   `prefix` length or an incomplete labels file).
 - With `--baseline-snapshot`, it also writes the round config (`--round-config`,
   default `configs/<snapshot>_vs_<name>.yaml`; it never overwrites one). The

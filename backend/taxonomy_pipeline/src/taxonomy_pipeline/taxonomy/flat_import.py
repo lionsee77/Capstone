@@ -1,4 +1,4 @@
-"""Turn one flat table (CSV or xlsx, one row per speciality-tag link) into a taxonomy SQL dump.
+"""Turn one flat table of tags and optional parent links into a taxonomy SQL dump.
 
 Every source the pipeline compares against has to arrive as a 4-table dump
 (categories, specialities, tags, speciality_tags) that `sql_dump` can load.
@@ -238,8 +238,9 @@ def build_flat_taxonomy(rows: list[dict[str, str]], mapping: SourceMapping) -> F
     `tags.name` (`collation_key`: case- and accent-insensitive), so "Python" and
     "python" are one tag, spelled as its most common form (ties: the first in
     sorted order); otherwise MySQL would refuse the dump. IDs follow sorted
-    names, so the same input always gets the same IDs. Rows missing a category,
-    speciality or tag are skipped and counted.
+    names, so the same input always gets the same IDs. Only rows without a tag
+    are skipped. Incomplete parent paths retain the tag and context without
+    manufacturing empty hierarchy nodes or invalid links.
     """
     keys = {level: column_key(level, spec) for level, spec in mapping.columns.specs().items()}
     links: set[tuple[tuple[int, str], str, str]] = set()
@@ -249,12 +250,13 @@ def build_flat_taxonomy(rows: list[dict[str, str]], mapping: SourceMapping) -> F
     for row in rows:
         category, speciality, tag = row[keys["category"]], row[keys["speciality"]], row[keys["tag"]]
         service = _service_id(row, mapping)
-        if not (category and speciality and tag) or service is None:
+        if not tag:
             skipped += 1
             continue
         tag_key = collation_key(tag)
         spellings.setdefault(tag_key, Counter())[tag] += 1
-        links.add(((service, category), speciality, tag_key))
+        if category and speciality and service is not None:
+            links.add(((service, category), speciality, tag_key))
         description = row.get(keys["tag_description"], "") if "tag_description" in keys else ""
         if description:
             descriptions.setdefault(tag_key, description)
