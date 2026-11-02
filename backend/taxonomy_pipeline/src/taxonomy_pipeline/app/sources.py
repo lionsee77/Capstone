@@ -60,7 +60,9 @@ def import_source(
         round_path = Path(round_config or Path("configs") / f"{snapshot.name}_vs_{mapping.name}.yaml")
         if round_path.exists():
             raise ValueError(f"{round_path} already exists; delete it or pass another --round-config")
-        _template_roles(mapping.name, template_config)  # refuse a clashing name before writing anything
+        # Refuse a non-snapshot or a clashing name before writing anything.
+        _snapshot_config(snapshot)
+        _template_roles(mapping.name, template_config)
 
     out = Path(out_dir) if out_dir is not None else mapping_path.parent
     out.mkdir(parents=True, exist_ok=True)
@@ -116,10 +118,7 @@ def write_round_config(
     template = Path(template) if template is not None else DEFAULT_TEMPLATE
     raw, rename = _template_roles(source_dataset["name"], template)
 
-    snapshot_config = snapshot / "enriched.yaml"
-    if not snapshot_config.exists():
-        raise ValueError(f"{snapshot} is not an integrate snapshot (no enriched.yaml)")
-    enriched = yaml.safe_load(snapshot_config.read_text(encoding="utf-8"))["datasets"][0]
+    enriched = yaml.safe_load(_snapshot_config(snapshot).read_text(encoding="utf-8"))["datasets"][0]
     base_dir = path.parent.resolve()
     datasets = [
         {**enriched, "name": ROUND_BASELINE, "paths": _relative(enriched["paths"], snapshot, base_dir)},
@@ -147,7 +146,18 @@ def write_round_config(
     )
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(header + yaml.safe_dump(config, sort_keys=False, allow_unicode=True), encoding="utf-8")
-    load_config(path)  # fail now, not at `run`, if the result isn't a valid config
+    try:
+        load_config(path)  # fail now, not at `run`, if the result isn't a valid config
+    except Exception:
+        path.unlink()  # else the next run refuses to overwrite a config that never worked
+        raise
+
+
+def _snapshot_config(snapshot: Path) -> Path:
+    path = snapshot / "enriched.yaml"
+    if not path.exists():
+        raise ValueError(f"{snapshot} is not an integrate snapshot (no enriched.yaml)")
+    return path
 
 
 def _template_roles(source: str, template: str | Path | None) -> tuple[dict[str, Any], dict[str, str]]:

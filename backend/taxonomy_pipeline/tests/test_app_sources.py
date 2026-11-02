@@ -160,10 +160,25 @@ def test_refuses_a_source_named_like_a_dataset_the_round_config_keeps(
     assert not source.with_name(f"{name}_taxonomy.sql").exists()
 
 
-def test_refuses_a_folder_that_is_not_an_integrate_snapshot(source: Path, template: Path, tmp_path: Path) -> None:
+def test_refuses_a_folder_that_is_not_an_integrate_snapshot_before_writing_anything(
+    source: Path, template: Path, tmp_path: Path,
+) -> None:
     with pytest.raises(ValueError, match="not an integrate snapshot"):
         import_source(source, baseline_snapshot=tmp_path, template_config=template,
                       round_config=tmp_path / "round.yaml")
+    assert not (tmp_path / "round.yaml").exists()
+    assert not source.with_name("demo_taxonomy.sql").exists()
+
+
+def test_removes_a_round_config_that_fails_validation_so_a_rerun_is_not_blocked(
+    source: Path, snapshot: Path, tmp_path: Path,
+) -> None:
+    template = tmp_path / "bad.yaml"
+    template.write_text(yaml.safe_dump({**TEMPLATE, "metric_definitions_version": 0}), encoding="utf-8")
+    round_path = tmp_path / "round.yaml"
+    with pytest.raises(ValueError, match="metric_definitions_version"):
+        import_source(source, baseline_snapshot=snapshot, template_config=template, round_config=round_path)
+    assert not round_path.exists()
 
 
 def test_refuses_a_template_without_one_saturation_metric(source: Path, snapshot: Path, tmp_path: Path) -> None:

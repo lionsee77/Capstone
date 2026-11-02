@@ -951,6 +951,9 @@ taxonomy-pipeline import-source --mapping ../onet/onet_mapping.yaml \
   and its incoming source(s) to the new one. Each judge `cache` becomes
   `judge_cache_<name>.json`, so verdicts never mix across rounds. Other
   template datasets (SSIC, SSOC) are kept; paths are relative to the config.
+  A folder without `enriched.yaml` or a clashing source name is refused before
+  anything is written, and a generated config that doesn't load is deleted
+  again, so fixing the template and rerunning just works.
 - It prints the round's `run`, `case-a` and `case-b` commands. From there the
   round is the same as the first: `merge-preview`, review / `bulk-decide`,
   `integrate --config <round config> --baseline round_baseline`.
