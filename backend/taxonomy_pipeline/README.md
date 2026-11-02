@@ -73,7 +73,8 @@ taxonomy_pipeline/
 │   │   ├── resolution.py             #   merge 3: apply review decisions, assign temporary IDs
 │   │   ├── review.py                 #   hierarchy decisions applied to screened proposals
 │   │   ├── review_view.py            #   saved proposal review view behind `review-proposals` and /proposals
-│   │   ├── change_log.py             #   append submitted decisions to the run's local audit log
+│   │   ├── change_log.py             #   retain submitted decisions in the legacy JSONL handoff
+│   │   ├── audit.py                  #   review/snapshot evidence -> durable shared audit events
 │   │   ├── preview.py                #   merge 4: assemble and structurally check the combined taxonomy
 │   │   ├── export.py                 #   merge 5: preview -> CSV
 │   │   ├── runner.py                 #   chains merge 1-5 for `merge-preview`
@@ -83,7 +84,11 @@ taxonomy_pipeline/
 │   │       ├── intake.py             #     collect proposed hierarchy paths
 │   │       ├── screening.py          #     screen them against the baseline's categories and specialities
 │   │       └── models.py             #     screening report shapes
+│   ├── audit/                        # independent PB09 audit context, used by enrichment and app
+│   │   ├── models.py                 #   ChangeEvent, ChangeQuery, ChangeHistory contracts
+│   │   └── store.py                  #   append-only SQLite writer and read-only history queries
 │   ├── app/                          # use cases: what every CLI command and API route calls
+│   │   ├── changes.py                #   history queries and durable audit-event recovery
 │   │   ├── scoring.py                #   run_pipeline(config) -> RunReport; dataset/report I/O; check_runs; run history
 │   │   ├── enrichment.py             #   case_a, case_b, merge_preview, review_proposals, bulk_decide, integrate
 │   │   ├── browse.py                 #   taxonomy search/detail over a past run's dataset (/taxonomy)
@@ -96,6 +101,7 @@ taxonomy_pipeline/
 │   ├── api/
 │   │   ├── app.py                    #   FastAPI: /metrics, /runs, /taxonomy routes over app/
 │   │   ├── proposals.py              #   /proposals: which merge runs a request may read, over app.enrichment
+│   │   ├── changes.py                #   authenticated, read-only GET /changes over app.changes
 │   │   └── security.py               #   API token and allowed data directories
 │   └── cli.py                        # `taxonomy-pipeline run|check-comparable|serve|import-source|case-a|case-b|merge-preview|review-proposals|bulk-decide|integrate`
 ├── schemas/
@@ -512,10 +518,13 @@ taxonomy-pipeline merge-preview --input case_a_output.json --input case_b_output
   across several output directories. Preview/integration replay never logs. Automatic defaults are not recorded
   as human decisions. Invalid submissions fail before reports or events are written.
 
-The JSONL file is a **local PB09 handoff**, not the shared PB09 database integration
-or a log of applied taxonomy changes. Keep it with the run artifacts. Shared
-storage and reviewer authentication/identity remain PB09 integration work. This
-command generates a preview and does not write to the taxonomy database.
+The JSONL file remains a compatibility handoff. New runs also save
+`audit_events.json` and deliver those review events to the shared PB09 SQLite log
+(see below). Existing JSONL files are preserved; rerunning a saved review imports
+the decisions present in that submission without rewriting their timestamps.
+This command generates a preview and does not write to the taxonomy database.
+`--actor NAME` records a self-reported identity for new submissions; older events
+default to `unspecified`. Authentication of individual reviewers remains future work.
 
 ```text
 src/taxonomy_pipeline/enrichment/
@@ -523,6 +532,175 @@ src/taxonomy_pipeline/enrichment/
   review.py      # validate hierarchy decisions and derive effective placements
   change_log.py  # append submitted decisions to the run's local audit log
 ```
+
+### Audit history and storage decision (PB09: #89, #65, #66)
+
+**Decision recorded 30 October 2026:** governance storage is pipeline-owned SQLite,
+in the existing `taxonomy_pipeline.sqlite3`, pending migration to the client DB.
+The user confirmed that Ankit's `taxonomy_proposals` schema has **not been received**;
+use provisional pipeline proposal references until it arrives. Client-schema alignment
+is pending, not claimed complete. PB07/synonym matching is paused. The log accepts
+synonym actions without introducing a synonym matcher or management workflow.
+
+`audit/` has no dependency on enrichment. `enrichment/audit.py` translates workflow
+evidence into its contract; `app/changes.py` is the shared CLI/API use case. The
+existing context dependency direction remains unchanged, with `audit/` available
+to governance operations as an independent storage context.
+
+The `taxonomy_change_log` table is created on the first write. It stores indexed
+`event_id` (primary key), UTC `occurred_at`, `dataset`, `snapshot_id`, `concept_level`,
+nullable `concept_id`, `concept_ref`, `action`, and `proposal_namespace`. A JSON
+`payload` contains the complete `ChangeEvent`, including concept name, before/after
+values, reason, actor, operation ID, proposal IDs, decision IDs and optional full
+review decision. Multiple proposal/decision references can explain one change.
+Concept IDs are strings and are scoped by dataset, snapshot and level; an unresolved
+proposal/source tag has a stable `concept_ref` and no fabricated numeric ID.
+`proposal_namespace=pipeline` identifies today's references, not foreign keys to
+an assumed client table. A future client adapter can use its own namespace.
+The first writer initializes the audit schema transactionally and records its
+version in `taxonomy_audit_schema`, independently of run history. Later writers
+check that marker instead of rerunning DDL; concurrent first writers recheck it
+under the SQLite writer lock. Existing unversioned audit databases are adopted
+without rewriting events. History reads never initialize or migrate either table.
+External JSON and request inputs are validated at their boundaries; internal
+writers and readers accept validated models directly. Event, linked-review and
+query model fields are frozen against reassignment. Callers must treat their nested
+collections as immutable too, and construct a new validated model for changed data.
+
+All writers call `audit.log_change()` (operations batch it through `log_changes()`)
+and support `add`, `remove`, `merge`, `synonym_add`, `synonym_remove`, `deprecate`,
+`reactivate`, and `review_decision`. Corrections append a new event. The application
+exposes no update/delete methods; SQLite triggers reject ordinary SQL updates and
+deletes. This protects against application mistakes, not an administrator editing
+the database. Writers serialize concurrent deliveries and commit each batch atomically.
+An existing event ID is a no-op when its stored and incoming payloads compare equal
+as parsed `ChangeEvent` models. Compatible defaults added to the model and JSON key
+ordering do not cause replay conflicts. Conflicting evidence for the same event ID
+(such as a changed reason, actor, timestamp or taxonomy value) is an error, never an
+overwrite. Replay comparison leaves the original stored payload unchanged.
+
+Connected operations:
+
+- `merge-preview --decisions ... --actor NAME` records **review decisions**, keeping
+  the submitted action (`create`, `reuse`, `exclude`, `defer`) and full decision.
+  A review does not mean a taxonomy row was added, merged or removed. Existing
+  JSONL replay semantics are retained: an identical decision already in that log
+  for that baseline is not a new submission, even if `--actor` changes. A different
+  reason/action is new. A new independent output/log is a separate submission.
+  The shared JSONL is parsed once per submission; retained entries are passed to
+  audit delivery too, so a replay can recover previously undelivered decisions.
+- `integrate --actor NAME` records every added category, speciality, tag and
+  speciality-tag link after the verified snapshot has been published. Events use
+  real assigned IDs, the enriched snapshot fingerprint, proposal/decision lineage
+  and `scope=snapshot`. They do **not** claim a live MariaDB write. Creating another
+  snapshot is another operation, even if it has identical content.
+- Removal, merge, synonym and deprecation operations can use the same writer when
+  those workflows are implemented. Their storage contract is supported and tested;
+  those operations are not implemented by this change. Individual actor identity is
+  self-reported, with `unspecified` as the explicit default.
+  The app use cases trim actor input and reject blank values before reading inputs
+  or writing artifacts, including operations that produce no audit events. Event
+  models retain their own constraints for constructed or loaded evidence.
+
+Actor attribution is currently exposed through the CLI's `--actor` option (or
+the Python use cases' `actor` argument). The API/dashboard can read proposals
+and change history but has no review-submission or integration route and no
+actor input. The shared API token authorizes access; it does not identify an
+individual reviewer. Calls to the use cases that omit `actor` are recorded as
+`unspecified`. Authenticated attribution from the dashboard remains future work.
+
+Each reviewed merge run and integration retains `audit_events.json` as a durable
+delivery record. Integration's manifest identifies its audit operation and file.
+Filesystem publication and SQLite cannot share a transaction: if SQLite delivery
+fails (or the process stops after publication), keep the artifacts and retry only
+the audit delivery. After successful snapshot publication, an expected audit delivery
+failure (SQLite, filesystem, or conflicting/invalid event evidence) does not fail
+`integrate`: it returns the snapshot, prints `[OK]` and an audit `[WARN]`, preserves
+other quality warnings, and exits 0. Library callers can inspect
+`Integration.audit_delivery_error`; the app use case includes it in
+`IntegrateResult.warnings`. Failures before publication still fail integration.
+After saving the preview, JSONL and event file, `merge-preview` likewise returns
+its completed result and an audit `[WARN]`, keeping exit code 0 for a valid,
+unblocked preview. Library callers can inspect `MergeRun.audit_delivery_error`;
+the app use case also includes it in `MergeRun.warnings`, alongside existing
+warnings. Invalid decisions, blocked previews and failures to save the evidence
+still fail normally. A decision whose proposal or source tag is absent from the
+resolution evidence fails with the missing reference and baseline ID, before
+replacing the saved event file or delivering any events. Rebuild that resolution
+with matching evidence; replaying audit delivery cannot repair it.
+Both delivery-warning paths include the cause and the quoted
+`sync-changes --events` command. Restore database access before retrying storage
+failures; conflicting or invalid event evidence needs investigation and resolution
+before retrying, since replay alone cannot repair it. Use the saved event file to
+recover delivery rather than rerunning integration. There is no background recovery worker:
+
+```bash
+taxonomy-pipeline sync-changes --events integrations/<run>/audit_events.json
+taxonomy-pipeline sync-changes --events merge_runs/reviewed/audit_events.json
+```
+
+Repeating this command inserts only missing events. Original JSONL histories are
+not automatically bulk-migrated: retained decisions are imported when their merge
+run is rerun. Keep the old files for decisions outside the current submission.
+
+History is available through the authenticated **read-only** `GET /changes` endpoint
+and matching CLI. Filters are combined with AND: `dataset`, `snapshot_id`,
+`concept_level` (singular, also `speciality_tag`), `concept_id`, `concept_ref`,
+`action`, `proposal_id`, `proposal_namespace`, `decision_id`, `since`, and `until`.
+Date bounds are inclusive ISO timestamps with an explicit timezone (e.g. `Z`).
+`offset` defaults to 0; `limit` defaults to 50, maximum 200. The response contains
+`total`, `offset`, `limit` and `changes`, ordered oldest first by UTC time then event
+ID. Follow all pages to see every change for a proposal. A decision reference lets
+you follow source-tag reviews that do not have a hierarchy proposal ID.
+`concept_id` alone is a broad search, not a unique concept lookup: IDs can be
+reused across datasets, levels and snapshots. For one concept's history, supply
+`dataset`, `snapshot_id` and `concept_level` together with `concept_id`. Review
+events use the baseline snapshot and any existing target ID; addition events use
+the enriched snapshot and its allocated ID. Omitting the snapshot filter can mix
+unrelated concepts with the same numeric ID. To follow a decision across snapshots,
+use `decision_id` or `proposal_id` rather than assuming the numeric ID is stable.
+New snapshot additions also carry `linked_reviews`: the originating decision
+payloads, decision IDs, review event IDs, original reviewers and timestamps. Thus
+a concept-ID query returns the reasons and reviewers that led to that addition;
+the addition's own `actor` continues to identify the integrator. Integration reads
+the merge run's saved `audit_events.json`, independently of SQLite availability,
+and never updates earlier review records. Legacy resolutions without that evidence
+retain their decision payloads with null reviewer/time and empty review-event IDs.
+Previously saved additions remain unchanged and default to empty `linked_reviews`.
+Integration builds operation-local lookups for allocated IDs, approved paths,
+proposal sources and review decisions once, so each addition visits its related
+evidence instead of rescanning the complete resolution. Decision ordering and
+approved-parent attribution remain deterministic.
+
+```bash
+taxonomy-pipeline changes --proposal-id <proposal-id> --limit 200
+taxonomy-pipeline changes --dataset original --snapshot-id <snapshot-id> --concept-level category --concept-id 42
+taxonomy-pipeline changes --action add --since 2026-10-30T00:00:00Z
+curl -H "Authorization: Bearer $TAXONOMY_API_TOKEN" \
+    'http://localhost:8000/changes?proposal_id=<proposal-id>&limit=200'
+curl -H "Authorization: Bearer $TAXONOMY_API_TOKEN" \
+    'http://localhost:8000/changes?dataset=original&snapshot_id=<snapshot-id>&concept_level=category&concept_id=42'
+```
+
+Queries open SQLite with `mode=ro`, never load or write taxonomy files, and do not
+create a missing database or migrate an existing run-history-only database. There
+are no HTTP audit mutation routes. Tests verify unchanged database/taxonomy bytes
+after querying, authenticated access, all action types, filtering, lineage,
+append-only enforcement, concurrent retries and recovery after failed delivery.
+
+**Storage sketches for the remaining #89 coordination:** review decisions live in
+audit event payloads and run artifacts; screened proposals remain in saved
+`resolution.json` until a client proposal adapter is agreed. The following are
+proposed future SQLite tables, not created or claimed agreed with the client:
+
+| Future table | Proposed columns and keys |
+|---|---|
+| `taxonomy_synonyms` (PB07 paused) | ID PK; dataset, snapshot, level, concept ID, alias, normalized alias, parent scope, creation event ID; unique (dataset, snapshot, level, parent scope, normalized alias), with ambiguity resolved before approval. |
+| `taxonomy_deprecations` (PB08) | ID PK; dataset, snapshot, level, concept ID, replacement reference (nullable), reason, actor, timestamp, event ID; unique (dataset, snapshot, level, concept ID) for a current-state projection; deprecation/reactivation history always stays append-only in the log. |
+
+Client schema mapping, agreement on these deferred table sketches, and propagating
+the decision to GitHub issues #55–#66 remain coordination work. No remote issues
+were updated by this implementation. Synonym behavior remains paused.
 
 ### Read the proposal review view (#58)
 

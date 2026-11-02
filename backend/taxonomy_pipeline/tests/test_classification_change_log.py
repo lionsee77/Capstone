@@ -15,10 +15,10 @@ def test_change_log_appends_tag_and_hierarchy_decisions_without_overwriting(tmp_
                        action="exclude", reason="Out of scope"),
         ReviewDecision(proposal_id="proposal", action="reuse", existing_concept_id=42, reason="Same concept"),
     ]
-    assert append_review_decisions(path, choices, baseline_snapshot_id="snapshot") == 2
+    assert append_review_decisions(path, choices, baseline_snapshot_id="snapshot")[0] == 2
     first = path.read_bytes()
     edited = choices[1].model_copy(update={"reason": "Same concept, confirmed with the client"})
-    assert append_review_decisions(path, [edited], baseline_snapshot_id="snapshot") == 1
+    assert append_review_decisions(path, [edited], baseline_snapshot_id="snapshot")[0] == 1
     assert path.read_bytes().startswith(first)
     events = [ReviewDecisionEvent.model_validate_json(line) for line in path.read_text().splitlines()]
     assert [event.decision for event in events] == [*choices, edited]
@@ -35,10 +35,10 @@ def test_replayed_decisions_are_not_logged_again(tmp_path: Path) -> None:
     append_review_decisions(path, earlier, baseline_snapshot_id="snapshot")
     added = ReviewDecision(proposal_id="p9", action="exclude", reason="Not a speciality")
 
-    assert append_review_decisions(path, [*earlier, added], baseline_snapshot_id="snapshot") == 1
-    assert append_review_decisions(path, [*earlier, added], baseline_snapshot_id="snapshot") == 0
+    assert append_review_decisions(path, [*earlier, added], baseline_snapshot_id="snapshot")[0] == 1
+    assert append_review_decisions(path, [*earlier, added], baseline_snapshot_id="snapshot")[0] == 0
     # Against another baseline the same decisions are a new submission.
-    assert append_review_decisions(path, earlier, baseline_snapshot_id="other") == 3
+    assert append_review_decisions(path, earlier, baseline_snapshot_id="other")[0] == 3
     assert len(path.read_text().splitlines()) == 3 + 1 + 3
 
 

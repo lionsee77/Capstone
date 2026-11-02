@@ -12,12 +12,15 @@ from __future__ import annotations
 
 import argparse
 import logging
+import sqlite3
 import sys
 from pathlib import Path
 
 from .app import enrichment as use_cases
+from .app.changes import changes, sync_changes
 from .app.scoring import check_runs, result_labels, run_config, write_report
 from .app.sources import import_source
+from .audit.models import ChangeQuery
 
 
 def _cmd_run(args: argparse.Namespace) -> int:
@@ -144,9 +147,9 @@ def _cmd_merge_preview(args: argparse.Namespace) -> int:
         run = use_cases.merge_preview(
             args.config, args.input, baseline=args.baseline, out_dir=args.out_dir, decisions=args.decisions,
             semantic_model=args.semantic_model, screening_lexical=args.screening_lexical,
-            screening_semantic=args.screening_semantic, change_log=args.change_log,
+            screening_semantic=args.screening_semantic, change_log=args.change_log, actor=args.actor,
         )
-    except (OSError, ValueError) as exc:
+    except (OSError, ValueError, sqlite3.Error) as exc:
         print(f"[FAILED] merge-preview: {exc}", file=sys.stderr)
         return 1
 
@@ -205,7 +208,9 @@ def _cmd_bulk_decide(args: argparse.Namespace) -> int:
 
 def _cmd_integrate(args: argparse.Namespace) -> int:
     try:
-        outcome = use_cases.integrate(args.config, args.merge_run, baseline=args.baseline, out_dir=args.out_dir)
+        outcome = use_cases.integrate(
+            args.config, args.merge_run, baseline=args.baseline, out_dir=args.out_dir, actor=args.actor,
+        )
     except (OSError, ValueError) as exc:
         print(f"[FAILED] integrate: {exc}", file=sys.stderr)
         return 1
@@ -229,6 +234,29 @@ def _add_dataset_args(parser: argparse.ArgumentParser, *, incoming: bool = True)
         parser.add_argument("--incoming", default="skillsfuture", help="taxonomy dataset the new tags come from")
 
 
+# Print filtered audit history through the same use case as GET /changes.
+def _cmd_changes(args: argparse.Namespace) -> int:
+    try:
+        query = ChangeQuery(**{key: getattr(args, key) for key in ChangeQuery.model_fields})
+        print(changes(query).model_dump_json(indent=2))
+    except (OSError, ValueError, sqlite3.Error) as exc:
+        print(f"[FAILED] changes: {exc}", file=sys.stderr)
+        return 1
+    return 0
+
+
+# Retry delivery from saved audit events without changing taxonomy artifacts.
+def _cmd_sync_changes(args: argparse.Namespace) -> int:
+    try:
+        count = sync_changes(args.events)
+    except (OSError, ValueError, sqlite3.Error) as exc:
+        print(f"[FAILED] sync-changes: {exc}", file=sys.stderr)
+        return 1
+    print(f"recorded {count} new audit events")
+    return 0
+
+
+# Configure the CLI adapters and their shared use-case inputs.
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="taxonomy_pipeline")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -299,6 +327,7 @@ def build_parser() -> argparse.ArgumentParser:
     merge.add_argument("--screening-semantic", type=float, default=screening_defaults.semantic_threshold,
                        help="hierarchy semantic review threshold, 0-1 (default: %(default)s; needs --semantic-model)")
     merge.add_argument("--out-dir", help="where to write the reports (default: merge_runs/<timestamp>)")
+    merge.add_argument("--actor", default="unspecified", help="self-reported reviewer identity for new audit events")
     merge.add_argument("--change-log", help="review change log to append new decisions to, shared across runs "
                        "(default: <out-dir>/change_log.jsonl); decisions it already holds aren't logged again")
     merge.set_defaults(func=_cmd_merge_preview)
@@ -327,7 +356,19 @@ def build_parser() -> argparse.ArgumentParser:
     _add_dataset_args(integrate, incoming=False)
     integrate.add_argument("--merge-run", required=True, help="merge-preview output folder (merge_runs/<timestamp>)")
     integrate.add_argument("--out-dir", help="where to write the snapshot (default: integrations/<timestamp>)")
+    integrate.add_argument("--actor", default="unspecified", help="self-reported operator identity for audit events")
     integrate.set_defaults(func=_cmd_integrate)
+
+    history = subparsers.add_parser("changes", help="read audit history without changing the taxonomy")
+    for field in ChangeQuery.model_fields:
+        if field not in {"limit", "offset"}:
+            history.add_argument("--" + field.replace("_", "-"))
+    history.add_argument("--offset", type=int, default=0)
+    history.add_argument("--limit", type=int, default=50, help="page size, 1-200")
+    history.set_defaults(func=_cmd_changes)
+    sync = subparsers.add_parser("sync-changes", help="retry SQLite delivery of a saved audit_events.json file")
+    sync.add_argument("--events", required=True)
+    sync.set_defaults(func=_cmd_sync_changes)
 
     return parser
 

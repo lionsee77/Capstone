@@ -26,6 +26,7 @@ from ..models import (
     TaxonomyConceptDetail,
     TaxonomyConceptSummary,
 )
+from .changes import router as changes_router
 from .proposals import router as proposals_router
 from .security import disallowed_paths, require_token
 
@@ -36,6 +37,7 @@ app = FastAPI(
     dependencies=[Depends(require_token)],
 )
 app.include_router(proposals_router)
+app.include_router(changes_router)
 
 
 def _require_absolute_dataset_paths(config: PipelineConfig) -> None:

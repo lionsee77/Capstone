@@ -5,9 +5,22 @@ from pathlib import Path
 
 import pytest
 
+from taxonomy_pipeline.audit import ChangeEvent
+
 FIXTURES = Path(__file__).parent / "fixtures"
 CLASSIFICATION_FIXTURES = FIXTURES / "classification"
 PRODUCER_FILES = [CLASSIFICATION_FIXTURES / "case_a.json", CLASSIFICATION_FIXTURES / "case_b.json"]
+
+
+@pytest.fixture
+# Provide one fully attributed audit event for store, CLI and API behavior tests.
+def audit_event() -> ChangeEvent:
+    return ChangeEvent(
+        event_id="event-1", operation_id="operation-1", dataset="baseline", snapshot_id="snapshot",
+        concept_level="category", concept_id="1", concept_ref="category:1", concept_name="Computing",
+        action="add", after={"id": 1, "name": "Computing"}, reason="Approved by reviewer", actor="reviewer",
+        occurred_at="2026-10-30T00:00:00Z", proposal_ids=["p1"], decision_ids=["d1"], scope="snapshot",
+    )
 
 
 @pytest.fixture(autouse=True)
@@ -98,7 +111,7 @@ def classification_paths(tmp_path):
     return paths
 
 
-@pytest.fixture
+@pytest.fixture(autouse=True)
 def isolated_db(tmp_path, monkeypatch):
     """Point taxonomy_pipeline.db at a throwaway SQLite file for this test."""
     from taxonomy_pipeline import db
