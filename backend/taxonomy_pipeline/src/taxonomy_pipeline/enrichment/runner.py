@@ -20,6 +20,7 @@ from pydantic import TypeAdapter
 
 from ..matching.semantic import SimilarityMatcher
 from ..taxonomy.base import TaxonomyDataset
+from .audit import AuditDeliveryError, record_review_changes
 from .change_log import append_review_decisions
 from .deduplication import deduplicate_outputs
 from .export import export_preview_csv
@@ -45,6 +46,7 @@ class MergeRun:
     validation: BatchValidationReport
     preview: MergePreview
     warnings: list[str] = field(default_factory=list)
+    audit_delivery_error: str | None = None
 
     @property
     def ok(self) -> bool:
@@ -116,6 +118,7 @@ def run_merge_preview(
     semantic_matcher: SimilarityMatcher | None = None,
     screening_settings: ScreeningSettings | None = None,
     change_log: str | Path | None = None,
+    actor: str = "unspecified",
 ) -> MergeRun:
     """Chain the stages over producer files and write validation, deduplication,
     resolution and the preview CSV to `out_dir`.
@@ -155,8 +158,15 @@ def run_merge_preview(
     )
     # json.dumps, not model_dump_json, so run.json keeps its existing formatting (ASCII-escaped).
     (out_dir / "run.json").write_text(json.dumps(run_info.model_dump(), indent=2), encoding="utf-8")
-    append_review_decisions(
-        Path(change_log) if change_log else out_dir / "change_log.jsonl", resolution.decisions,
-        baseline_snapshot_id=resolution.baseline_snapshot_id,
+    log_path = Path(change_log) if change_log else out_dir / "change_log.jsonl"
+    _, entries = append_review_decisions(
+        log_path, resolution.decisions,
+        baseline_snapshot_id=resolution.baseline_snapshot_id, actor=actor,
     )
-    return MergeRun(out_dir=out_dir, validation=validation, preview=preview, warnings=warnings)
+    audit_delivery_error = None
+    try:
+        record_review_changes(resolution, entries, out_dir)
+    except AuditDeliveryError as exc:
+        audit_delivery_error = str(exc)
+    return MergeRun(out_dir=out_dir, validation=validation, preview=preview, warnings=warnings,
+                    audit_delivery_error=audit_delivery_error)

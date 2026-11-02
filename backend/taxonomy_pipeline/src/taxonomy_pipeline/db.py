@@ -2,6 +2,9 @@
 inspect, and diff. Deliberately simple: one table, the full report stored as
 JSON - swap for a real database only if/when run volume actually calls for
 it (see the project's "don't add infra before it's needed" call).
+
+The independent audit context owns its append-only table in the same database;
+this module's merge/update behavior is only for run records, never audit events.
 """
 from __future__ import annotations
 
