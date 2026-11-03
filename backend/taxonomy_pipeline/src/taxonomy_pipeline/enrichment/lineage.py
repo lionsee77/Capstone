@@ -67,7 +67,7 @@ class IntegrationRound:
     baseline_dataset: str
     baseline: FileFingerprint
     snapshot: FileFingerprint
-    # Incoming datasets the round's accepted tags came from, most records first (e.g. ["skillsfuture"]).
+    # Incoming datasets the round's added tags came from, most tags first (e.g. ["skillsfuture"]).
     sources: list[str] = field(default_factory=list)
     # Rows the round added per table (`manifest.json` counts).
     added: dict[str, int] = field(default_factory=dict)
@@ -114,21 +114,26 @@ def _read_round(directory: Path, manifest: dict[str, Any], merge_root: Path) -> 
 
 
 def _sources(provenance: dict[str, Any], merge_root: Path) -> list[str]:
-    """The `source_dataset` of the merge run's validated records, most frequent first.
+    """The sources of the tags the round added, most added tags first.
 
-    The provenance path was written relative to wherever `merge-preview` ran, so only its last
-    part is trusted, looked up under the configured merge root.
+    Read from the merge run's saved resolution: its `tags` not already in the baseline are the
+    additions `integrate` wrote, and their `members` the source tags each was accepted from. Records
+    omitted before review, or excluded or deferred in it, add nothing, so their sources don't count.
+    The provenance path was written relative to wherever `merge-preview` ran, so only its last part
+    is trusted, looked up under the configured merge root.
     """
     merge_run = provenance.get("merge_run")
     if not merge_run:
         return []
-    validation = merge_root / Path(str(merge_run)).name / "validation.json"
+    resolution = merge_root / Path(str(merge_run)).name / "resolution.json"
     try:
-        records = json.loads(validation.read_text(encoding="utf-8")).get("records", [])
+        tags = json.loads(resolution.read_text(encoding="utf-8")).get("tags", [])
     except (OSError, ValueError):
         return []
-    counts = Counter(
-        record["raw"]["source_dataset"] for record in records
-        if isinstance(record.get("raw"), dict) and record["raw"].get("source_dataset")
-    )
+    counts: Counter[str] = Counter()
+    for tag in tags:
+        if not isinstance(tag, dict) or tag.get("existing"):
+            continue
+        sources = {member.get("source_dataset") for member in tag.get("members", []) if isinstance(member, dict)}
+        counts.update(source for source in sources if source)
     return [source for source, _ in counts.most_common()]

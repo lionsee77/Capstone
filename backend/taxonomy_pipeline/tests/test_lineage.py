@@ -57,11 +57,37 @@ def test_a_later_rounds_baseline_matches_the_earlier_snapshot(tmp_path, integrat
     assert rounds["round-2"].baseline == rounds["round-1"].snapshot
 
 
-def test_sources_are_listed_most_records_first(tmp_path, integration_round):
+def _write_resolution(tmp_path, tags):
+    resolution = tmp_path / "merge_runs" / "round-1-reviewed" / "resolution.json"
+    resolution.write_text(json.dumps({"tags": tags}), encoding="utf-8")
+
+
+def _tag(existing, *sources):
+    return {"existing": existing, "members": [{"source_dataset": source, "tag_id": "1"} for source in sources]}
+
+
+def test_sources_are_listed_most_added_tags_first(tmp_path, integration_round):
     integration_round("round-1", BASELINE, "x", source=None)
-    validation = tmp_path / "merge_runs" / "round-1-reviewed" / "validation.json"
-    records = [{"raw": {"source_dataset": name}} for name in ["onet", "skillsfuture", "skillsfuture"]]
-    validation.write_text(json.dumps({"records": records}), encoding="utf-8")
+    _write_resolution(tmp_path, [_tag(False, "onet"), _tag(False, "skillsfuture"), _tag(False, "skillsfuture")])
+
+    [round_] = read_rounds(tmp_path / "integrations", tmp_path / "merge_runs")
+
+    assert round_.sources == ["skillsfuture", "onet"]
+
+
+def test_sources_count_only_tags_the_round_added(tmp_path, integration_round):
+    # A mixed-source merge where onet's tags all matched the baseline: reused, so onet added nothing.
+    integration_round("round-1", BASELINE, "x", source=None)
+    _write_resolution(tmp_path, [_tag(False, "skillsfuture"), _tag(True, "onet"), _tag(True, "onet", "skillsfuture")])
+
+    [round_] = read_rounds(tmp_path / "integrations", tmp_path / "merge_runs")
+
+    assert round_.sources == ["skillsfuture"]
+
+
+def test_a_tag_merged_from_two_sources_counts_for_both(tmp_path, integration_round):
+    integration_round("round-1", BASELINE, "x", source=None)
+    _write_resolution(tmp_path, [_tag(False, "onet", "skillsfuture"), _tag(False, "skillsfuture")])
 
     [round_] = read_rounds(tmp_path / "integrations", tmp_path / "merge_runs")
 

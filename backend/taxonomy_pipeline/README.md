@@ -1713,7 +1713,8 @@ out, with nothing hard-coded, how the taxonomy grew and which runs show it:
 
 - **Stages.** Each `integrations/<name>/` round is a stage: the snapshot it
   wrote, with the rows it added (`manifest.json` `counts`) and the sources its
-  tags came from (`source_dataset` in its merge run's `validation.json`). A
+  added tags came from (their members' `source_dataset` in its merge run's
+  `resolution.json`, so excluded or deferred records don't count). A
   baseline no round produced is a root stage, `baseline:<dataset>`.
 - **Order.** A round's parent is the stage whose files hold the same bytes as
   its `baseline/` copies (`enrichment/lineage.py`). The manifests' snapshot IDs

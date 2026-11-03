@@ -255,7 +255,7 @@ def approve_data_analytics():
 @pytest.fixture
 def integration_round(tmp_path):
     """Write an `integrate`-shaped round: `integrations/<name>/` with `baseline/` copies, `additions.sql`
-    and `manifest.json`, plus its merge run's `validation.json` naming the records' source.
+    and `manifest.json`, plus its merge run's `resolution.json` with one added tag from `source`.
 
     Call it with the round name, the baseline files' contents and the rows it added; returns the round's
     directory. Roots are `tmp_path/integrations` and `tmp_path/merge_runs`.
@@ -273,8 +273,8 @@ def integration_round(tmp_path):
         (directory / "additions.sql").write_text(additions, encoding="utf-8")
         merge_run = tmp_path / "merge_runs" / f"{name}-reviewed"
         merge_run.mkdir(parents=True)
-        records = [{"raw": {"source_dataset": source}, "status": "valid"}] if source else []
-        (merge_run / "validation.json").write_text(json.dumps({"records": records}), encoding="utf-8")
+        tags = [{"id": "new:tag:1", "existing": False, "members": [{"source_dataset": source, "tag_id": "1"}]}]
+        (merge_run / "resolution.json").write_text(json.dumps({"tags": tags if source else []}), encoding="utf-8")
         manifest = {
             "created_at": created_at, "baseline": {"dataset": dataset, "files": files},
             "merge_run": {"merge_run": f"merge_runs/{name}-reviewed"},
