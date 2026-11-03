@@ -81,7 +81,9 @@ export type TrendGroup = {
 /**
  * Line the step comparisons up into groups of rows. A result is matched across comparisons by
  * its metric and its settings with the subject left out (the subject is the one param that names
- * the stage), which is how the API pairs results too.
+ * the stage), which is how the API pairs results too. Each side of a comparison goes under its own
+ * settings: a pair whose settings differ (the API marks it not compared) puts its before and after
+ * values in different groups and no step change in either, leaving gaps rather than a mixed line.
  */
 export function trendGroups(
   report: RunReport,
@@ -101,41 +103,53 @@ export function trendGroups(
     return result ? `${change.metric_id}|${settingsKey(result, subjects)}` : null;
   };
 
+  const groupFor = (key: string, change: MetricChange, index: number): TrendGroup & { references: string[] } => {
+    let group = groups.get(key);
+    if (!group) {
+      group = { key, metricId: change.metric_id, qualifier: null, rows: [], issues: [],
+        references: referencedDatasets(report.results[index], subjects, datasetNames) };
+      groups.set(key, group);
+    }
+    for (const issue of change.issues) {
+      if (!group.issues.includes(issue.message)) group.issues.push(issue.message);
+    }
+    return group;
+  };
+
+  const rowFor = (group: TrendGroup, measure: MeasureChange): TrendRow => {
+    const rowKey = `${group.key}|${measure.key}`;
+    let row = rows.get(rowKey);
+    if (!row) {
+      row = { key: measure.key, label: measure.label, unit: measure.unit, better: measure.better,
+        values: Array(stageCount).fill(null), steps: Array(steps.length).fill(null), overall: null };
+      rows.set(rowKey, row);
+      group.rows.push(row);
+    }
+    return row;
+  };
+
   steps.forEach((comparison, step) => {
     for (const change of comparison.metrics) {
-      const key = keyOf(change, "before") ?? keyOf(change, "after");
-      if (key === null) continue;
-      const index = change.before_index ?? change.after_index;
-      const result = report.results[index as number];
-      let group = groups.get(key);
-      if (!group) {
-        group = { key, metricId: change.metric_id, qualifier: null, rows: [], issues: [],
-          references: referencedDatasets(result, subjects, datasetNames) };
-        groups.set(key, group);
-      }
-      for (const issue of change.issues) {
-        if (!group.issues.includes(issue.message)) group.issues.push(issue.message);
-      }
+      const beforeKey = keyOf(change, "before");
+      const afterKey = keyOf(change, "after");
+      const before = beforeKey === null ? null : groupFor(beforeKey, change, change.before_index as number);
+      const after = afterKey === null ? null : groupFor(afterKey, change, change.after_index as number);
       for (const measure of change.measures) {
-        const rowKey = `${key}|${measure.key}`;
-        let row = rows.get(rowKey);
-        if (!row) {
-          row = { key: measure.key, label: measure.label, unit: measure.unit, better: measure.better,
-            values: Array(stageCount).fill(null), steps: Array(steps.length).fill(null), overall: null };
-          rows.set(rowKey, row);
-          group.rows.push(row);
+        if (before) {
+          const row = rowFor(before, measure);
+          if (row.values[step] === null) row.values[step] = measure.before;
+          if (before === after) row.steps[step] = measure;
         }
-        if (row.values[step] === null) row.values[step] = measure.before;
-        row.values[step + 1] = measure.after;
-        row.steps[step] = measure;
+        if (after) rowFor(after, measure).values[step + 1] = measure.after;
       }
     }
   });
 
   for (const change of overall?.metrics ?? []) {
-    const key = keyOf(change, "before") ?? keyOf(change, "after");
+    const key = keyOf(change, "before");
+    if (key === null || key !== keyOf(change, "after")) continue;
     for (const measure of change.measures) {
-      const row = key === null ? undefined : rows.get(`${key}|${measure.key}`);
+      const row = rows.get(`${key}|${measure.key}`);
       if (row) row.overall = measure;
     }
   }

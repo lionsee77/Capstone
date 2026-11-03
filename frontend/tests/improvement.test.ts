@@ -126,3 +126,32 @@ describe("stage counts", () => {
     expect(stageCounts(report, scored).map((counts) => counts.tags)).toEqual([676, 1924, 2068]);
   });
 });
+
+describe("trend groups with settings that change between stages", () => {
+  // Re-score stage 2's depth with a different setting: the API pairs it with stages 1 and 3 but marks
+  // both pairs not compared, so its value belongs to a separate entry and neither line spans it.
+  const changed = structuredClone(report);
+  const depthAt = (dataset: string) =>
+    changed.results.findIndex((result) => result.metric_id === "depth" && result.params?.dataset === dataset);
+  const middle = depthAt("stage1_skillsfuture");
+  changed.results[middle] = { ...changed.results[middle], params: { ...changed.results[middle].params, extra: 1 } };
+  const groups = trendGroups(changed, scored, steps, overall);
+  const depth = groups.filter((group) => group.metricId === "depth");
+  const [original, rescored] = depth.map((group) => group.rows[0]);
+
+  it("puts the re-scored stage under its own settings", () => {
+    expect(depth).toHaveLength(2);
+    expect(original.values.map((value) => value !== null)).toEqual([true, false, true]);
+    expect(rescored.values.map((value) => value !== null)).toEqual([false, true, false]);
+  });
+
+  it("draws no step change across the settings change", () => {
+    expect(original.steps).toEqual([null, null]);
+    expect(rescored.steps).toEqual([null, null]);
+  });
+
+  it("keeps the first-to-last change, whose settings match", () => {
+    expect(original.overall).not.toBeNull();
+    expect(original.values[2]).toBe(original.overall?.after);
+  });
+});
