@@ -76,6 +76,9 @@ def test_create_and_poll_a_run(isolated_db):
 
     assert report["status"] == "done", report
     assert report["results"][0]["metric_id"] == "integrity"
+    assert report["results"][0]["details"]
+    light = client.get(f"/runs/{run_id}", params={"details": "false"}).json()
+    assert light["results"][0]["details"] == {} and light["results"][0]["summary"] == report["results"][0]["summary"]
 
 
 def test_a_run_report_says_which_metric_definitions_scored_it(isolated_db):

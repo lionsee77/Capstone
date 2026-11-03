@@ -1678,6 +1678,10 @@ the token, so use curl or the dashboard to call endpoints.
 - `GET /runs/{run_id}` - poll for status, which moves `"queued"` ->
   `"running"` -> `"done"` or `"failed"`; once finished, the full report is
   in the response.
+  `?details=false` empties each result's `details` (keeping status, summary
+  and params): a saturation result lists every concept it reviewed, so a
+  judged multi-stage run is tens of megabytes, and a page showing summaries
+  and counts needs none of it.
 - `GET /runs` - recent run history.
 - `GET /runs/{before_id}/compare/{after_id}?before_subject=&after_subject=` -
   the comparison report as JSON (`RunComparison`): each metric's measures,

@@ -267,3 +267,15 @@ def test_a_queued_run_is_polled_through_history_until_it_finishes(isolated_db: P
 
     assert finished.run_id == queued.run_id and get_run(queued.run_id).status == "done"
     assert get_run("missing") is None
+
+
+def test_a_stored_run_can_be_read_without_result_details(isolated_db) -> None:
+    from taxonomy_pipeline import db
+
+    result = MetricResult(metric_id="saturation", summary="s", details={"concepts": list(range(5))}, params={"a": 1})
+    db.save_run(RunReport(run_id="r1", status="done", results=[result]), config_json="{}")
+
+    light = get_run("r1", details=False)
+
+    assert light.results[0].details == {} and light.results[0].summary == "s" and light.results[0].params == {"a": 1}
+    assert get_run("r1").results[0].details == {"concepts": [0, 1, 2, 3, 4]}

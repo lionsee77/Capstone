@@ -117,8 +117,10 @@ def list_runs(limit: int = 50) -> list[RunSummary]:
 
 
 @app.get("/runs/{run_id}")
-def get_run(run_id: str) -> RunReport:
-    report = scoring.get_run(run_id)
+def get_run(run_id: str, details: bool = True) -> RunReport:
+    """One run's report. `details=false` leaves each result's `details` empty: a saturation result lists
+    every concept it reviewed (megabytes), while a page showing summaries, params and counts needs none."""
+    report = scoring.get_run(run_id, details=details)
     if report is None:
         raise HTTPException(status_code=404, detail="run not found")
     return report
