@@ -128,3 +128,29 @@
     @apply font-sans;
   }
 }
+/*
+ * Data-viz roles, from the dataviz skill's validated reference palette: three categorical
+ * series slots (validated all-pairs, light and dark) and the reserved status pair for verdicts.
+ * Status colours never stand alone: verdicts always carry an icon and a word.
+ */
+:root {
+  --viz-series-1: #2a78d6;
+  --viz-series-2: #eb6834;
+  --viz-series-3: #1baf7a;
+  --viz-good: #0ca30c;
+  --viz-bad: #d03b3b;
+}
+
+.dark {
+  --viz-series-1: #3987e5;
+  --viz-series-2: #d95926;
+  --viz-series-3: #199e70;
+}
+
+@theme inline {
+  --color-viz-1: var(--viz-series-1);
+  --color-viz-2: var(--viz-series-2);
+  --color-viz-3: var(--viz-series-3);
+  --color-good: var(--viz-good);
+  --color-bad: var(--viz-bad);
+}
