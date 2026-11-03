@@ -1,0 +1,534 @@
+{
+  "source": "onet",
+  "display_name": "O*NET",
+  "tags": {
+    "3000": {
+      "description": "Web platform development software"
+    },
+    "3001": {
+      "description": "Document management software"
+    },
+    "3002": {
+      "description": "Video creation and editing software"
+    },
+    "3003": {
+      "description": "Graphics or photo imaging software"
+    },
+    "3004": {
+      "description": "Graphics or photo imaging software"
+    },
+    "3005": {
+      "description": "Desktop publishing software"
+    },
+    "3006": {
+      "description": "Graphics or photo imaging software"
+    },
+    "3007": {
+      "description": "Business intelligence and data analysis software"
+    },
+    "3008": {
+      "description": "Data base management system software"
+    },
+    "3009": {
+      "description": "Data base user interface and query software"
+    },
+    "3010": {
+      "description": "Data base user interface and query software"
+    },
+    "3011": {
+      "description": "Cloud-based management software"
+    },
+    "3012": {
+      "description": "Data base user interface and query software"
+    },
+    "3013": {
+      "description": "Expert system software"
+    },
+    "3014": {
+      "description": "Procedure management software"
+    },
+    "3015": {
+      "description": "Data base management system software"
+    },
+    "3016": {
+      "description": "Data base management system software"
+    },
+    "3017": {
+      "description": "Data base management system software"
+    },
+    "3018": {
+      "description": "Development environment software"
+    },
+    "3019": {
+      "description": "Development environment software"
+    },
+    "3020": {
+      "description": "Business intelligence and data analysis software"
+    },
+    "3021": {
+      "description": "File versioning software"
+    },
+    "3022": {
+      "description": "Web platform development software"
+    },
+    "3023": {
+      "description": "Internet browser software"
+    },
+    "3024": {
+      "description": "Operating system software"
+    },
+    "3025": {
+      "description": "Operating system software"
+    },
+    "3026": {
+      "description": "Cloud-based data access and sharing software"
+    },
+    "3027": {
+      "description": "Application server software"
+    },
+    "3028": {
+      "description": "Project management software"
+    },
+    "3029": {
+      "description": "Content workflow software"
+    },
+    "3030": {
+      "description": "Computer aided design CAD software"
+    },
+    "3031": {
+      "description": "Computer aided design CAD software"
+    },
+    "3032": {
+      "description": "Computer aided design CAD software"
+    },
+    "3033": {
+      "description": "Operating system software"
+    },
+    "3034": {
+      "description": "Computer aided design CAD software"
+    },
+    "3035": {
+      "description": "Web platform development software"
+    },
+    "3036": {
+      "description": "Switch or router software"
+    },
+    "3037": {
+      "description": "Development environment software"
+    },
+    "3038": {
+      "description": "Object or component oriented development software"
+    },
+    "3039": {
+      "description": "Object or component oriented development software"
+    },
+    "3040": {
+      "description": "Graphics or photo imaging software"
+    },
+    "3041": {
+      "description": "Web platform development software"
+    },
+    "3042": {
+      "description": "Configuration management software"
+    },
+    "3043": {
+      "description": "Video conferencing software"
+    },
+    "3044": {
+      "description": "Computer aided design CAD software"
+    },
+    "3045": {
+      "description": "Web platform development software"
+    },
+    "3046": {
+      "description": "Application server software"
+    },
+    "3047": {
+      "description": "Geographic information system"
+    },
+    "3048": {
+      "description": "Development environment software"
+    },
+    "3049": {
+      "description": "Data base management system software"
+    },
+    "3050": {
+      "description": "Medical software"
+    },
+    "3051": {
+      "description": "Enterprise application integration software"
+    },
+    "3052": {
+      "description": "Web page creation and editing software"
+    },
+    "3053": {
+      "description": "Graphical user interface development software"
+    },
+    "3054": {
+      "description": "File versioning software"
+    },
+    "3055": {
+      "description": "Application server software"
+    },
+    "3056": {
+      "description": "Application server software"
+    },
+    "3057": {
+      "description": "Development environment software"
+    },
+    "3058": {
+      "description": "Data mining software"
+    },
+    "3059": {
+      "description": "Operating system software"
+    },
+    "3060": {
+      "description": "Web platform development software"
+    },
+    "3061": {
+      "description": "Word processing software"
+    },
+    "3062": {
+      "description": "Business intelligence and data analysis software"
+    },
+    "3063": {
+      "description": "Spreadsheet software"
+    },
+    "3064": {
+      "description": "Office suite software"
+    },
+    "3065": {
+      "description": "Graphical user interface development software"
+    },
+    "3066": {
+      "description": "Data base user interface and query software"
+    },
+    "3067": {
+      "description": "Medical software"
+    },
+    "3068": {
+      "description": "Object oriented data base management software"
+    },
+    "3069": {
+      "description": "Sales and marketing software"
+    },
+    "3070": {
+      "description": "Web platform development software"
+    },
+    "3071": {
+      "description": "Data base user interface and query software"
+    },
+    "3072": {
+      "description": "Analytical or scientific software"
+    },
+    "3073": {
+      "description": "Configuration management software"
+    },
+    "3074": {
+      "description": "Cloud-based management software"
+    },
+    "3075": {
+      "description": "Metadata management software"
+    },
+    "3076": {
+      "description": "Accounting software"
+    },
+    "3077": {
+      "description": "Tax preparation software"
+    },
+    "3078": {
+      "description": "Program testing software"
+    },
+    "3079": {
+      "description": "Web platform development software"
+    },
+    "3080": {
+      "description": "Web platform development software"
+    },
+    "3081": {
+      "description": "Enterprise application integration software"
+    },
+    "3082": {
+      "description": "Time accounting software"
+    },
+    "3083": {
+      "description": "Application server software"
+    },
+    "3084": {
+      "description": "Operating system software"
+    },
+    "3085": {
+      "description": "Medical software"
+    },
+    "3086": {
+      "description": "Sales and marketing software"
+    },
+    "3087": {
+      "description": "Development environment software"
+    },
+    "3088": {
+      "description": "Web platform development software"
+    },
+    "3089": {
+      "description": "Data base user interface and query software"
+    },
+    "3090": {
+      "description": "Internet directory services software"
+    },
+    "3091": {
+      "description": "Web platform development software"
+    },
+    "3092": {
+      "description": "Development environment software"
+    },
+    "3093": {
+      "description": "Internet browser software"
+    },
+    "3094": {
+      "description": "Spreadsheet software"
+    },
+    "3095": {
+      "description": "Office suite software"
+    },
+    "3096": {
+      "description": "Electronic mail software"
+    },
+    "3097": {
+      "description": "Enterprise application integration software"
+    },
+    "3098": {
+      "description": "Business intelligence and data analysis software"
+    },
+    "3099": {
+      "description": "Enterprise application integration software"
+    },
+    "3100": {
+      "description": "Presentation software"
+    },
+    "3101": {
+      "description": "Development environment software"
+    },
+    "3102": {
+      "description": "Project management software"
+    },
+    "3103": {
+      "description": "Data base user interface and query software"
+    },
+    "3104": {
+      "description": "Enterprise application integration software"
+    },
+    "3105": {
+      "description": "Object or component oriented development software"
+    },
+    "3106": {
+      "description": "Document management software"
+    },
+    "3107": {
+      "description": "Project management software"
+    },
+    "3108": {
+      "description": "Project management software"
+    },
+    "3109": {
+      "description": "Process mapping and design software"
+    },
+    "3110": {
+      "description": "Development environment software"
+    },
+    "3111": {
+      "description": "Development environment software"
+    },
+    "3112": {
+      "description": "Development environment software"
+    },
+    "3113": {
+      "description": "Operating system software"
+    },
+    "3114": {
+      "description": "Application server software"
+    },
+    "3115": {
+      "description": "Word processing software"
+    },
+    "3116": {
+      "description": "Data base management system software"
+    },
+    "3117": {
+      "description": "Internet browser software"
+    },
+    "3118": {
+      "description": "Data base user interface and query software"
+    },
+    "3119": {
+      "description": "Data base management system software"
+    },
+    "3120": {
+      "description": "Web platform development software"
+    },
+    "3121": {
+      "description": "Cloud-based management software"
+    },
+    "3122": {
+      "description": "Data base user interface and query software"
+    },
+    "3123": {
+      "description": "Object or component oriented development software"
+    },
+    "3124": {
+      "description": "Development environment software"
+    },
+    "3125": {
+      "description": "Data base management system software"
+    },
+    "3126": {
+      "description": "Enterprise resource planning ERP software"
+    },
+    "3127": {
+      "description": "Project management software"
+    },
+    "3128": {
+      "description": "Development environment software"
+    },
+    "3129": {
+      "description": "Web platform development software"
+    },
+    "3130": {
+      "description": "Object or component oriented development software"
+    },
+    "3131": {
+      "description": "Object oriented data base management software"
+    },
+    "3132": {
+      "description": "Analytical or scientific software"
+    },
+    "3133": {
+      "description": "Data base user interface and query software"
+    },
+    "3134": {
+      "description": "Configuration management software"
+    },
+    "3135": {
+      "description": "Data base user interface and query software"
+    },
+    "3136": {
+      "description": "Object or component oriented development software"
+    },
+    "3137": {
+      "description": "Object or component oriented development software"
+    },
+    "3138": {
+      "description": "Web platform development software"
+    },
+    "3139": {
+      "description": "Operating system software"
+    },
+    "3140": {
+      "description": "Application server software"
+    },
+    "3141": {
+      "description": "Data base management system software"
+    },
+    "3142": {
+      "description": "Development environment software"
+    },
+    "3143": {
+      "description": "Accounting software"
+    },
+    "3144": {
+      "description": "Enterprise resource planning ERP software"
+    },
+    "3145": {
+      "description": "Enterprise resource planning ERP software"
+    },
+    "3146": {
+      "description": "Analytical or scientific software"
+    },
+    "3147": {
+      "description": "Customer relationship management CRM software"
+    },
+    "3148": {
+      "description": "Object or component oriented development software"
+    },
+    "3149": {
+      "description": "Program testing software"
+    },
+    "3150": {
+      "description": "Data base user interface and query software"
+    },
+    "3151": {
+      "description": "Operating system software"
+    },
+    "3152": {
+      "description": "Cloud-based data access and sharing software"
+    },
+    "3153": {
+      "description": "Data mining software"
+    },
+    "3154": {
+      "description": "Cloud-based management software"
+    },
+    "3155": {
+      "description": "Application server software"
+    },
+    "3156": {
+      "description": "Web platform development software"
+    },
+    "3157": {
+      "description": "Data base user interface and query software"
+    },
+    "3158": {
+      "description": "Object or component oriented development software"
+    },
+    "3159": {
+      "description": "Business intelligence and data analysis software"
+    },
+    "3160": {
+      "description": "Analytical or scientific software"
+    },
+    "3161": {
+      "description": "Data base management system software"
+    },
+    "3162": {
+      "description": "Analytical or scientific software"
+    },
+    "3163": {
+      "description": "Video creation and editing software"
+    },
+    "3164": {
+      "description": "Data base user interface and query software"
+    },
+    "3165": {
+      "description": "Graphics or photo imaging software"
+    },
+    "3166": {
+      "description": "Object or component oriented development software"
+    },
+    "3167": {
+      "description": "Operating system software"
+    },
+    "3168": {
+      "description": "Operating system software"
+    },
+    "3169": {
+      "description": "Web platform development software"
+    },
+    "3170": {
+      "description": "Web page creation and editing software"
+    },
+    "3171": {
+      "description": "Enterprise resource planning ERP software"
+    },
+    "3172": {
+      "description": "Data base user interface and query software"
+    },
+    "3173": {
+      "description": "Video conferencing software"
+    },
+    "3174": {
+      "description": "Medical software"
+    },
+    "3175": {
+      "description": "Object or component oriented development software"
+    }
+  }
+}

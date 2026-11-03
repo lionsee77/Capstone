@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from ..config import load_config
+from ..enrichment.audit import EVENTS
 from ..enrichment.bulk_decisions import BulkDraft, draft_decisions
 from ..enrichment.case_a import run_case_a
 from ..enrichment.case_b import run_case_b
@@ -29,6 +30,14 @@ from .scoring import load_taxonomies
 
 # merge-preview's hierarchy screening thresholds when the caller gives none; adapters show these as defaults.
 SCREENING_DEFAULTS = ScreeningSettings()
+
+
+# Reject blank actor input before any use-case reads or writes and normalize attribution once.
+def _validated_actor(actor: str) -> str:
+    actor = actor.strip()
+    if not actor:
+        raise ValueError("actor must not be blank")
+    return actor
 
 
 def _timestamped(parent: str) -> str:
@@ -62,13 +71,16 @@ def case_b(
     ))
 
 
+# Validate submission inputs before loading sources and running the merge workflow.
 def merge_preview(
     config_path: str | Path, inputs: list[str | Path], *, baseline: str, out_dir: str | Path | None = None,
     decisions: str | Path | None = None, semantic_model: str | None = None,
     screening_lexical: float | None = None, screening_semantic: float | None = None,
     change_log: str | Path | None = None,
+    actor: str = "unspecified",
 ) -> MergeRun:
     """Validate, deduplicate and resolve producer outputs into `out_dir` (default `merge_runs/<timestamp>`)."""
+    actor = _validated_actor(actor)
     from ..matching.semantic import SemanticMatcher
 
     if not inputs:
@@ -78,12 +90,15 @@ def merge_preview(
         semantic_threshold=SCREENING_DEFAULTS.semantic_threshold if screening_semantic is None else screening_semantic,
     )
     taxonomy = load_taxonomies(config_path, baseline)[baseline]
-    return run_merge_preview(
+    result = run_merge_preview(
         list(inputs), taxonomy, out_dir=out_dir or _timestamped("merge_runs"),
         decisions=load_decisions(decisions) if decisions else [],
         semantic_matcher=SemanticMatcher(semantic_model) if semantic_model else None,
-        screening_settings=screening_settings, change_log=change_log,
+        screening_settings=screening_settings, change_log=change_log, actor=actor,
     )
+    if result.audit_delivery_error:
+        result.warnings.append(f"Merge preview saved at {result.out_dir}. {result.audit_delivery_error}")
+    return result
 
 
 def review_proposals(
@@ -136,24 +151,32 @@ class IntegrateResult:
     warnings: list[str] = field(default_factory=list)
 
 
+# Return the published snapshot with audit delivery and taxonomy quality warnings.
 def integrate(
     config_path: str | Path, merge_run: str | Path, *, baseline: str, out_dir: str | Path | None = None,
+    actor: str = "unspecified",
 ) -> IntegrateResult:
     """Turn a fully reviewed merge run into an enriched snapshot (default `integrations/<timestamp>`)."""
+    actor = _validated_actor(actor)
     merge_run = Path(merge_run)
     resolution, info = load_merge_run(merge_run)
     config = load_config(config_path)
     dataset = next((d for d in config.datasets if d.name == baseline), None)
     if dataset is None:
         raise IntegrationError(f"{config_path} declares no dataset named {baseline!r}")
+    events_path = merge_run / "audit_events.json"
+    review_events = EVENTS.validate_json(events_path.read_bytes()) if events_path.exists() else []
     result = integrate_snapshot(
-        resolution, dataset, out_dir=out_dir or _timestamped("integrations"), scoring_config=config,
+        resolution, dataset, out_dir=out_dir or _timestamped("integrations"), scoring_config=config, actor=actor,
         provenance={
             "merge_run": str(merge_run), "scoring_config": str(config_path),
             **(info.model_dump(exclude_unset=True) if info else {}),
         },
+        review_events=review_events,
     )
     warnings = []
+    if result.audit_delivery_error:
+        warnings.append(f"Snapshot saved at {result.out_dir}. {result.audit_delivery_error}")
     omitted = sum(result.manifest["omitted_records"].values())
     if omitted:
         warnings.append(f"{omitted} input record(s) were omitted before review and are not in the snapshot "

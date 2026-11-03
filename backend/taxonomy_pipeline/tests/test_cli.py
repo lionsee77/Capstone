@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 from pathlib import Path
 
 import pytest
 import yaml
 
+from taxonomy_pipeline.audit import ChangeEvent, ChangeQuery, read_changes
 from taxonomy_pipeline.cli import main
+from taxonomy_pipeline.enrichment import audit
 from taxonomy_pipeline.quality.definitions import METRIC_DEFINITIONS_VERSION
 from tests.conftest import FIXTURES
 
@@ -73,6 +76,54 @@ def test_merge_preview_applies_and_logs_hierarchy_decisions(tmp_path: Path) -> N
     before = log_path.read_bytes(), (output / "resolution.json").read_bytes()
     assert main([*command, "--decisions", str(decisions)]) == 1
     assert before == (log_path.read_bytes(), (output / "resolution.json").read_bytes())
+
+
+@pytest.mark.parametrize("delivery_error", [
+    sqlite3.OperationalError("database unavailable"),
+    PermissionError("database parent access denied"),
+    ValueError("Conflicting audit event ID: example"),
+])
+# Saved previews must remain successful and recover through sync without rewriting their artifacts.
+def test_merge_preview_warns_and_recovers_when_audit_delivery_fails(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch,
+    delivery_error: Exception,
+) -> None:
+    config = _write_stage_config(tmp_path)
+    producer = tmp_path / "producer.json"
+    producer.write_text(json.dumps([{
+        "source_dataset": "skillsfuture", "tag_id": "9001", "tag": "Campaign planning",
+        "original_classification": "classified", "service": "Industry", "category": "Marketing",
+        "speciality": "Brand Strategy", "confidence": 0.8, "reason": "Known placement",
+    }]), encoding="utf-8")
+    decisions = tmp_path / "decisions.json"
+    decisions.write_text(json.dumps([{
+        "members": [{"source_dataset": "skillsfuture", "tag_id": "9001"}],
+        "action": "create", "reason": "Reviewed new skill", "approved_speciality_ids": [10],
+    }]), encoding="utf-8")
+    output = tmp_path / "merge with spaces"
+
+    # Fail only database delivery, after the run has saved its durable evidence.
+    def unavailable(events: list[ChangeEvent]) -> int:
+        raise delivery_error
+
+    with monkeypatch.context() as patch:
+        patch.setattr(audit, "log_changes", unavailable)
+        assert main(["merge-preview", "--config", str(config), "--input", str(producer),
+                     "--out-dir", str(output), "--decisions", str(decisions), "--actor", "Reviewer"]) == 0
+    printed = capsys.readouterr()
+    assert "[COMPLETE]" in printed.err and "[WARN]" in printed.err and "[FAILED]" not in printed.err
+    assert "records without saturation_run_id" in printed.err  # Existing warnings are retained.
+    assert str(delivery_error) in printed.err
+    assert f'sync-changes --events "{output / "audit_events.json"}"' in printed.err
+    assert read_changes(ChangeQuery()).total == 0
+    saved = {path.name: path.read_bytes() for path in output.iterdir()}
+    assert {"run.json", "preview.csv", "change_log.jsonl", "audit_events.json"} <= saved.keys()
+    assert main(["sync-changes", "--events", str(output / "audit_events.json")]) == 0
+    events = read_changes(ChangeQuery()).changes
+    assert len(events) == 1 and events[0].actor == "Reviewer"
+    assert main(["sync-changes", "--events", str(output / "audit_events.json")]) == 0
+    assert "recorded 0 new audit events" in capsys.readouterr().out
+    assert saved == {path.name: path.read_bytes() for path in output.iterdir()}
 
 
 @pytest.mark.parametrize(("flag", "value"), [("--screening-lexical", "1.1"), ("--screening-semantic", "nan")])
@@ -176,6 +227,52 @@ def test_case_a_then_merge_preview_run_end_to_end_from_the_cli(tmp_path, saturat
     assert manifest["merge_run"]["saturation_run_ids"] == [records[0]["saturation_run_id"]]
     # The snapshot's own config scores the enriched taxonomy.
     assert main(["run", "--config", str(snapshot / "enriched.yaml"), "--no-save"]) == 0
+
+
+@pytest.mark.parametrize("delivery_error", [
+    sqlite3.OperationalError("database unavailable"),
+    PermissionError("database parent access denied"),
+    ValueError("Conflicting audit event ID: example"),
+])
+# Published snapshots remain successful CLI results with actionable audit recovery warnings.
+def test_integrate_reports_success_and_recovers_audit_delivery_without_reintegration(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch,
+    delivery_error: Exception,
+) -> None:
+    config_path = _write_stage_config(tmp_path)
+    producer = tmp_path / "producer.json"
+    producer.write_text(json.dumps([{
+        "source_dataset": "skillsfuture", "tag_id": "9001", "tag": "campaign planning",
+        "original_classification": "classified", "service": "Industry", "category": "Marketing",
+        "speciality": "Brand Strategy", "confidence": 0.95, "reason": "Known placement",
+    }]), encoding="utf-8")
+    merge_run = tmp_path / "merge"
+    assert main(["merge-preview", "--config", str(config_path), "--input", str(producer),
+                 "--out-dir", str(merge_run)]) == 0
+    capsys.readouterr()
+
+    # Simulate a delivery failure only after merge preparation has completed.
+    def unavailable(events: list[ChangeEvent]) -> int:
+        raise delivery_error
+
+    snapshot = tmp_path / "snapshot with spaces"
+    with monkeypatch.context() as patch:
+        patch.setattr(audit, "log_changes", unavailable)
+        assert main(["integrate", "--config", str(config_path), "--merge-run", str(merge_run),
+                     "--out-dir", str(snapshot)]) == 0
+    output = capsys.readouterr()
+    assert "[OK]" in output.err and "[WARN]" in output.err and "[FAILED]" not in output.err
+    assert str(delivery_error) in output.err
+    assert f'sync-changes --events "{snapshot / "audit_events.json"}"' in output.err
+    assert f"wrote {snapshot}/" in output.out
+    assert read_changes(ChangeQuery(action="add")).total == 0
+    saved = {path.relative_to(snapshot): path.read_bytes() for path in snapshot.rglob("*") if path.is_file()}
+    assert main(["sync-changes", "--events", str(snapshot / "audit_events.json")]) == 0
+    assert read_changes(ChangeQuery(action="add")).total == 2
+    capsys.readouterr()
+    assert main(["sync-changes", "--events", str(snapshot / "audit_events.json")]) == 0
+    assert "recorded 0 new audit events" in capsys.readouterr().out
+    assert saved == {path.relative_to(snapshot): path.read_bytes() for path in snapshot.rglob("*") if path.is_file()}
 
 
 def test_integrate_refuses_a_merge_run_with_nothing_to_add(tmp_path, capsys):
@@ -525,3 +622,36 @@ def test_compare_refuses_an_output_suffix_it_cant_read_a_format_from(tmp_path, c
 def test_compare_fails_cleanly_for_an_unknown_report(tmp_path, isolated_db, capsys):
     assert main(["compare", str(tmp_path / "missing.json"), "no-such-run"]) == 1
     assert "[FAILED] compare:" in capsys.readouterr().err
+
+
+def test_import_source_writes_the_dump_and_prints_the_next_round_commands(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str],
+) -> None:
+    (tmp_path / "flat.csv").write_text("Sector,Role,Skill\nICT,Data Analyst,SQL\n", encoding="utf-8")
+    (tmp_path / "mapping.yaml").write_text(yaml.safe_dump({
+        "name": "demo", "display_name": "Demo", "source": "flat.csv", "service_id": 1,
+        "columns": {"category": "Sector", "speciality": "Role", "tag": "Skill"},
+    }), encoding="utf-8")
+    snapshot = tmp_path / "snapshot"
+    snapshot.mkdir()
+    (snapshot / "enriched.yaml").write_text(yaml.safe_dump({
+        "datasets": [{"name": "enriched", "paths": [str(FIXTURES / "mini_original.sql")]}], "metrics": [],
+    }), encoding="utf-8")
+    round_config = tmp_path / "round.yaml"
+
+    assert main(["import-source", "--mapping", str(tmp_path / "mapping.yaml"), "--baseline-snapshot",
+                 str(snapshot), "--round-config", str(round_config)]) == 0
+    out, err = capsys.readouterr()
+    assert "[OK] 1 categories, 1 specialities, 1 tags, 1 links" in err
+    assert (tmp_path / "demo_taxonomy.sql").exists() and round_config.exists()
+    assert "--provider tag_context --context" in out and "--incoming demo" in out
+
+
+def test_import_source_fails_cleanly_for_a_missing_column(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    (tmp_path / "flat.csv").write_text("Sector,Role\nICT,Data Analyst\n", encoding="utf-8")
+    (tmp_path / "mapping.yaml").write_text(yaml.safe_dump({
+        "name": "demo", "display_name": "Demo", "source": "flat.csv", "service_id": 1,
+        "columns": {"category": "Sector", "speciality": "Role", "tag": "Skill"},
+    }), encoding="utf-8")
+    assert main(["import-source", "--mapping", str(tmp_path / "mapping.yaml")]) == 1
+    assert "[FAILED] import-source:" in capsys.readouterr().err

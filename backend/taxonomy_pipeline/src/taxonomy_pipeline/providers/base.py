@@ -35,3 +35,7 @@ class SourceProvider(ABC):
 
     def context_for(self, contexts: dict[str, dict[str, Any]], tag_id: str) -> dict[str, Any]:
         return contexts.get(tag_id, self.missing_context)
+
+    def source_name(self, path: str | Path | None) -> str:
+        """How the prompt names the source; a provider shared by many sources reads it from `path`."""
+        return self.display_name

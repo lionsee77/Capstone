@@ -224,7 +224,7 @@ def build_prompt(
     services: list[str], categories: list[dict[str, str]], specialities: list[dict[str, str]],
     batch: list[dict[str, Any]], *, source_name: str,
 ) -> str:
-    """The classification prompt for one batch; `source_name` is the provider's `display_name`."""
+    """The classification prompt for one batch; `source_name` is the provider's `source_name()`."""
     return (
         f"You are classifying incoming {source_name} skills into Ankit's taxonomy. Follow this decision procedure "
         "for every tag. First, inspect the supplied service/category/speciality hierarchy and choose the single "
@@ -382,6 +382,7 @@ async def run_case_b(
     )
 
     contexts = provider.load_tag_context(context)
+    source_name = provider.source_name(context)
     services, categories, specialities = baseline_hierarchy(datasets[baseline])
     if client is None:
         client = _openai_client()
@@ -403,7 +404,7 @@ async def run_case_b(
         batch = []
         for tag_id in pending[start:start + batch_size]:
             batch.append({**provider.context_for(contexts, tag_id), "tag_id": tag_id, "title": tags[tag_id]})
-        prompt = build_prompt(services, categories, specialities, batch, source_name=provider.display_name)
+        prompt = build_prompt(services, categories, specialities, batch, source_name=source_name)
         for proposal in await classify_batch(client, prompt, batch, model):
             proposals[proposal["tag_id"]] = proposal
         _save_checkpoint(checkpoint, provenance, proposals)

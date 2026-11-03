@@ -13,6 +13,8 @@ as a failed command; warnings come back on the result instead of being printed.
 - `enrichment.py`: `case-a`, `case-b`, `merge-preview`, `review-proposals`
   (also `/proposals`), `bulk-decide`, `integrate`.
 - `browse.py`: taxonomy search and concept detail for `/taxonomy`.
+- `sources.py`: `import-source` (flat source -> taxonomy dump, tag context and
+  the next round's config).
 
 Security checks (the API token, allowed data roots, allowed merge-run
 directories) stay in `api/`: they decide whether a request may run at all.

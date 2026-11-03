@@ -2,12 +2,19 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 from pathlib import Path
 
 import pytest
+from fastapi.testclient import TestClient
 
+from taxonomy_pipeline.api.app import app
+from taxonomy_pipeline.app.changes import sync_changes
+from taxonomy_pipeline.app.enrichment import integrate as integrate_use_case
 from taxonomy_pipeline.app.scoring import load_datasets
+from taxonomy_pipeline.audit import ChangeEvent, ChangeQuery, read_changes
 from taxonomy_pipeline.config import DatasetConfig, MetricConfig, PipelineConfig, load_config
+from taxonomy_pipeline.enrichment import audit
 from taxonomy_pipeline.enrichment import integrate as integrate_module
 from taxonomy_pipeline.enrichment.integrate import IntegrationError, _additions_sql, integrate
 from taxonomy_pipeline.enrichment.models import PlacementPath, ResolutionReport, ReviewDecision
@@ -58,13 +65,16 @@ def _decisions(*, merge_homonyms: bool = True) -> list[ReviewDecision]:
     return [d for d in decisions if d not in pythons] + [combined]
 
 
+# Build a saved reviewed merge run with optional reviewer attribution for integration tests.
 def _resolution(
     tmp_path: Path, baseline: DatasetConfig, *, decisions: list[ReviewDecision] | None = None,
+    actor: str = "unspecified",
 ) -> ResolutionReport:
     taxonomy = SqlDumpSource(baseline.name, baseline.paths).load()
     run = run_merge_preview(
         PRODUCER_FILES, taxonomy, out_dir=tmp_path / "merge",
         decisions=_decisions() if decisions is None else decisions,
+        actor=actor,
     )
     return ResolutionReport.model_validate_json((run.out_dir / "resolution.json").read_text(encoding="utf-8"))
 
@@ -73,7 +83,9 @@ def test_writes_a_snapshot_of_baseline_plus_reviewed_additions(tmp_path, baselin
     result = integrate(_resolution(tmp_path, baseline), baseline, out_dir=tmp_path / "out")
 
     out = tmp_path / "out"
-    assert sorted(p.name for p in out.iterdir()) == ["additions.sql", "baseline", "enriched.yaml", "manifest.json"]
+    assert sorted(p.name for p in out.iterdir()) == [
+        "additions.sql", "audit_events.json", "baseline", "enriched.yaml", "manifest.json",
+    ]
     assert (out / "baseline" / "baseline.sql").read_bytes() == Path(baseline.paths[0]).read_bytes()
     # "Data visualization" and one shared "Python", each linked.
     assert result.counts["tags"] == 2
@@ -115,6 +127,146 @@ def test_rerunning_the_same_merge_run_gives_identical_ids(tmp_path, baseline):
     assert first.manifest["enriched_snapshot_id"] == second.manifest["enriched_snapshot_id"]
 
 
+# Each generated row is audited with its concrete snapshot ID and recoverable proposal references.
+def test_snapshot_additions_are_audited_and_traceable(tmp_path: Path, baseline: DatasetConfig) -> None:
+    resolution = _resolution(tmp_path, baseline)
+    snapshot = integrate(resolution, baseline, out_dir=tmp_path / "out", actor="Bryan")
+    events = read_changes(ChangeQuery(action="add", limit=200)).changes
+    assert len(events) == sum(snapshot.counts.values())
+    assert all(event.scope == "snapshot" and event.actor == "Bryan" for event in events)
+    assert all(event.snapshot_id == snapshot.manifest["enriched_snapshot_id"] for event in events)
+    assert all(event.concept_id == str(event.after["id"]) for event in events)
+    assert {event.concept_level for event in events} == {"tag", "speciality_tag"}
+    proposal = next(p for p in resolution.screening.proposals if any(p.proposal_id in e.proposal_ids for e in events))
+    history = read_changes(ChangeQuery(proposal_id=proposal.proposal_id, limit=200))
+    assert any(event.action == "add" for event in history.changes)
+    reviewed = read_changes(ChangeQuery(action="review_decision", limit=200)).changes
+    decision_ids = {reference for event in reviewed for reference in event.decision_ids}
+    assert any(decision_ids.intersection(event.decision_ids) for event in events)
+    assert sync_changes(snapshot.out_dir / "audit_events.json") == 0
+
+
+# Newly created hierarchy concepts retain their own proposal and the parent that enabled them.
+def test_new_hierarchy_rows_keep_proposal_lineage(tmp_path: Path, baseline: DatasetConfig) -> None:
+    taxonomy = SqlDumpSource(baseline.name, baseline.paths).load()
+    producer = tmp_path / "new.json"
+    producer.write_text(json.dumps([{
+        "source_dataset": "feed", "tag_id": "1", "tag": "Qubit measurement", "original_classification": "classified",
+        "service": "Subject", "category": "Quantum tooling", "speciality": "Qubit calibration",
+        "confidence": 0.9, "reason": "New field",
+    }]), encoding="utf-8")
+    run_merge_preview([producer], taxonomy, out_dir=tmp_path / "merge")
+    resolution = ResolutionReport.model_validate_json((tmp_path / "merge" / "resolution.json").read_bytes())
+    integrate(resolution, baseline, out_dir=tmp_path / "out")
+    events = read_changes(ChangeQuery(action="add")).changes
+    by_level = {event.concept_level: event for event in events}
+    assert set(by_level) == {"category", "speciality", "tag", "speciality_tag"}
+    proposals = {p.level: p.proposal_id for p in resolution.screening.proposals}
+    assert by_level["category"].proposal_ids == [proposals["category"]]
+    assert set(by_level["speciality"].proposal_ids) == set(proposals.values())
+    assert set(by_level["speciality_tag"].proposal_ids) == set(proposals.values())
+
+
+# A concept lookup exposes original reviewers without changing historical review rows or taxonomy artifacts.
+def test_concept_history_carries_original_reviews_and_keeps_the_integrator_separate(
+    tmp_path: Path, baseline: DatasetConfig, isolated_db: Path,
+) -> None:
+    _resolution(tmp_path, baseline, actor="Original reviewer")
+    reviews = read_changes(ChangeQuery(action="review_decision", limit=200))
+    config = tmp_path / "config.yaml"
+    config.write_text(PipelineConfig(datasets=[baseline], metrics=[]).model_dump_json(), encoding="utf-8")
+    result = integrate_use_case(config, tmp_path / "merge", baseline=baseline.name,
+                                out_dir=tmp_path / "out", actor="Integrator")
+    additions = read_changes(ChangeQuery(action="add", concept_level="tag")).changes
+    tag = next(event for event in additions if event.decision_ids)
+    before = {path: path.read_bytes() for path in result.integration.out_dir.rglob("*") if path.is_file()}
+    before[isolated_db] = isolated_db.read_bytes()
+    with TestClient(app) as client:
+        response = client.get("/changes", params={
+            "dataset": baseline.name, "snapshot_id": tag.snapshot_id, "concept_level": "tag",
+            "concept_id": tag.concept_id,
+        })
+    assert response.status_code == 200
+    assert response.json()["total"] == 1
+    event = ChangeEvent.model_validate(response.json()["changes"][0])
+    assert event.actor == "Integrator"
+    assert event.linked_reviews
+    originals = {review.event_id: review for review in reviews.changes}
+    for linked in event.linked_reviews:
+        assert linked.actor == "Original reviewer"
+        assert linked.decision_id in event.decision_ids
+        assert linked.review_event_ids
+        for event_id in linked.review_event_ids:
+            assert linked.decision == originals[event_id].decision
+            assert linked.occurred_at == originals[event_id].occurred_at
+    assert read_changes(ChangeQuery(action="review_decision", limit=200)) == reviews
+    assert {path: path.read_bytes() for path in before} == before
+    assert sync_changes(result.integration.out_dir / "audit_events.json") == 0
+
+
+# Legacy input retains the decision but does not invent a reviewer or review timestamp.
+def test_legacy_integration_preserves_decisions_with_unknown_review_attribution(
+    tmp_path: Path, baseline: DatasetConfig,
+) -> None:
+    resolution = _resolution(tmp_path, baseline)
+    integrate(resolution, baseline, out_dir=tmp_path / "out", actor="Integrator")
+    events = read_changes(ChangeQuery(action="add", limit=200)).changes
+    linked = [review for event in events for review in event.linked_reviews]
+    assert linked
+    assert all(review.actor is None and review.occurred_at is None and not review.review_event_ids for review in linked)
+    assert all(review.decision in [decision.model_dump(mode="json") for decision in resolution.decisions]
+               for review in linked)
+
+
+@pytest.mark.parametrize("delivery_error", [
+    sqlite3.OperationalError("database unavailable"),
+    PermissionError("database parent access denied"),
+    ValueError("Conflicting audit event ID: example"),
+])
+# Expected audit failures return the published snapshot and retain replayable events.
+def test_snapshot_survives_audit_delivery_failure_and_can_be_synced(
+    tmp_path: Path, baseline: DatasetConfig, monkeypatch: pytest.MonkeyPatch, delivery_error: Exception,
+) -> None:
+    resolution = _resolution(tmp_path, baseline)
+
+    # Fail only the SQLite delivery, after the staged snapshot is published.
+    def unavailable(events: list[ChangeEvent]) -> int:
+        raise delivery_error
+
+    monkeypatch.setattr(audit, "log_changes", unavailable)
+    result = integrate(resolution, baseline, out_dir=tmp_path / "out")
+    assert result.out_dir == tmp_path / "out"
+    assert result.counts["tags"] == 2
+    assert str(delivery_error) in result.audit_delivery_error
+    assert f'sync-changes --events "{result.out_dir / "audit_events.json"}"' in result.audit_delivery_error
+    assert (tmp_path / "out" / "enriched.yaml").exists()
+    assert load_datasets(load_config(result.out_dir / "enriched.yaml"))["enriched"].tags
+    assert read_changes(ChangeQuery(action="add")).total == 0
+    assert sync_changes(tmp_path / "out" / "audit_events.json") > 0
+    assert sync_changes(tmp_path / "out" / "audit_events.json") == 0
+
+
+# Failure to save durable events still prevents publication and is not an audit delivery warning.
+def test_audit_artifact_write_failure_prevents_snapshot_publication(
+    tmp_path: Path, baseline: DatasetConfig, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    resolution = _resolution(tmp_path, baseline)
+    write_bytes = Path.write_bytes
+
+    # Refuse only the staged audit artifact, leaving other filesystem operations available.
+    def deny_audit_file(path: Path, data: bytes) -> int:
+        if path.name == "audit_events.json":
+            raise PermissionError("audit artifact access denied")
+        return write_bytes(path, data)
+
+    monkeypatch.setattr(Path, "write_bytes", deny_audit_file)
+    with pytest.raises(PermissionError, match="audit artifact access denied"):
+        integrate(resolution, baseline, out_dir=tmp_path / "out")
+    assert not (tmp_path / "out").exists()
+    assert not any(path.name.startswith(".out.") for path in tmp_path.iterdir())
+    assert read_changes(ChangeQuery(action="add")).total == 0
+
+
 def test_manifest_records_where_the_snapshot_came_from(tmp_path, baseline):
     resolution = _resolution(tmp_path, baseline)
     manifest = integrate(
@@ -137,6 +289,7 @@ def test_refuses_while_sources_are_pending_review(tmp_path, baseline):
     with pytest.raises(IntegrationError, match=r"still pending review .*rerun merge-preview with --decisions"):
         integrate(resolution, baseline, out_dir=tmp_path / "out")
     assert not (tmp_path / "out").exists()
+    assert read_changes(ChangeQuery(action="add")).total == 0
 
 
 def test_refuses_when_the_baseline_changed_since_the_merge_run(tmp_path, baseline):
@@ -228,6 +381,9 @@ def test_refuses_flagged_review_candidates_until_a_reviewer_approves_one_path(tm
     assert [categories[row["category_id"]] for row in fire] == ["Data analytics"]  # the approved candidate only
     assert {row["name"] for row in enriched.tags[len(taxonomy.tags):]} == {"Fire Prevention", "Spreadsheet Modelling"}
     assert result.counts["tags"] == 2
+    resolution = ResolutionReport.model_validate_json((tmp_path / "reviewed" / "resolution.json").read_bytes())
+    rejected = next(p for p in resolution.screening.proposals if p.path == ["Subject", "biology", "fire prevention"])
+    assert read_changes(ChangeQuery(action="add", proposal_id=rejected.proposal_id)).total == 0
 
 
 def test_a_reviewer_can_map_an_ambiguous_tag_onto_the_existing_tag_it_resembles(tmp_path, baseline):

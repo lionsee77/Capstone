@@ -1,9 +1,9 @@
-"""`taxonomy-pipeline run|check-comparable|compare|serve|case-a|case-b|merge-preview|review-proposals|
-bulk-decide|integrate`
+"""`taxonomy-pipeline run|check-comparable|compare|serve|import-source|case-a|case-b|merge-preview|
+review-proposals|bulk-decide|integrate`
 
 A thin adapter over `app/`: each command parses its flags, calls the one use
 case behind it (`app.scoring` for `run` and `check-comparable`, `app.comparison` for `compare`,
-`app.enrichment` for the classification commands) and turns the result into
+`app.sources` for `import-source`, `app.enrichment` for the classification commands) and turns the result into
 printed text and an exit code. `run` calls the same `run_pipeline` the FastAPI
 `/runs` route calls. Anything else a command does - loading, checks, writing
 outputs - belongs in its use case, not here.
@@ -12,12 +12,16 @@ from __future__ import annotations
 
 import argparse
 import logging
+import sqlite3
 import sys
 from pathlib import Path
 
 from .app import comparison as comparisons
 from .app import enrichment as use_cases
+from .app.changes import changes, sync_changes
 from .app.scoring import check_runs, result_labels, run_config, write_report
+from .app.sources import import_source
+from .audit.models import ChangeQuery
 
 
 def _cmd_run(args: argparse.Namespace) -> int:
@@ -106,6 +110,35 @@ def _cmd_serve(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_import_source(args: argparse.Namespace) -> int:
+    try:
+        result = import_source(
+            args.mapping, out_dir=args.out_dir, baseline_snapshot=args.baseline_snapshot,
+            template_config=args.template, round_config=args.round_config,
+        )
+    except (OSError, ValueError) as exc:
+        print(f"[FAILED] import-source: {exc}", file=sys.stderr)
+        return 1
+    for warning in result.warnings:
+        print(f"[WARN] {warning}", file=sys.stderr)
+    counts = result.counts
+    print(
+        f"[OK] {counts['categories']} categories, {counts['specialities']} specialities, {counts['tags']} tags, "
+        f"{counts['speciality_tags']} links",
+        file=sys.stderr,
+    )
+    print(f"wrote {result.sql_path} and {result.context_path}")
+    if result.round_config:
+        names = f"--config {result.round_config} --baseline round_baseline --incoming {result.name}"
+        print(f"wrote {result.round_config}; next:")
+        print(f"  taxonomy-pipeline run --config {result.round_config} --output judged_report_{result.name}.json")
+        print(f"  taxonomy-pipeline case-a {names} --report judged_report_{result.name}.json "
+              f"--output case_a_{result.name}.json")
+        print(f"  taxonomy-pipeline case-b {names} --report judged_report_{result.name}.json "
+              f"--provider tag_context --context {result.context_path} --output case_b_{result.name}.json")
+    return 0
+
+
 def _cmd_case_a(args: argparse.Namespace) -> int:
     try:
         records = use_cases.case_a(
@@ -138,9 +171,9 @@ def _cmd_merge_preview(args: argparse.Namespace) -> int:
         run = use_cases.merge_preview(
             args.config, args.input, baseline=args.baseline, out_dir=args.out_dir, decisions=args.decisions,
             semantic_model=args.semantic_model, screening_lexical=args.screening_lexical,
-            screening_semantic=args.screening_semantic, change_log=args.change_log,
+            screening_semantic=args.screening_semantic, change_log=args.change_log, actor=args.actor,
         )
-    except (OSError, ValueError) as exc:
+    except (OSError, ValueError, sqlite3.Error) as exc:
         print(f"[FAILED] merge-preview: {exc}", file=sys.stderr)
         return 1
 
@@ -199,7 +232,9 @@ def _cmd_bulk_decide(args: argparse.Namespace) -> int:
 
 def _cmd_integrate(args: argparse.Namespace) -> int:
     try:
-        outcome = use_cases.integrate(args.config, args.merge_run, baseline=args.baseline, out_dir=args.out_dir)
+        outcome = use_cases.integrate(
+            args.config, args.merge_run, baseline=args.baseline, out_dir=args.out_dir, actor=args.actor,
+        )
     except (OSError, ValueError) as exc:
         print(f"[FAILED] integrate: {exc}", file=sys.stderr)
         return 1
@@ -223,6 +258,29 @@ def _add_dataset_args(parser: argparse.ArgumentParser, *, incoming: bool = True)
         parser.add_argument("--incoming", default="skillsfuture", help="taxonomy dataset the new tags come from")
 
 
+# Print filtered audit history through the same use case as GET /changes.
+def _cmd_changes(args: argparse.Namespace) -> int:
+    try:
+        query = ChangeQuery(**{key: getattr(args, key) for key in ChangeQuery.model_fields})
+        print(changes(query).model_dump_json(indent=2))
+    except (OSError, ValueError, sqlite3.Error) as exc:
+        print(f"[FAILED] changes: {exc}", file=sys.stderr)
+        return 1
+    return 0
+
+
+# Retry delivery from saved audit events without changing taxonomy artifacts.
+def _cmd_sync_changes(args: argparse.Namespace) -> int:
+    try:
+        count = sync_changes(args.events)
+    except (OSError, ValueError, sqlite3.Error) as exc:
+        print(f"[FAILED] sync-changes: {exc}", file=sys.stderr)
+        return 1
+    print(f"recorded {count} new audit events")
+    return 0
+
+
+# Configure the CLI adapters and their shared use-case inputs.
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="taxonomy_pipeline")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -261,6 +319,17 @@ def build_parser() -> argparse.ArgumentParser:
     serve_parser.add_argument("--reload", action="store_true")
     serve_parser.set_defaults(func=_cmd_serve)
 
+    source = subparsers.add_parser("import-source", help="turn a flat CSV/xlsx source into a taxonomy SQL dump")
+    source.add_argument("--mapping", required=True, help="source mapping YAML: file, columns, service, filters")
+    source.add_argument("--out-dir", help="where to write <name>_taxonomy.sql and <name>_tag_context.json "
+                        "(default: the mapping's folder)")
+    source.add_argument("--baseline-snapshot",
+                        help="previous round's integrate snapshot (integrations/<name>); also writes a round config")
+    source.add_argument("--round-config", help="round config to write (default: configs/<snapshot>_vs_<name>.yaml)")
+    source.add_argument("--template", help="round config whose metrics to copy "
+                        "(default: configs/original_vs_skillsfuture.yaml)")
+    source.set_defaults(func=_cmd_import_source)
+
     report_help = "saved `run` report whose saturation result decides which tags are new"
     case_a = subparsers.add_parser("case-a", help="place new tags that have their own source category")
     _add_dataset_args(case_a)
@@ -294,6 +363,7 @@ def build_parser() -> argparse.ArgumentParser:
     merge.add_argument("--screening-semantic", type=float, default=screening_defaults.semantic_threshold,
                        help="hierarchy semantic review threshold, 0-1 (default: %(default)s; needs --semantic-model)")
     merge.add_argument("--out-dir", help="where to write the reports (default: merge_runs/<timestamp>)")
+    merge.add_argument("--actor", default="unspecified", help="self-reported reviewer identity for new audit events")
     merge.add_argument("--change-log", help="review change log to append new decisions to, shared across runs "
                        "(default: <out-dir>/change_log.jsonl); decisions it already holds aren't logged again")
     merge.set_defaults(func=_cmd_merge_preview)
@@ -322,7 +392,19 @@ def build_parser() -> argparse.ArgumentParser:
     _add_dataset_args(integrate, incoming=False)
     integrate.add_argument("--merge-run", required=True, help="merge-preview output folder (merge_runs/<timestamp>)")
     integrate.add_argument("--out-dir", help="where to write the snapshot (default: integrations/<timestamp>)")
+    integrate.add_argument("--actor", default="unspecified", help="self-reported operator identity for audit events")
     integrate.set_defaults(func=_cmd_integrate)
+
+    history = subparsers.add_parser("changes", help="read audit history without changing the taxonomy")
+    for field in ChangeQuery.model_fields:
+        if field not in {"limit", "offset"}:
+            history.add_argument("--" + field.replace("_", "-"))
+    history.add_argument("--offset", type=int, default=0)
+    history.add_argument("--limit", type=int, default=50, help="page size, 1-200")
+    history.set_defaults(func=_cmd_changes)
+    sync = subparsers.add_parser("sync-changes", help="retry SQLite delivery of a saved audit_events.json file")
+    sync.add_argument("--events", required=True)
+    sync.set_defaults(func=_cmd_sync_changes)
 
     return parser
 

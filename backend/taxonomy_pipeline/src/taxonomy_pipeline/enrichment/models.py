@@ -244,7 +244,7 @@ class ReviewDecision(BaseModel):
 
 
 class ReviewDecisionEvent(BaseModel):
-    """Local PB09 handoff: one validated submission, not a taxonomy database mutation."""
+    """Compatible JSONL submission envelope, translated into PB09 events rather than taxonomy mutations."""
 
     model_config = ConfigDict(strict=True, extra="forbid")
 
@@ -252,6 +252,7 @@ class ReviewDecisionEvent(BaseModel):
     submission_id: NonBlankText
     recorded_at: datetime
     baseline_snapshot_id: NonBlankText
+    actor: NonBlankText = "unspecified"
     event_type: Literal["review_decision"] = "review_decision"
     decision: ReviewDecision
 
