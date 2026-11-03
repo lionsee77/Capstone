@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from collections.abc import Callable
+from pathlib import Path
+
 from taxonomy_pipeline import db
 from taxonomy_pipeline.app.lineage import taxonomy_lineage
 from taxonomy_pipeline.models import RunReport
@@ -7,7 +10,7 @@ from taxonomy_pipeline.models import RunReport
 BASELINE = {"tags.sql": "INSERT INTO tags VALUES (1,'Python');\n"}
 
 
-def _two_rounds(tmp_path, integration_round):
+def _two_rounds(tmp_path: Path, integration_round: Callable[..., Path]) -> tuple[Path, Path]:
     first = integration_round("round-1", BASELINE, "INSERT INTO tags VALUES (2,'Rust');\n")
     second = integration_round(
         "round-2", {"tags.sql": BASELINE["tags.sql"], "additions.sql": (first / "additions.sql").read_text()},
@@ -17,7 +20,10 @@ def _two_rounds(tmp_path, integration_round):
     return first, second
 
 
-def _save_run(run_id, created_at, datasets, *, judged=False, scored=None):
+def _save_run(
+    run_id: str, created_at: str, datasets: dict[str, list[Path]], *, judged: bool = False,
+    scored: list[str] | None = None,
+) -> None:
     """Store a finished run whose config loads `datasets` (name -> files), judged or not.
 
     Integrity scores each of `scored` (default: every dataset); the rest are only loaded.
@@ -37,7 +43,7 @@ def _save_run(run_id, created_at, datasets, *, judged=False, scored=None):
         session.commit()
 
 
-def _stage_files(first, second):
+def _stage_files(first: Path, second: Path) -> dict[str, list[Path]]:
     return {
         "root": [first / "baseline" / "tags.sql"],
         "round-1": [first / "baseline" / "tags.sql", first / "additions.sql"],
@@ -45,7 +51,7 @@ def _stage_files(first, second):
     }
 
 
-def test_chains_rounds_from_the_root_baseline_in_order(tmp_path, integration_round):
+def test_chains_rounds_from_the_root_baseline_in_order(tmp_path: Path, integration_round: Callable[..., Path]) -> None:
     _two_rounds(tmp_path, integration_round)
 
     lineage = taxonomy_lineage(tmp_path / "integrations", tmp_path / "merge_runs")
@@ -57,7 +63,7 @@ def test_chains_rounds_from_the_root_baseline_in_order(tmp_path, integration_rou
     assert [chain.stages for chain in lineage.chains] == [["baseline:original", "round-1", "round-2"]]
 
 
-def test_branches_become_separate_chains_longest_first(tmp_path, integration_round):
+def test_branches_become_separate_chains_longest_first(tmp_path: Path, integration_round: Callable[..., Path]) -> None:
     _two_rounds(tmp_path, integration_round)
     integration_round(
         "trial", BASELINE, "INSERT INTO tags VALUES (9,'Trial');\n", created_at="2026-10-01T00:00:00+00:00",
@@ -70,7 +76,7 @@ def test_branches_become_separate_chains_longest_first(tmp_path, integration_rou
     ]
 
 
-def test_links_a_run_to_stages_by_file_contents(tmp_path, integration_round):
+def test_links_a_run_to_stages_by_file_contents(tmp_path: Path, integration_round: Callable[..., Path]) -> None:
     first, second = _two_rounds(tmp_path, integration_round)
     files = _stage_files(first, second)
     original = tmp_path / "original" / "tags.sql"  # the dump the first round copied, scored from where it lives
@@ -86,7 +92,9 @@ def test_links_a_run_to_stages_by_file_contents(tmp_path, integration_round):
     assert lineage.chains[0].runs == ["all-stages"]
 
 
-def test_ranks_runs_by_stages_covered_then_judge_then_newest(tmp_path, integration_round):
+def test_ranks_runs_by_stages_covered_then_judge_then_newest(
+    tmp_path: Path, integration_round: Callable[..., Path],
+) -> None:
     first, second = _two_rounds(tmp_path, integration_round)
     files = _stage_files(first, second)
     every = {"b1": files["root"], "b2": files["round-1"], "b3": files["round-2"]}
@@ -103,7 +111,9 @@ def test_ranks_runs_by_stages_covered_then_judge_then_newest(tmp_path, integrati
     assert "one-stage" in {run.run_id for run in lineage.runs}
 
 
-def test_a_stage_a_run_only_loads_does_not_count_as_scored(tmp_path, integration_round):
+def test_a_stage_a_run_only_loads_does_not_count_as_scored(
+    tmp_path: Path, integration_round: Callable[..., Path],
+) -> None:
     first, second = _two_rounds(tmp_path, integration_round)
     files = _stage_files(first, second)
     every = {"b1": files["root"], "b2": files["round-1"], "b3": files["round-2"]}
@@ -117,7 +127,9 @@ def test_a_stage_a_run_only_loads_does_not_count_as_scored(tmp_path, integration
     assert lineage.chains[0].runs == ["scores-two"]
 
 
-def test_ignores_unfinished_runs_and_runs_scoring_no_stage(tmp_path, integration_round):
+def test_ignores_unfinished_runs_and_runs_scoring_no_stage(
+    tmp_path: Path, integration_round: Callable[..., Path],
+) -> None:
     first, second = _two_rounds(tmp_path, integration_round)
     db.save_run(RunReport(run_id="queued", status="queued"), config_json='{"datasets": [], "metrics": []}')
     other = tmp_path / "other.sql"
@@ -127,7 +139,7 @@ def test_ignores_unfinished_runs_and_runs_scoring_no_stage(tmp_path, integration
     assert taxonomy_lineage(tmp_path / "integrations", tmp_path / "merge_runs").runs == []
 
 
-def test_no_rounds_gives_an_empty_lineage(tmp_path):
+def test_no_rounds_gives_an_empty_lineage(tmp_path: Path) -> None:
     lineage = taxonomy_lineage(tmp_path / "integrations", tmp_path / "merge_runs")
 
     assert lineage.stages == [] and lineage.chains == [] and lineage.runs == []

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
@@ -253,7 +254,7 @@ def approve_data_analytics():
 
 
 @pytest.fixture
-def integration_round(tmp_path):
+def integration_round(tmp_path: Path) -> Callable[..., Path]:
     """Write an `integrate`-shaped round: `integrations/<name>/` with `baseline/` copies, `additions.sql`
     and `manifest.json`, plus its merge run's `resolution.json` with one added tag from `source`.
 
@@ -262,8 +263,10 @@ def integration_round(tmp_path):
     """
     import json
 
-    def write(name, baseline, additions, *, source="skillsfuture", created_at="2026-10-15T10:00:00+00:00",
-              dataset="original", counts=None):
+    def write(
+        name: str, baseline: dict[str, str], additions: str, *, source: str | None = "skillsfuture",
+        created_at: str = "2026-10-15T10:00:00+00:00", dataset: str = "original", counts: dict[str, int] | None = None,
+    ) -> Path:
         directory = tmp_path / "integrations" / name
         (directory / "baseline").mkdir(parents=True)
         files = []
