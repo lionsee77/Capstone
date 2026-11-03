@@ -188,3 +188,28 @@ def test_compare_route_asks_for_the_subject_of_a_run_that_scores_several_taxonom
 
     named = TestClient(app).get(f"/runs/{before}/compare/{after}", params={"after_subject": "original"})
     assert named.status_code == 200
+
+
+def test_compare_route_compares_two_taxonomies_of_one_run_reading_it_once(isolated_db, monkeypatch):
+    from taxonomy_pipeline.app import scoring
+    from tests.conftest import baseline_of_record
+
+    report = baseline_of_record()
+    for result in list(report.results):  # the same results again, scoring a second taxonomy
+        copy = result.model_copy(deep=True)
+        for param in ("dataset", "target", "baseline"):
+            if copy.params and copy.params.get(param) == "original":
+                copy.params[param] = "enriched"
+        report.results.append(copy)
+    report.datasets.append(report.datasets[0].model_copy(update={"name": "enriched"}))
+    run_id = _store(report)
+    reads = []
+    real_get_run = scoring.get_run
+    monkeypatch.setattr(scoring, "get_run", lambda run, **kwargs: reads.append(run) or real_get_run(run, **kwargs))
+
+    response = TestClient(app).get(
+        f"/runs/{run_id}/compare/{run_id}", params={"before_subject": "original", "after_subject": "enriched"},
+    )
+
+    assert response.status_code == 200 and response.json()["comparable"] is True
+    assert reads == [run_id]

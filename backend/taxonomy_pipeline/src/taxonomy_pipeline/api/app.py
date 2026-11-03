@@ -133,7 +133,9 @@ def compare_runs(
     """Compare two stored runs metric by metric (#69): values, changes and verdicts, embedding the
     comparability check. Runs come from run history only - never a file path - so a request can't
     read reports elsewhere on the server. Read `comparable` before any verdict."""
-    reports = {label: scoring.get_run(run_id) for label, run_id in (("before", before_id), ("after", after_id))}
+    before = scoring.get_run(before_id)
+    # Comparing two stages of one run (the dashboard's improvement page) reads that report once.
+    reports = {"before": before, "after": before if after_id == before_id else scoring.get_run(after_id)}
     missing = [label for label, report in reports.items() if report is None]
     if missing:
         raise HTTPException(status_code=404, detail=f"{' and '.join(missing)} run not found")
