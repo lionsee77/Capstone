@@ -1723,8 +1723,11 @@ out, with nothing hard-coded, how the taxonomy grew and which runs show it:
   `chains` lists every root-to-latest path, longest first; a trial round off the
   same baseline becomes its own shorter chain.
 - **Runs.** A finished run from history (newest 200) is linked to a stage when
-  one of its datasets loads exactly that stage's files, compared by content,
-  so the original dump and a round's copy of it both match. `datasets` maps
+  one of the datasets it scores (a metric's subject: integrity's `dataset`,
+  breadth's `target`, saturation's `baseline`) loads exactly that stage's
+  files, compared by content, so the original dump and a round's copy of it
+  both match. A stage the run only loads, say as saturation's incoming data,
+  doesn't count. `datasets` maps
   stage id -> the run's dataset name, which is the subject to pass to
   `/runs/{before}/compare/{after}`. Each chain ranks the runs scoring at least
   two of its stages: most stages, then judge on, then newest. One run scoring
