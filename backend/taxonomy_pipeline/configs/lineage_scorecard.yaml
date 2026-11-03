@@ -1,0 +1,227 @@
+# Scores every stage of the enrichment chain in one run, so each stage-to-stage change compares like for
+# like: baseline 1 (the original taxonomy), baseline 2 (+ SkillsFuture, round judged-1015) and baseline 3
+# (+ O*NET, round onet-1031). Metric settings are the official scorecard's (baseline_v1.yaml); saturation
+# runs against both incoming sources with the LLM judge on, as in the classification rounds, so it needs
+# OPENAI_API_KEY in backend/.env and the llm extra. Run from backend/taxonomy_pipeline/ so the judge caches
+# (relative to the working directory) are reused:
+#   taxonomy-pipeline run --config configs/lineage_scorecard.yaml
+# The dashboard's /improvement page finds this run through GET /lineage, which matches each stage's files.
+# Paths are relative to this file; integrations/ is local data written by `taxonomy-pipeline integrate`.
+metric_definitions_version: 1
+datasets:
+  - name: stage0_original
+    type: sql_dump
+    paths:
+      - ../../sql-files-nus/services.sql
+      - ../../sql-files-nus/categories.sql
+      - ../../sql-files-nus/specialities.sql
+      - ../../sql-files-nus/tags.sql
+      - ../../sql-files-nus/speciality_tags.sql
+  - name: stage1_skillsfuture
+    type: sql_dump
+    paths:
+      - ../integrations/judged-1015/baseline/services.sql
+      - ../integrations/judged-1015/baseline/categories.sql
+      - ../integrations/judged-1015/baseline/specialities.sql
+      - ../integrations/judged-1015/baseline/tags.sql
+      - ../integrations/judged-1015/baseline/speciality_tags.sql
+      - ../integrations/judged-1015/additions.sql
+  - name: stage2_onet
+    type: sql_dump
+    paths:
+      - ../integrations/onet-1031/baseline/services.sql
+      - ../integrations/onet-1031/baseline/categories.sql
+      - ../integrations/onet-1031/baseline/specialities.sql
+      - ../integrations/onet-1031/baseline/tags.sql
+      - ../integrations/onet-1031/baseline/speciality_tags.sql
+      - ../integrations/onet-1031/baseline/additions.sql
+      - ../integrations/onet-1031/additions.sql
+  - name: skillsfuture
+    type: sql_dump
+    paths: [../../skillsfuture/skillsfuture_taxonomy.sql]
+    table_map:
+      categories: sf_categories
+      specialities: sf_specialities
+      tags: sf_tags
+      speciality_tags: sf_speciality_tags
+  - name: onet
+    type: sql_dump
+    paths: [../../onet/onet_taxonomy.sql]
+    table_map:
+      categories: onet_categories
+      specialities: onet_specialities
+      tags: onet_tags
+      speciality_tags: onet_speciality_tags
+  - name: ssic
+    type: ssic
+    paths: [../../reference_data/ssic/ssic2025-classification-structure.xlsx]
+  - name: ssoc
+    type: ssoc
+    paths: [../../reference_data/ssoc/ssoc2024-classification-structure.xlsx]
+
+metrics:
+  - id: integrity
+    params: {dataset: stage0_original, fuzzy_threshold: 85}
+  - id: depth
+    params: {dataset: stage0_original}
+  - id: breadth
+    params:
+      target: stage0_original
+      ssic_reference: ssic
+      ssoc_reference: ssoc
+      industry_level: division
+      occupational_level: minor_group
+      industry_service_id: 1
+      matching_method: semantic
+      semantic_threshold: 0.60
+      top_k: 5
+  - id: saturation
+    params:
+      baseline: stage0_original
+      incoming: [skillsfuture]
+      threshold: 90
+      semantic_model: sentence-transformers/all-MiniLM-L6-v2
+      semantic_model_revision: 1110a243fdf4706b3f48f1d95db1a4f5529b4d41
+      semantic_threshold: 0.70
+      semantic_threshold_by_level: {specialities: 0.80}
+      add_candidate_lexical_threshold: 60
+      add_candidate_semantic_threshold: 0.50
+      cross_level: true
+      judge:
+        model: gpt-6-luna
+        candidates: 5
+        same_at_or_above: 0.8
+        new_at_or_above: 0.8
+        levels: [tags]
+        cache: judge_cache.json
+        workers: 8
+  - id: saturation
+    params:
+      baseline: stage0_original
+      incoming: [onet]
+      threshold: 90
+      semantic_model: sentence-transformers/all-MiniLM-L6-v2
+      semantic_model_revision: 1110a243fdf4706b3f48f1d95db1a4f5529b4d41
+      semantic_threshold: 0.70
+      semantic_threshold_by_level: {specialities: 0.80}
+      add_candidate_lexical_threshold: 60
+      add_candidate_semantic_threshold: 0.50
+      cross_level: true
+      judge:
+        model: gpt-6-luna
+        candidates: 5
+        same_at_or_above: 0.8
+        new_at_or_above: 0.8
+        levels: [tags]
+        cache: judge_cache_onet.json
+        workers: 8
+  - id: integrity
+    params: {dataset: stage1_skillsfuture, fuzzy_threshold: 85}
+  - id: depth
+    params: {dataset: stage1_skillsfuture}
+  - id: breadth
+    params:
+      target: stage1_skillsfuture
+      ssic_reference: ssic
+      ssoc_reference: ssoc
+      industry_level: division
+      occupational_level: minor_group
+      industry_service_id: 1
+      matching_method: semantic
+      semantic_threshold: 0.60
+      top_k: 5
+  - id: saturation
+    params:
+      baseline: stage1_skillsfuture
+      incoming: [skillsfuture]
+      threshold: 90
+      semantic_model: sentence-transformers/all-MiniLM-L6-v2
+      semantic_model_revision: 1110a243fdf4706b3f48f1d95db1a4f5529b4d41
+      semantic_threshold: 0.70
+      semantic_threshold_by_level: {specialities: 0.80}
+      add_candidate_lexical_threshold: 60
+      add_candidate_semantic_threshold: 0.50
+      cross_level: true
+      judge:
+        model: gpt-6-luna
+        candidates: 5
+        same_at_or_above: 0.8
+        new_at_or_above: 0.8
+        levels: [tags]
+        cache: judge_cache.json
+        workers: 8
+  - id: saturation
+    params:
+      baseline: stage1_skillsfuture
+      incoming: [onet]
+      threshold: 90
+      semantic_model: sentence-transformers/all-MiniLM-L6-v2
+      semantic_model_revision: 1110a243fdf4706b3f48f1d95db1a4f5529b4d41
+      semantic_threshold: 0.70
+      semantic_threshold_by_level: {specialities: 0.80}
+      add_candidate_lexical_threshold: 60
+      add_candidate_semantic_threshold: 0.50
+      cross_level: true
+      judge:
+        model: gpt-6-luna
+        candidates: 5
+        same_at_or_above: 0.8
+        new_at_or_above: 0.8
+        levels: [tags]
+        cache: judge_cache_onet.json
+        workers: 8
+  - id: integrity
+    params: {dataset: stage2_onet, fuzzy_threshold: 85}
+  - id: depth
+    params: {dataset: stage2_onet}
+  - id: breadth
+    params:
+      target: stage2_onet
+      ssic_reference: ssic
+      ssoc_reference: ssoc
+      industry_level: division
+      occupational_level: minor_group
+      industry_service_id: 1
+      matching_method: semantic
+      semantic_threshold: 0.60
+      top_k: 5
+  - id: saturation
+    params:
+      baseline: stage2_onet
+      incoming: [skillsfuture]
+      threshold: 90
+      semantic_model: sentence-transformers/all-MiniLM-L6-v2
+      semantic_model_revision: 1110a243fdf4706b3f48f1d95db1a4f5529b4d41
+      semantic_threshold: 0.70
+      semantic_threshold_by_level: {specialities: 0.80}
+      add_candidate_lexical_threshold: 60
+      add_candidate_semantic_threshold: 0.50
+      cross_level: true
+      judge:
+        model: gpt-6-luna
+        candidates: 5
+        same_at_or_above: 0.8
+        new_at_or_above: 0.8
+        levels: [tags]
+        cache: judge_cache.json
+        workers: 8
+  - id: saturation
+    params:
+      baseline: stage2_onet
+      incoming: [onet]
+      threshold: 90
+      semantic_model: sentence-transformers/all-MiniLM-L6-v2
+      semantic_model_revision: 1110a243fdf4706b3f48f1d95db1a4f5529b4d41
+      semantic_threshold: 0.70
+      semantic_threshold_by_level: {specialities: 0.80}
+      add_candidate_lexical_threshold: 60
+      add_candidate_semantic_threshold: 0.50
+      cross_level: true
+      judge:
+        model: gpt-6-luna
+        candidates: 5
+        same_at_or_above: 0.8
+        new_at_or_above: 0.8
+        levels: [tags]
+        cache: judge_cache_onet.json
+        workers: 8
