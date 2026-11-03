@@ -250,3 +250,37 @@ def approve_data_analytics():
         members=[{"source_dataset": "case-a", "tag_id": "9"}], action="create", reason="Reviewed",
         approved_paths=[PlacementPath(service="Subject", category="Data analytics", speciality="Fire Prevention")],
     )
+
+
+@pytest.fixture
+def integration_round(tmp_path):
+    """Write an `integrate`-shaped round: `integrations/<name>/` with `baseline/` copies, `additions.sql`
+    and `manifest.json`, plus its merge run's `validation.json` naming the records' source.
+
+    Call it with the round name, the baseline files' contents and the rows it added; returns the round's
+    directory. Roots are `tmp_path/integrations` and `tmp_path/merge_runs`.
+    """
+    import json
+
+    def write(name, baseline, additions, *, source="skillsfuture", created_at="2026-10-15T10:00:00+00:00",
+              dataset="original", counts=None):
+        directory = tmp_path / "integrations" / name
+        (directory / "baseline").mkdir(parents=True)
+        files = []
+        for file_name, text in baseline.items():
+            (directory / "baseline" / file_name).write_text(text, encoding="utf-8")
+            files.append(f"baseline/{file_name}")
+        (directory / "additions.sql").write_text(additions, encoding="utf-8")
+        merge_run = tmp_path / "merge_runs" / f"{name}-reviewed"
+        merge_run.mkdir(parents=True)
+        records = [{"raw": {"source_dataset": source}, "status": "valid"}] if source else []
+        (merge_run / "validation.json").write_text(json.dumps({"records": records}), encoding="utf-8")
+        manifest = {
+            "created_at": created_at, "baseline": {"dataset": dataset, "files": files},
+            "merge_run": {"merge_run": f"merge_runs/{name}-reviewed"},
+            "counts": counts or {"tags": 1},
+        }
+        (directory / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+        return directory
+
+    return write

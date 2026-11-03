@@ -24,6 +24,7 @@ taxonomy_pipeline/
 │   └── baseline_v1.json.gz           #   the original taxonomy scored with definitions v1
 ├── configs/                          # pipeline configs
 │   ├── baseline_v1.yaml              #   pinned config that produced baselines/baseline_v1.json.gz
+│   ├── lineage_scorecard.yaml        #   every enrichment stage scored in one run, judge on (/lineage reads it)
 │   └── original_vs_skillsfuture.yaml #   classification rounds: scores both taxonomies, saturation judge on
 ├── docs/                             # design notes and future-work references
 │   ├── saturation-coverage-options.md      #   options for deciding "good coverage" from the saturation curve
@@ -81,6 +82,7 @@ taxonomy_pipeline/
 │   │   ├── runner.py                 #   chains merge 1-5 for `merge-preview`
 │   │   ├── bulk_decisions.py         #   `bulk-decide`: draft decisions for ambiguous tags by similarity
 │   │   ├── integrate.py              #   reviewed merge run -> enriched snapshot (real IDs, additions.sql)
+│   │   ├── lineage.py                #   read integrations/* back as rounds; file-content fingerprints
 │   │   └── proposals/                #   proposed categories and specialities, until governance (PB06)
 │   │       ├── intake.py             #     collect proposed hierarchy paths
 │   │       ├── screening.py          #     screen them against the baseline's categories and specialities
@@ -92,6 +94,7 @@ taxonomy_pipeline/
 │   │   ├── changes.py                #   history queries and durable audit-event recovery
 │   │   ├── scoring.py                #   run_pipeline(config) -> RunReport; dataset/report I/O; check_runs; run history
 │   │   ├── comparison.py             #   compare / compare_runs; Markdown, CSV and JSON exports
+│   │   ├── lineage.py                #   taxonomy_lineage: stages, chains and the runs that scored them
 │   │   ├── enrichment.py             #   case_a, case_b, merge_preview, review_proposals, bulk_decide, integrate
 │   │   ├── browse.py                 #   taxonomy search/detail over a past run's dataset (/taxonomy)
 │   │   └── sources.py                #   import_source: flat source -> dump, tag context, next round's config
@@ -103,6 +106,7 @@ taxonomy_pipeline/
 │   ├── api/
 │   │   ├── app.py                    #   FastAPI: /metrics, /runs (incl. compare), /taxonomy routes over app/
 │   │   ├── proposals.py              #   /proposals: which merge runs a request may read, over app.enrichment
+│   │   ├── lineage.py                #   /lineage: which integrations and merge roots it reads, over app.lineage
 │   │   ├── changes.py                #   authenticated, read-only GET /changes over app.changes
 │   │   └── security.py               #   API token and allowed data directories
 │   └── cli.py                        # `taxonomy-pipeline run|check-comparable|compare|serve|import-source|case-a|case-b|merge-preview|review-proposals|bulk-decide|integrate`
@@ -1680,6 +1684,8 @@ the token, so use curl or the dashboard to call endpoints.
   changes and verdicts, with the comparability check embedded. Runs come from
   run history only, never a file path (404 for an unknown ID); a run scoring
   several taxonomies needs its subject named (422 otherwise).
+- `GET /lineage` - the enrichment lineage as JSON (`TaxonomyLineage`); see
+  "Enrichment lineage" below. It takes no parameters.
 - `GET /proposals?merge_run=&level=&offset=&limit=` and
   `GET /proposals/{proposal_id}?merge_run=` - saved hierarchy proposals with
   parent branches, matching evidence and decisions (see the #58 review view above).
@@ -1695,6 +1701,48 @@ the token, so use curl or the dashboard to call endpoints.
   it's linked to, since it can be linked to more than one; an orphan row
   (e.g. a speciality whose category doesn't resolve) gets a shorter path
   rather than an error, the same row `integrity` would report as an orphan.
+
+### Enrichment lineage
+
+`GET /lineage` (`app/lineage.py`) is how the dashboard's Improvement page finds
+out, with nothing hard-coded, how the taxonomy grew and which runs show it:
+
+- **Stages.** Each `integrations/<name>/` round is a stage: the snapshot it
+  wrote, with the rows it added (`manifest.json` `counts`) and the sources its
+  tags came from (`source_dataset` in its merge run's `validation.json`). A
+  baseline no round produced is a root stage, `baseline:<dataset>`.
+- **Order.** A round's parent is the stage whose files hold the same bytes as
+  its `baseline/` copies (`enrichment/lineage.py`). The manifests' snapshot IDs
+  can't link rounds: `taxonomy_snapshot_id` fingerprints the dataset name too,
+  so the same rows named `enriched` and `round_baseline` get different IDs.
+  `chains` lists every root-to-latest path, longest first; a trial round off the
+  same baseline becomes its own shorter chain.
+- **Runs.** A finished run from history (newest 200) is linked to a stage when
+  one of its datasets loads exactly that stage's files, compared by content,
+  so the original dump and a round's copy of it both match. `datasets` maps
+  stage id -> the run's dataset name, which is the subject to pass to
+  `/runs/{before}/compare/{after}`. Each chain ranks the runs scoring at least
+  two of its stages: most stages, then judge on, then newest. One run scoring
+  every stage gives like-for-like comparisons between all of them.
+- `TAXONOMY_INTEGRATIONS_ROOT` selects the integrations directory (default
+  `backend/taxonomy_pipeline/integrations`), and `TAXONOMY_MERGE_ROOT` the merge
+  runs, as for `/proposals`. A round whose manifest or files can't be read is
+  skipped with a warning.
+
+`configs/lineage_scorecard.yaml` is that one run for the current chain
+(original -> judged-1015 -> onet-1031): integrity, depth and breadth for each
+stage, and saturation against SkillsFuture and against O*NET with the judge
+on, all with the official scorecard's settings. Run it from
+`backend/taxonomy_pipeline/` so the judge reuses `judge_cache.json` and
+`judge_cache_onet.json`:
+
+```bash
+taxonomy-pipeline run --config configs/lineage_scorecard.yaml
+```
+
+After a new round, add its snapshot as another dataset (and its source as
+another saturation entry per stage) and rerun; the dashboard picks the new run
+up from `/lineage`.
 
 Both `/taxonomy` endpoints re-read the dataset from disk on every call, using
 the file paths saved in that run's own config - nothing is kept loaded
