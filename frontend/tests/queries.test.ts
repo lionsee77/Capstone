@@ -1,6 +1,15 @@
 import { describe, expect, it } from "vitest";
 
-import { hasOlderRuns, pollWhileActive, RUN_POLL_INTERVAL_MS, RUNS_PAGE_SIZE, runQuery, runSummaryQuery } from "@/lib/api/queries";
+import {
+  apiHealthQuery,
+  HEALTH_POLL_INTERVAL_MS,
+  hasOlderRuns,
+  pollWhileActive,
+  RUN_POLL_INTERVAL_MS,
+  RUNS_PAGE_SIZE,
+  runQuery,
+  runSummaryQuery,
+} from "@/lib/api/queries";
 
 describe("pollWhileActive", () => {
   it("keeps polling while any run is queued or running", () => {
@@ -45,5 +54,16 @@ describe("runSummaryQuery", () => {
     expect(runSummaryQuery("").enabled).toBe(false);
     expect(runSummaryQuery("abc123").queryKey).toEqual(["runs", "detail", "abc123", "summary"]);
     expect(runSummaryQuery("abc123").queryKey).not.toEqual(runQuery("abc123").queryKey);
+  });
+});
+
+describe("apiHealthQuery", () => {
+  it("re-checks the API on an interval, unlike the forever-cached metric catalogue", () => {
+    expect(apiHealthQuery().refetchInterval).toBe(HEALTH_POLL_INTERVAL_MS);
+    expect(apiHealthQuery().queryKey).toEqual(["health"]);
+  });
+
+  it("does not retry, so a stopped API shows as unreachable within one interval", () => {
+    expect(apiHealthQuery().retry).toBe(false);
   });
 });

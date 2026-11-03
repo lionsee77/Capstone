@@ -1,12 +1,12 @@
 "use client";
 
-import { useMetricCatalogue } from "@/lib/api/queries";
+import { useApiHealth } from "@/lib/api/queries";
 import { cn } from "@/lib/utils";
 
-/** Whether the pipeline API answered, read from the metric catalogue query the
- * overview already makes (cached forever), so it costs no extra request. */
+/** Whether the pipeline API answers, re-checked periodically (`useApiHealth`). A failed
+ * check shows as unreachable even when an earlier one succeeded. */
 export function ApiStatus() {
-  const { isPending, isError } = useMetricCatalogue();
+  const { isPending, isError } = useApiHealth();
   const state = isPending ? "connecting" : isError ? "unreachable" : "connected";
   return (
     <p className="flex items-center gap-2 text-xs text-muted-foreground">

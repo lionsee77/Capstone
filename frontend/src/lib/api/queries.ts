@@ -35,6 +35,7 @@ export const queryKeys = {
   runComparison: (before: RunSubject, after: RunSubject) =>
     ["runs", "compare", before.runId, before.subject ?? null, after.runId, after.subject ?? null] as const,
   lineage: ["lineage"] as const,
+  health: ["health"] as const,
   taxonomySearch: (source: TaxonomySource | null, q: string, level: ConceptLevel | "") =>
     ["taxonomy", "search", source?.runId, source?.dataset, q, level] as const,
   taxonomyConcept: (source: TaxonomySource | null, level: ConceptLevel, conceptId: string) =>
@@ -43,6 +44,28 @@ export const queryKeys = {
 
 export function useMetricCatalogue() {
   return useQuery({ queryKey: queryKeys.metrics, queryFn: api.listMetrics, staleTime: Infinity });
+}
+
+export const HEALTH_POLL_INTERVAL_MS = 30_000;
+
+/**
+ * Whether the pipeline API answers now: `GET /metrics` re-checked every
+ * `HEALTH_POLL_INTERVAL_MS` and on window focus, without retries, so a stopped
+ * API shows within one interval. Separate from `useMetricCatalogue`, whose
+ * result is cached forever and so says nothing about the API after its first load.
+ */
+export function apiHealthQuery() {
+  return {
+    queryKey: queryKeys.health,
+    queryFn: api.listMetrics,
+    refetchInterval: HEALTH_POLL_INTERVAL_MS,
+    refetchOnWindowFocus: true,
+    retry: false,
+  } as const;
+}
+
+export function useApiHealth() {
+  return useQuery(apiHealthQuery());
 }
 
 /**
