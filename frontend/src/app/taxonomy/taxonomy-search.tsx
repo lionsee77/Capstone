@@ -11,7 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import type { TaxonomySource } from "@/lib/api/client";
-import { hasOlderRuns, RUNS_PAGE_SIZE, useLoadOlderRuns, useRun, useRuns, useTaxonomySearch } from "@/lib/api/queries";
+import { hasOlderRuns, RUNS_PAGE_SIZE, useLoadOlderRuns, useRuns, useRunSummary, useTaxonomySearch } from "@/lib/api/queries";
 import { type ConceptLevel, isTaxonomyDataset } from "@/lib/api/schemas";
 
 const LEVELS: ConceptLevel[] = ["services", "categories", "specialities", "tags"];
@@ -39,7 +39,8 @@ function useSourcePicker() {
   const loadOlder = useLoadOlderRuns(setLimit);
   const doneRuns = useMemo(() => (runs ?? []).filter((run) => run.status === "done"), [runs]);
   const [runId, setRunId] = useState<string>("");
-  const { data: run } = useRun(runId);
+  // Only the dataset list is needed, so skip result details (megabytes for a saturation run).
+  const { data: run } = useRunSummary(runId);
   const taxonomyDatasets = useMemo(() => (run?.datasets ?? []).filter(isTaxonomyDataset), [run]);
   const [dataset, setDataset] = useState<string>("");
 
