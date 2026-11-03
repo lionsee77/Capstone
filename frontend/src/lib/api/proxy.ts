@@ -56,11 +56,11 @@ export function resolveUpstream(
   env: ProxyEnv,
 ): ProxyDecision {
   const base = (env.TAXONOMY_API_URL ?? DEFAULT_API_URL).replace(/\/+$/, "");
-  // Three segments covers every allowed route today (/taxonomy/{level}/{id}
-  // is the deepest); a resource with fewer just leaves the later ones undefined.
+  // Three segments covers every allowed route except /runs/{before}/compare/{after}, which checks its
+  // fourth itself; a resource with fewer just leaves the later ones undefined.
   const [resource, a, b, ...rest] = segments;
   const notFound = { ok: false, status: 404, reason: "Not an allowed pipeline endpoint" } as const;
-  if (rest.length > 0) return notFound;
+  if (rest.length > 0 && !(resource === "runs" && b === "compare")) return notFound;
 
   if (method === "GET" && resource === "proposals" && b === undefined) {
     const mergeRun = searchParams.get("merge_run");
@@ -94,7 +94,28 @@ export function resolveUpstream(
     return { ok: true, url: limit && LIMIT.test(limit) ? `${base}/runs?limit=${limit}` : `${base}/runs` };
   }
   if (method === "GET" && resource === "runs" && a !== undefined && b === undefined && RUN_ID.test(a)) {
-    return { ok: true, url: `${base}/runs/${a}` };
+    // `details=false` is the only query forwarded: it trims a report the dashboard only summarises.
+    const light = searchParams.get("details") === "false";
+    return { ok: true, url: light ? `${base}/runs/${a}?details=false` : `${base}/runs/${a}` };
+  }
+  if (method === "GET" && resource === "lineage" && a === undefined) {
+    return { ok: true, url: `${base}/lineage` };
+  }
+  // /runs/{before}/compare/{after}: four segments, the only route that deep. Subjects are optional
+  // dataset names, forwarded as query values (percent-encoded), never as path segments.
+  if (method === "GET" && resource === "runs" && b === "compare") {
+    const after = rest[0];
+    if (rest.length !== 1 || !RUN_ID.test(a) || !RUN_ID.test(after)) return notFound;
+    const forwarded = new URLSearchParams();
+    for (const key of ["before_subject", "after_subject"]) {
+      const value = searchParams.get(key);
+      if (value !== null) {
+        if (!DATASET_NAME.test(value)) return notFound;
+        forwarded.set(key, value);
+      }
+    }
+    const query = forwarded.size > 0 ? `?${forwarded}` : "";
+    return { ok: true, url: `${base}/runs/${a}/compare/${after}${query}` };
   }
   if (method === "POST" && resource === "runs" && a === undefined) {
     if (env.PIPELINE_ALLOW_RUN_CREATION !== "true") {

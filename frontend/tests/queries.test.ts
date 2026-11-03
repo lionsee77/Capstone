@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { hasOlderRuns, pollWhileActive, RUN_POLL_INTERVAL_MS, RUNS_PAGE_SIZE, runQuery } from "@/lib/api/queries";
+import { hasOlderRuns, pollWhileActive, RUN_POLL_INTERVAL_MS, RUNS_PAGE_SIZE, runQuery, runSummaryQuery } from "@/lib/api/queries";
 
 describe("pollWhileActive", () => {
   it("keeps polling while any run is queued or running", () => {
@@ -37,5 +37,13 @@ describe("runQuery", () => {
   it("fetches once a run id is set", () => {
     expect(runQuery("abc123").enabled).toBe(true);
     expect(runQuery("abc123").queryKey).toEqual(["runs", "detail", "abc123"]);
+  });
+});
+
+describe("runSummaryQuery", () => {
+  it("is disabled until a run is picked, and cached apart from the full report", () => {
+    expect(runSummaryQuery("").enabled).toBe(false);
+    expect(runSummaryQuery("abc123").queryKey).toEqual(["runs", "detail", "abc123", "summary"]);
+    expect(runSummaryQuery("abc123").queryKey).not.toEqual(runQuery("abc123").queryKey);
   });
 });

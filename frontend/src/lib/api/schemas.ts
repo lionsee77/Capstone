@@ -129,6 +129,41 @@ export const runComparisonSchema = z.object({
 });
 export type RunComparison = z.infer<typeof runComparisonSchema>;
 
+/** Mirrors `LineageStage`: one taxonomy version, a root baseline (`parent` null) or one integrate round's snapshot. */
+export const lineageStageSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  parent: z.string().nullable(),
+  sources: z.array(z.string()),
+  created_at: z.string().nullable(),
+  added: z.record(z.string(), z.number()),
+});
+export type LineageStage = z.infer<typeof lineageStageSchema>;
+
+/** Mirrors `LineageRun`: a stored run that scored lineage stages, keyed stage id -> its dataset name. */
+export const lineageRunSchema = z.object({
+  run_id: z.string(),
+  created_at: z.string(),
+  judged: z.boolean(),
+  datasets: z.record(z.string(), z.string()),
+});
+export type LineageRun = z.infer<typeof lineageRunSchema>;
+
+/** Mirrors `LineageChain`: one root-to-latest path of stage ids, and the runs to read it with, best first. */
+export const lineageChainSchema = z.object({
+  stages: z.array(z.string()),
+  runs: z.array(z.string()),
+});
+export type LineageChain = z.infer<typeof lineageChainSchema>;
+
+/** Mirrors `TaxonomyLineage` (`GET /lineage`): stages, chains longest first, and runs that scored them. */
+export const taxonomyLineageSchema = z.object({
+  stages: z.array(lineageStageSchema),
+  chains: z.array(lineageChainSchema),
+  runs: z.array(lineageRunSchema),
+});
+export type TaxonomyLineage = z.infer<typeof taxonomyLineageSchema>;
+
 /** Mirrors `RunSummary`: `GET /runs` rows - a summary, not the full report. */
 export const runSummarySchema = runReportSchema.pick({ run_id: true, status: true, created_at: true });
 export type RunSummary = z.infer<typeof runSummarySchema>;

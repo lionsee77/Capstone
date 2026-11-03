@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { api, ApiError } from "@/lib/api/client";
 
 import { doneRunReport, metricCatalogue } from "./fixtures/reports";
+import { lineage, step1Comparison } from "./fixtures/improvement";
 import { proposalReview } from "./fixtures/proposal-review";
 
 function mockFetch(status: number, body: unknown) {
@@ -98,5 +99,39 @@ describe("api client", () => {
       "/api/pipeline/taxonomy/categories/skillsfuture%3A501?run_id=abc&dataset=skillsfuture",
       expect.anything(),
     );
+  });
+});
+
+describe("api client: lineage and comparisons", () => {
+  it("requests a comparison with subjects as query values", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify(step1Comparison), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const result = await api.compareRuns({ runId: "r1", subject: "stage0_original" }, { runId: "r1", subject: "b 2" });
+    expect(result.comparable).toBe(true);
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/pipeline/runs/r1/compare/r1?before_subject=stage0_original&after_subject=b+2", expect.anything(),
+    );
+  });
+
+  it("requests a comparison without subjects when none are named", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify(step1Comparison), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    await api.compareRuns({ runId: "a" }, { runId: "b" });
+    expect(fetchMock).toHaveBeenCalledWith("/api/pipeline/runs/a/compare/b", expect.anything());
+  });
+
+  it("parses GET /lineage", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify(lineage), { status: 200 })));
+    await expect(api.getLineage()).resolves.toMatchObject({ chains: [{ stages: expect.any(Array) }, expect.anything()] });
+  });
+});
+
+describe("api client: light run reports", () => {
+  it("asks for a run without details only when told to", async () => {
+    const fetchMock = vi.fn().mockImplementation(async () => new Response(JSON.stringify(doneRunReport), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    await api.getRun("abc", { details: false });
+    await api.getRun("abc");
+    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual(["/api/pipeline/runs/abc?details=false", "/api/pipeline/runs/abc"]);
   });
 });
