@@ -90,7 +90,7 @@ def _runs(fingerprints: dict[FileFingerprint, str], limit: int) -> list[LineageR
     """Finished runs with at least one dataset that loads a stage's files, newest first."""
     sizes = {len(fingerprint) for fingerprint in fingerprints}
     runs = []
-    for record in db.list_runs(limit=limit):
+    for record in db.list_run_history(limit=limit):
         if record.status != "done":
             continue
         config = json.loads(record.config_json)

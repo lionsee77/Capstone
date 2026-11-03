@@ -279,3 +279,21 @@ def test_a_stored_run_can_be_read_without_result_details(isolated_db) -> None:
 
     assert light.results[0].details == {} and light.results[0].summary == "s" and light.results[0].params == {"a": 1}
     assert get_run("r1").results[0].details == {"concepts": [0, 1, 2, 3, 4]}
+
+
+def test_run_history_lists_runs_newest_first_without_reading_their_reports(isolated_db) -> None:
+    from taxonomy_pipeline import db
+
+    for run_id, created_at in [("old", "2026-11-01T00:00:00"), ("new", "2026-11-02T00:00:00")]:
+        db.save_run(RunReport(run_id=run_id, status="done"), config_json='{"datasets": []}')
+        with db.Session(db.get_engine()) as session:
+            record = session.get(db.RunRecord, run_id)
+            record.created_at = created_at
+            session.add(record)
+            session.commit()
+
+    rows = db.list_run_history(limit=1)
+
+    assert [row.run_id for row in rows] == ["new"] and rows[0].config_json == '{"datasets": []}'
+    assert not hasattr(rows[0], "report_json")
+    assert [summary.run_id for summary in list_runs()] == ["new", "old"]

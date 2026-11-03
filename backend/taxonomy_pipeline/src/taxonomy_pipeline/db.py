@@ -11,7 +11,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from sqlmodel import Field, Session, SQLModel, create_engine, select
+from sqlmodel import Field, Session, SQLModel, col, create_engine, select
 
 from .models import RunReport
 
@@ -70,3 +70,24 @@ def list_runs(db_path: Path | str | None = None, limit: int = 50) -> list[RunRec
     with Session(engine) as session:
         statement = select(RunRecord).order_by(RunRecord.created_at.desc()).limit(limit)
         return list(session.exec(statement))
+
+
+class RunHistoryRow(SQLModel):
+    """A run record without `report_json`, for listings that never read the report."""
+
+    run_id: str
+    status: str
+    created_at: str
+    config_json: str
+
+
+def list_run_history(db_path: Path | str | None = None, limit: int = 50) -> list[RunHistoryRow]:
+    """The newest runs like `list_runs`, leaving out each report: a judged saturation report runs to megabytes."""
+    engine = get_engine(db_path)
+    columns = (col(RunRecord.run_id), col(RunRecord.status), col(RunRecord.created_at), col(RunRecord.config_json))
+    with Session(engine) as session:
+        statement = select(*columns).order_by(col(RunRecord.created_at).desc()).limit(limit)
+        return [
+            RunHistoryRow(run_id=run_id, status=status, created_at=created_at, config_json=config_json)
+            for run_id, status, created_at, config_json in session.exec(statement)
+        ]
