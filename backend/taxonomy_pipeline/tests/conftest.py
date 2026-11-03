@@ -10,6 +10,42 @@ from taxonomy_pipeline.audit import ChangeEvent
 FIXTURES = Path(__file__).parent / "fixtures"
 CLASSIFICATION_FIXTURES = FIXTURES / "classification"
 PRODUCER_FILES = [CLASSIFICATION_FIXTURES / "case_a.json", CLASSIFICATION_FIXTURES / "case_b.json"]
+BASELINE_OF_RECORD = Path(__file__).resolve().parents[1] / "baselines" / "baseline_v1.json.gz"
+_baseline_cache: dict[str, object] = {}
+
+
+def baseline_of_record():
+    """A fresh copy of the stored baseline of record (v1): real results for every scoring metric.
+    Parsed once per session (it lists every saturation concept, so it is megabytes of JSON)."""
+    from taxonomy_pipeline.app.scoring import read_report
+
+    if "report" not in _baseline_cache:
+        _baseline_cache["report"] = read_report(BASELINE_OF_RECORD)
+    return _baseline_cache["report"].model_copy(deep=True)
+
+
+def enriched_report(**edits):
+    """The baseline of record re-labelled as a run scoring "enriched", with `edits` applied to its details.
+
+    Each edit is `<metric_id>__<dotted.path>=value`, e.g. `breadth__occupational.matched_count=24`.
+    """
+    report = baseline_of_record().model_copy(deep=True)
+    report.run_id = "enriched-run"
+    for result in report.results:
+        for param in ("dataset", "target", "baseline"):
+            if result.params and result.params.get(param) == "original":
+                result.params[param] = "enriched"
+    for dataset in report.datasets:
+        if dataset.name == "original":
+            dataset.name = "enriched"
+    for name, value in edits.items():
+        metric_id, path = name.split("__")
+        details = next(result.details for result in report.results if result.metric_id == metric_id)
+        *parents, leaf = path.split(".")
+        for parent in parents:
+            details = details[parent]
+        details[leaf] = value
+    return report
 
 
 @pytest.fixture

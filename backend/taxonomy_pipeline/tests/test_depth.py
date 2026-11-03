@@ -50,3 +50,16 @@ def test_empty_dataset_reports_zeroed_stats_not_a_crash():
     result = DepthMetric().run({"empty": TaxonomyDataset(name="empty")}, {"dataset": "empty"})
     assert result.status == "ok"
     assert result.details["category_to_speciality"]["n"] == 0
+
+
+def test_measures_favour_more_tags_per_speciality_and_leave_category_size_neutral():
+    from tests.conftest import baseline_of_record
+
+    result = next(r for r in baseline_of_record().results if r.metric_id == "depth")
+    measures = {m.key: m for m in DepthMetric().measures(result)}
+
+    assert (measures["speciality_to_tag.mean"].value, measures["speciality_to_tag.mean"].better) == (2.43, "higher")
+    assert (measures["category_to_speciality.mean"].value, measures["category_to_speciality.mean"].better) == (
+        5.39, None,
+    )
+    assert (measures["category_to_speciality.n"].value, measures["speciality_to_tag.n"].value) == (110, 593)

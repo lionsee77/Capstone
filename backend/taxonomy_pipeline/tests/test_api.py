@@ -132,3 +132,56 @@ def test_run_is_marked_running_while_the_pipeline_executes(isolated_db, monkeypa
     # TestClient runs BackgroundTasks before returning, so by now it's finished.
     assert statuses_seen_mid_run == ["running"]
     assert client.get(f"/runs/{run_id}").json()["status"] == "done"
+
+
+def _store(report) -> str:
+    from taxonomy_pipeline import db
+
+    db.save_run(report, config_json="{}")
+    return report.run_id
+
+
+def test_compare_route_compares_two_stored_runs(isolated_db):
+    from tests.conftest import baseline_of_record, enriched_report
+
+    before = _store(baseline_of_record())
+    after = _store(enriched_report(**{"breadth__occupational.matched_count": 24}))
+
+    response = TestClient(app).get(f"/runs/{before}/compare/{after}")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["comparability"]["comparable"] is True
+    breadth = next(metric for metric in body["metrics"] if metric["metric_id"] == "breadth")
+    covered = next(measure for measure in breadth["measures"] if measure["key"] == "occupational.matched_count")
+    assert (covered["before"], covered["after"], covered["verdict"]) == (16, 24, "improved")
+
+
+def test_compare_route_reads_run_history_only_never_a_file_path(isolated_db, tmp_path):
+    from taxonomy_pipeline.app.scoring import write_report
+    from tests.conftest import baseline_of_record
+
+    stored = _store(baseline_of_record())
+    write_report(baseline_of_record(), tmp_path / "report.json")
+
+    response = TestClient(app).get(f"/runs/{stored}/compare/report.json")
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "after run not found"
+
+
+def test_compare_route_asks_for_the_subject_of_a_run_that_scores_several_taxonomies(isolated_db):
+    from taxonomy_pipeline.models import MetricResult, RunReport
+    from tests.conftest import baseline_of_record
+
+    several = RunReport(status="done", metric_definitions_version=1, results=[
+        MetricResult(metric_id="depth", summary="", index=0, params={"dataset": "original"}),
+        MetricResult(metric_id="depth", summary="", index=1, params={"dataset": "skillsfuture"}),
+    ])
+    before, after = _store(baseline_of_record()), _store(several)
+
+    response = TestClient(app).get(f"/runs/{before}/compare/{after}")
+    assert response.status_code == 422 and "name the one to use" in response.json()["detail"]
+
+    named = TestClient(app).get(f"/runs/{before}/compare/{after}", params={"after_subject": "original"})
+    assert named.status_code == 200
