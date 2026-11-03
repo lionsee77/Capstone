@@ -35,7 +35,8 @@ taxonomy_pipeline/
 │   ├── taxonomy/                     # the taxonomy model and its pluggable sources
 │   │   ├── __init__.py               #   source registry - register new `type:` values here
 │   │   ├── base.py                   #   TaxonomySource protocol, canonical TaxonomyDataset, its Hierarchy (parent lookups)
-│   │   ├── sql_dump.py               #   reads plain .sql dump files
+│   │   ├── sql_dump.py               #   reads plain .sql dump files; sql_literal, the escaper every writer uses
+│   │   ├── flat_import.py            #   one mapped CSV/xlsx table -> 4-table dump + tag context (`import-source`)
 │   │   └── references/               #   classification references a taxonomy is measured against
 │   │       ├── workbook.py           #     the shared workbook loader and reference/record base models
 │   │       ├── ssic.py               #     SSIC 2025 industry classification: levels and code rule
@@ -58,7 +59,8 @@ taxonomy_pipeline/
 │   ├── providers/                    # what is specific to one external source
 │   │   ├── base.py                   #   SourceProvider ABC: per-tag context and display name for Case B
 │   │   ├── registry.py               #   PROVIDERS by name; `case-b --provider`
-│   │   └── skillsfuture.py           #   SkillsFuture: tag-ID offset, unique-skills workbook context
+│   │   ├── skillsfuture.py           #   SkillsFuture: tag-ID offset, unique-skills workbook context
+│   │   └── tag_context.py            #   any `import-source` source: context from its <name>_tag_context.json
 │   ├── enrichment/                   # Case A/B producers and the merge stages (see "Classification workflow")
 │   │   ├── models.py                 #   ClassificationOutput contract + every stage's report model
 │   │   ├── routing.py                #   splits one saved saturation report into Case A / Case B tags
@@ -89,9 +91,10 @@ taxonomy_pipeline/
 │   │   ├── changes.py                #   history queries and durable audit-event recovery
 │   │   ├── scoring.py                #   run_pipeline(config) -> RunReport; dataset/report I/O; check_runs; run history
 │   │   ├── enrichment.py             #   case_a, case_b, merge_preview, review_proposals, bulk_decide, integrate
-│   │   └── browse.py                 #   taxonomy search/detail over a past run's dataset (/taxonomy)
+│   │   ├── browse.py                 #   taxonomy search/detail over a past run's dataset (/taxonomy)
+│   │   └── sources.py                #   import_source: flat source -> dump, tag context, next round's config
 │   ├── config.py                     # YAML/JSON pipeline config (datasets + metrics + optional definitions pin)
-│   ├── models.py                     # shared run reports, comparability checks, API response shapes
+│   ├── models.py                     # shared run reports, comparability checks, API response shapes, import results
 │   ├── db.py                         # SQLite run history
 │   ├── env.py                        # loads backend/.env for `serve` and llm.py
 │   ├── llm.py                        # the one OpenAI client setup (judge + Case B): key check, base URL
@@ -100,7 +103,7 @@ taxonomy_pipeline/
 │   │   ├── proposals.py              #   /proposals: which merge runs a request may read, over app.enrichment
 │   │   ├── changes.py                #   authenticated, read-only GET /changes over app.changes
 │   │   └── security.py               #   API token and allowed data directories
-│   └── cli.py                        # `taxonomy-pipeline run|check-comparable|serve|case-a|case-b|merge-preview|review-proposals|bulk-decide|integrate`
+│   └── cli.py                        # `taxonomy-pipeline run|check-comparable|serve|import-source|case-a|case-b|merge-preview|review-proposals|bulk-decide|integrate`
 ├── schemas/
 │   └── classification_output.schema.json # JSON Schema for the producer contract
 └── tests/
@@ -288,7 +291,10 @@ using the incoming source's context for each tag. That comes from the source's
 provider (`--provider`, defaulting to the `--incoming` dataset name; see
 `providers/`): for SkillsFuture, the unique-skills workbook's skill
 descriptions (`--context`, or the older `--unique`, defaulting to the one in
-`backend/skillsfuture/`). Both taxonomies come from
+`backend/skillsfuture/`); for a source added with `import-source`, the
+`tag_context` provider and the `<name>_tag_context.json` it wrote
+(`--provider tag_context --context <file>`; the prompt names the source by the
+file's `display_name`). Both taxonomies come from
 the pipeline config, the same datasets saturation and Case A use. Install the
 optional dependencies and set the key in `backend/.env` (copy
 `backend/.env.example`):
@@ -873,6 +879,93 @@ integrations/<timestamp>/
   config runs saturation's judge and the baseline doesn't, so their saturation
   results would not compare (see
   [Official metric definitions](#official-metric-definitions-and-the-baseline-of-record)).
+
+### Next round: a new source against the last snapshot
+
+A round's snapshot is the next round's baseline. Don't edit
+`backend/sql-files-nus/` or run `additions.sql` anywhere: list the snapshot's
+files as one `sql_dump` dataset and the parser loads original + every earlier
+round's additions together. `integrate` in the next round copies all of those
+files into its own `baseline/`, continues IDs after the highest, and writes only
+that round's rows to its `additions.sql`, so each round's additions stay
+separate:
+
+```text
+sql-files-nus (original) ─► round 1 additions.sql (SkillsFuture) ─► round 2 additions.sql (e.g. O*NET) ─► ...
+```
+
+`import-source` sets a round up from a new source that is **one flat table**
+(CSV, TSV or xlsx; one row per speciality-tag link) plus a mapping YAML a
+person fills in. A level the table only encodes in a code is derived from the
+code's prefix and a `code,label` CSV, with no script. A source split across
+linked files (SkillsFuture, ESCO) gets a short script that joins them into one
+table first. The worked example is O*NET (`backend/onet/`):
+
+```yaml
+# <source>_mapping.yaml - paths are relative to this file
+name: onet                    # dataset name in configs; table prefix onet_ by default
+display_name: O*NET           # how Case B's prompt names the source
+source: raw/Software Skills.xlsx
+sheet: null                   # xlsx only: which sheet (default: the first)
+columns:
+  # a column name, or {column, prefix, labels}: the first `prefix` characters of
+  # `column`, named by a code,label CSV (15-2051.00 -> 15 -> Computer and Mathematical)
+  category: {column: "O*NET-SOC Code", prefix: 2, labels: soc_major_groups.csv}
+  speciality: Title
+  tag: Workplace Example
+  tag_description: Element Name        # optional; Case B prompt context
+service_id: 2                 # baseline service every category goes under...
+# service_column: service     # ...or a column holding each row's integer service ID
+filters:                      # keep rows whose column equals a value / one of a list
+  Hot Technology: "Y"
+```
+
+```bash
+taxonomy-pipeline import-source --mapping ../onet/onet_mapping.yaml \
+    --baseline-snapshot integrations/judged-1015      # optional: also write the round config
+```
+
+- It writes `<name>_taxonomy.sql` and `<name>_tag_context.json` next to the
+  mapping (`--out-dir` to change), then reloads the dump through `sql_dump` and
+  fails unless every row reads back unchanged.
+- Categories are unique per (service, name), specialities per name within a
+  category, tags per name across the source; a tag under several specialities
+  gets one row and several links. Tag names are compared the way the client
+  schema's unique `tags.name` does (case- and accent-insensitive), so "Python"
+  and "python" become one tag spelled the most common way, with a warning
+  listing the merged spellings; otherwise MySQL would refuse the dump. IDs follow sorted names from 1000 / 2000 /
+  3000 / 4000 (as in the SkillsFuture dump), so the same input always gives the
+  same IDs. Every non-empty tag is retained, even without a complete parent
+  path. Categories, specialities and links are created only for complete paths;
+  parentless tags and their descriptions remain available for Case B after
+  saturation routing. Missing-tag rows are skipped. Warnings identify parentless
+  tags and missing descriptions so incomplete parent data can be reviewed.
+- A mapped, derived-from or filtered column the file doesn't have fails the
+  command, listing the headers it does have. A labels file needs `code` and
+  `label` headers and unique codes. Rows whose code prefix has no label retain
+  their tags without parent links; the prefixes are named in a warning (usually a wrong
+  `prefix` length or an incomplete labels file).
+- With `--baseline-snapshot`, it also writes the round config (`--round-config`,
+  default `configs/<snapshot>_vs_<name>.yaml`; it never overwrites one). The
+  snapshot becomes dataset `round_baseline`, the source is the incoming dataset,
+  and every metric of `--template` (default `configs/original_vs_skillsfuture.yaml`)
+  is copied with the template's saturation baseline renamed to `round_baseline`
+  and its incoming source(s) to the new one. Each judge `cache` becomes
+  `judge_cache_<name>.json`, so verdicts never mix across rounds. Other
+  template datasets (SSIC, SSOC) are kept; paths are relative to the config.
+  A folder without `enriched.yaml` or a clashing source name is refused before
+  anything is written, and a generated config that doesn't load is deleted
+  again, so fixing the template and rerunning just works.
+- It prints the round's `run`, `case-a` and `case-b` commands. From there the
+  round is the same as the first: `merge-preview`, review / `bulk-decide`,
+  `integrate --config <round config> --baseline round_baseline`.
+
+Nothing here touches a database. To look at a stage in MySQL locally, rebuild
+one from its snapshot with the Docker loader (`docker compose --profile tools
+run --rm loader <snapshot>`, see "Load a pipeline snapshot" in
+`../README.md`). At handover, apply each round's `additions.sql` once, in
+order, to the client's database (the files are MySQL/phpMyAdmin syntax); each
+header names the snapshot it applies to.
 
 ## Setup
 
@@ -1572,9 +1665,13 @@ To add a new source type (a live MariaDB connection, a CSV export, ...):
 implement `TaxonomySource.load()` (see `taxonomy/base.py`) and register a
 builder for it in `taxonomy/__init__.py`. No other file changes.
 
-If Case B should classify tags from the new source, also add a
-`SourceProvider` (see `providers/base.py`) supplying each tag's prompt context,
-and register it in `providers/registry.py` under the source's dataset name.
+A new *external source* to classify (rather than a new file format) usually
+needs neither: flatten it to one table and use `import-source`, whose dump
+loads as `sql_dump` and whose tag context the `tag_context` provider reads (see
+[Next round](#next-round-a-new-source-against-the-last-snapshot)). If Case B
+needs more per-tag context than a description, add a `SourceProvider` (see
+`providers/base.py`) and register it in `providers/registry.py` under the
+source's dataset name.
 
 ## Plugging in a metric
 

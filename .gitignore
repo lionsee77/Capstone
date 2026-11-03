@@ -107,3 +107,14 @@ backend/skillsfuture/classification_proposals*.json
 backend/skillsfuture/classification_proposals*.csv
 
 judge_cache.json
+
+# Per-source round outputs (e.g. judged_report_onet.json from a round's printed commands)
+judged_report_*.json
+case_a_*.json
+case_b_*.json
+case_b_*.csv
+.case_b_*.checkpoint.json
+judge_cache_*.json
+
+# O*NET raw download (backend/onet/README.md)
+backend/onet/raw/

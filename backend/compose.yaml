@@ -50,6 +50,25 @@ services:
       db:
         condition: service_healthy
 
+  # Rebuilds a database (default taxonomy_latest) from one taxonomy_pipeline
+  # snapshot: docker compose --profile tools run --rm loader <snapshot>.
+  # Root, because it drops and creates databases; greygigz_beta is refused.
+  loader:
+    image: mysql:8.0
+    profiles: ["tools"]
+    entrypoint: ["sh", "/loader/load_snapshot.sh"]
+    environment:
+      MYSQL_HOST: db
+      MYSQL_PWD: ${MYSQL_ROOT_PASSWORD:-localrootpassword}
+      TARGET_DATABASE: ${TARGET_DATABASE:-taxonomy_latest}
+      PROTECTED_DATABASE: ${MYSQL_DATABASE:-greygigz_beta}
+    volumes:
+      - ./taxonomy_pipeline/integrations:/snapshots:ro
+      - ./loader:/loader:ro
+    depends_on:
+      db:
+        condition: service_healthy
+
 volumes:
   senseigigs_mysql_data:
     name: senseigigs_mysql_data

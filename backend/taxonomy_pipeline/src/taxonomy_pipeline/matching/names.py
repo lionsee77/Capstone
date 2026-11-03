@@ -11,7 +11,9 @@ Each fold answers a different question, so stages must not swap one for another:
 - `preprocessing.py` profiles: the text breadth embeds or fuzz-matches, versioned with
   the metric definitions. Used by breadth only.
 - `collation_key`: would MySQL's `utf8mb4_general_ci` call these equal? Used by
-  integrate's check against the client schema's unique `tags.name`.
+  integrate's check against the client schema's unique `tags.name` and by
+  `import-source`'s tag deduplication. Defined in `taxonomy/sql_dump.py`, beside the
+  SQL writers, so the taxonomy layer can use it; re-exported here.
 
 - `normalize` must stay step-for-step identical to `backend/audit/taxonomy_audit.py`, or
   integrity's duplicate counts stop matching that audit.
@@ -26,6 +28,8 @@ from typing import Any
 
 import numpy as np
 from rapidfuzz import fuzz, process
+
+from ..taxonomy.sql_dump import collation_key  # noqa: F401 - defined beside the SQL writers; re-exported here
 
 _DASH_VARIANTS = re.compile(r"[‐‑‒–—―]")
 
@@ -63,12 +67,6 @@ def match_key(name: Any) -> str:
     value = value.replace("&", " and ").replace("isation", "ization")
     value = re.sub(r"\s+", " ", value).strip()
     return _PLURAL_S.sub("", value)
-
-
-def collation_key(name: Any) -> str:
-    """Approximate MySQL's utf8mb4_general_ci comparison: case- and accent-insensitive, trailing spaces ignored."""
-    decomposed = unicodedata.normalize("NFKD", str(name))
-    return "".join(char for char in decomposed if not unicodedata.combining(char)).casefold().rstrip(" ")
 
 
 def is_valid_name(name: Any) -> bool:

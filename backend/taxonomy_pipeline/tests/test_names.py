@@ -6,7 +6,9 @@ import pytest
 from taxonomy_pipeline.matching.names import collation_key, is_valid_name, match_key, normalize
 
 
-@pytest.mark.parametrize(("left", "right"), [("Python", "python"), ("Café", "cafe"), ("SQL  ", "sql")])
+@pytest.mark.parametrize(("left", "right"), [
+    ("Python", "python"), ("Café", "cafe"), ("SQL  ", "sql"), ("Maße", "Mase"), ("MASSE", "masse"),
+])
 def test_collation_key_treats_case_accents_and_trailing_spaces_as_equal_like_mysql(left: str, right: str) -> None:
     assert collation_key(left) == collation_key(right)
 
@@ -15,6 +17,8 @@ def test_collation_key_keeps_what_mysql_keeps_distinct() -> None:
     # Leading spaces and inner punctuation still differ under utf8mb4_general_ci.
     assert collation_key(" sql") != collation_key("sql")
     assert collation_key("C++") != collation_key("C")
+    # general_ci weighs ß as one s, so it is not casefold's "ss".
+    assert collation_key("Maße") != collation_key("Masse")
 
 
 def test_normalize_folds_text_but_not_concepts() -> None:

@@ -4,6 +4,7 @@ persisted to SQLite, and what the FastAPI API returns - one shape everywhere.
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Annotated, Any, Literal
 from uuid import uuid4
 
@@ -177,3 +178,19 @@ class TaxonomyConceptDetail(BaseModel):
     paths: list[TaxonomyPath] = Field(default_factory=list)
     children: list[TaxonomyConceptRef] = Field(default_factory=list)
     tags: list[TaxonomyConceptRef] = Field(default_factory=list)
+
+
+class SourceImport(BaseModel):
+    """What `import-source` wrote (`app.sources.import_source`), plus anything to check before using it.
+
+    `round_config` is set only when a previous snapshot was given; `warnings`
+    lists skipped rows, merged tag spellings, unlabelled code prefixes and
+    undescribed tags. The CLI prints it; #117's dashboard route will return it.
+    """
+
+    name: str
+    sql_path: Path
+    context_path: Path
+    counts: dict[str, int]
+    round_config: Path | None = None
+    warnings: list[str] = Field(default_factory=list)

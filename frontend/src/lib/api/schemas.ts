@@ -362,3 +362,14 @@ export const taxonomyConceptDetailSchema = z.object({
   tags: z.array(taxonomyConceptRefSchema),
 });
 export type TaxonomyConceptDetail = z.infer<typeof taxonomyConceptDetailSchema>;
+
+/** Mirrors models.py's SourceImport: what `import-source` wrote (#117 will return it from the API). */
+export const sourceImportSchema = z.object({
+  name: z.string(),
+  sql_path: z.string(),
+  context_path: z.string(),
+  counts: z.record(z.string(), z.number().int()),
+  round_config: z.string().nullable(),
+  warnings: z.array(z.string()),
+});
+export type SourceImport = z.infer<typeof sourceImportSchema>;

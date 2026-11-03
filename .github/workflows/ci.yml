@@ -45,6 +45,11 @@ jobs:
             backend/audit/taxonomy_audit.py \
             backend/skillsfuture/generate_skillsfuture_taxonomy.py
 
+      - name: Check the snapshot loader
+        run: |
+          sh -n backend/loader/load_snapshot.sh
+          docker compose -f backend/compose.yaml config -q
+
       - name: Validate audit notebook
         run: |
           python - <<'PY'

@@ -3,8 +3,11 @@ from __future__ import annotations
 
 from .base import SourceProvider
 from .skillsfuture import SkillsFutureProvider
+from .tag_context import TagContextProvider
 
-PROVIDERS: dict[str, SourceProvider] = {provider.name: provider for provider in (SkillsFutureProvider(),)}
+PROVIDERS: dict[str, SourceProvider] = {
+    provider.name: provider for provider in (SkillsFutureProvider(), TagContextProvider())
+}
 
 
 def get_provider(name: str) -> SourceProvider:
