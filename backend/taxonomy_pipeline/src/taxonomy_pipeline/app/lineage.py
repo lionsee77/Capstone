@@ -9,7 +9,9 @@ Stages and their order come from the integration rounds on disk
 (`enrichment.lineage.read_rounds`). A run is linked to a stage when one of its
 datasets loads exactly that stage's files, recognised by content
 (`file_fingerprint`), so a run that read the original dump and one that read
-the round's copy of it both count.
+the round's copy of it both count. Only datasets a scoring metric names as its
+subject count: a run that loads a stage just as saturation's incoming source
+has no scores for it.
 """
 from __future__ import annotations
 
@@ -20,6 +22,7 @@ from typing import Any
 from .. import db
 from ..enrichment.lineage import FileFingerprint, IntegrationRound, file_fingerprint, read_rounds
 from ..models import LineageChain, LineageRun, LineageStage, TaxonomyLineage
+from ..quality.registry import METRICS
 
 # How many of the newest runs are checked for lineage stages. Run history is small (one row per
 # scoring run), and each run's files are hashed once and then cached.
@@ -87,15 +90,18 @@ def _chains(stages: list[LineageStage]) -> list[list[str]]:
 
 
 def _runs(fingerprints: dict[FileFingerprint, str], limit: int) -> list[LineageRun]:
-    """Finished runs with at least one dataset that loads a stage's files, newest first."""
+    """Finished runs that score at least one stage (a subject dataset loading its files), newest first."""
     sizes = {len(fingerprint) for fingerprint in fingerprints}
     runs = []
     for record in db.list_run_history(limit=limit):
         if record.status != "done":
             continue
         config = json.loads(record.config_json)
+        subjects = _subjects(config)
         datasets: dict[str, str] = {}
         for dataset in config.get("datasets", []):
+            if dataset.get("name") not in subjects:
+                continue
             paths = dataset.get("paths") or []
             if len(paths) not in sizes:  # can't match any stage; don't hash reference workbooks
                 continue
@@ -107,6 +113,18 @@ def _runs(fingerprints: dict[FileFingerprint, str], limit: int) -> list[LineageR
                 run_id=record.run_id, created_at=record.created_at, judged=_judged(config), datasets=datasets,
             ))
     return runs
+
+
+def _subjects(config: dict[str, Any]) -> set[str]:
+    """The datasets the config's scoring metrics score: each metric's `subject_param` value."""
+    subjects = set()
+    for metric in config.get("metrics", []):
+        registered = METRICS.get(metric.get("id"))
+        param = registered.subject_param if registered else None
+        subject = (metric.get("params") or {}).get(param) if param else None
+        if isinstance(subject, str):
+            subjects.add(subject)
+    return subjects
 
 
 def _judged(config: dict[str, Any]) -> bool:

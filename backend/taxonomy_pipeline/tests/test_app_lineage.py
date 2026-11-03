@@ -17,13 +17,17 @@ def _two_rounds(tmp_path, integration_round):
     return first, second
 
 
-def _save_run(run_id, created_at, datasets, *, judged=False):
-    """Store a finished run whose config scores `datasets` (name -> files), judged or not."""
+def _save_run(run_id, created_at, datasets, *, judged=False, scored=None):
+    """Store a finished run whose config loads `datasets` (name -> files), judged or not.
+
+    Integrity scores each of `scored` (default: every dataset); the rest are only loaded.
+    """
     import json
 
     saturation = {"id": "saturation", "params": {"judge": {"model": "m"} if judged else None}}
+    integrity = [{"id": "integrity", "params": {"dataset": name}} for name in (datasets if scored is None else scored)]
     config = {"datasets": [{"name": name, "paths": [str(path) for path in paths]} for name, paths in datasets.items()],
-              "metrics": [saturation]}
+              "metrics": [saturation, *integrity]}
     report = RunReport(run_id=run_id, status="done")
     db.save_run(report, config_json=json.dumps(config))
     with db.Session(db.get_engine()) as session:
@@ -97,6 +101,20 @@ def test_ranks_runs_by_stages_covered_then_judge_then_newest(tmp_path, integrati
     assert lineage.chains[0].runs == ["all-judged-new", "all-judged-old", "all-unjudged-new", "two-judged"]
     assert {run.run_id: run.judged for run in lineage.runs}["all-unjudged-new"] is False
     assert "one-stage" in {run.run_id for run in lineage.runs}
+
+
+def test_a_stage_a_run_only_loads_does_not_count_as_scored(tmp_path, integration_round):
+    first, second = _two_rounds(tmp_path, integration_round)
+    files = _stage_files(first, second)
+    every = {"b1": files["root"], "b2": files["round-1"], "b3": files["round-2"]}
+    _save_run("scores-two", "2026-11-01T00:00:00+00:00", every, scored=["b2", "b3"])
+    # Newer and judged, but b1 and b2 are only saturation's incoming data here.
+    _save_run("loads-all-scores-one", "2026-11-02T00:00:00+00:00", every, judged=True, scored=["b3"])
+
+    lineage = taxonomy_lineage(tmp_path / "integrations", tmp_path / "merge_runs")
+
+    assert {run.run_id: run.datasets for run in lineage.runs}["loads-all-scores-one"] == {"round-2": "b3"}
+    assert lineage.chains[0].runs == ["scores-two"]
 
 
 def test_ignores_unfinished_runs_and_runs_scoring_no_stage(tmp_path, integration_round):
