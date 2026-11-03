@@ -49,3 +49,21 @@ export function verdictMeta(verdict: Verdict): { label: string; tone: VerdictTon
   }
 }
 
+
+const DATE_TIME = new Intl.DateTimeFormat("en-GB", {
+  day: "numeric",
+  month: "short",
+  year: "numeric",
+  hour: "2-digit",
+  minute: "2-digit",
+});
+
+/** A timestamp from the API as "3 Nov 2026, 14:02", in the viewer's time zone. */
+export function formatDateTime(iso: string): string {
+  return DATE_TIME.format(new Date(iso));
+}
+
+/** A run id as the short form shown everywhere in the dashboard. */
+export function shortRunId(runId: string): string {
+  return runId.slice(0, 8);
+}

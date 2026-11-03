@@ -3,6 +3,7 @@
 import { ArrowRight, CheckCircle2, TriangleAlert } from "lucide-react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 
+import { Notice } from "@/components/layout/page-header";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -12,7 +13,7 @@ import { VerdictChip } from "@/components/viz/verdict-chip";
 import type { RunSubject } from "@/lib/api/client";
 import type { MetricChange, RunComparison, RunSummary } from "@/lib/api/schemas";
 import { useRunComparison, useRuns, useRunSummary } from "@/lib/api/queries";
-import { formatValue } from "@/lib/format";
+import { formatDateTime, formatValue, shortRunId } from "@/lib/format";
 import { runSubjects } from "@/lib/run-view";
 
 type Side = { runId: string; subject: string | null };
@@ -44,12 +45,18 @@ export function CompareView() {
   const comparison = useRunComparison(toSubject(before), toSubject(after));
 
   if (runs.isPending) return <Skeleton className="h-40 w-full" />;
-  if (runs.error) return <p className="text-sm text-destructive">Could not load runs: {runs.error.message}</p>;
-  if (finished.length === 0) return <p className="text-sm text-muted-foreground">No finished runs to compare yet.</p>;
+  if (runs.error) {
+    return (
+      <Notice title="Could not load runs" tone="error">
+        {runs.error.message}
+      </Notice>
+    );
+  }
+  if (finished.length === 0) return <Notice title="No finished runs to compare yet" />;
 
   return (
     <div className="flex flex-col gap-6">
-      <Card>
+      <Card className="bg-muted/50">
         <CardContent className="flex flex-wrap items-end gap-4">
           <SidePicker id="before" title="Before" runs={finished} side={before} onChange={setBefore} />
           <ArrowRight className="mb-2.5 hidden size-4 text-muted-foreground sm:block" aria-hidden />
@@ -57,11 +64,13 @@ export function CompareView() {
         </CardContent>
       </Card>
       {!before.runId || !after.runId ? (
-        <p className="text-sm text-muted-foreground">Pick a run on each side.</p>
+        <Notice title="Pick a run on each side">The comparison appears once both a before and an after run are chosen.</Notice>
       ) : comparison.isPending ? (
         <Skeleton className="h-72 w-full" />
       ) : comparison.error ? (
-        <p className="text-sm text-destructive">{comparison.error.message}</p>
+        <Notice title="Could not compare these runs" tone="error">
+          {comparison.error.message}
+        </Notice>
       ) : (
         <ComparisonReport comparison={comparison.data} />
       )}
@@ -83,7 +92,7 @@ function SidePicker({
   return (
     <div className="flex flex-wrap items-end gap-2">
       <div className="flex flex-col gap-1.5">
-        <Label htmlFor={`${id}-run`}>{title}</Label>
+        <Label className="label-caps" htmlFor={`${id}-run`}>{title}</Label>
         <Select value={side.runId} onValueChange={(value) => onChange({ runId: value ?? "", subject: null })}>
           <SelectTrigger id={`${id}-run`} className="w-64">
             <SelectValue placeholder="Pick a run" />
@@ -91,7 +100,7 @@ function SidePicker({
           <SelectContent>
             {runs.map((run) => (
               <SelectItem key={run.run_id} value={run.run_id}>
-                {run.run_id.slice(0, 8)} · {new Date(run.created_at).toLocaleString()}
+                {shortRunId(run.run_id)} · {formatDateTime(run.created_at)}
               </SelectItem>
             ))}
           </SelectContent>
@@ -99,7 +108,7 @@ function SidePicker({
       </div>
       {subjects.length > 1 && (
         <div className="flex flex-col gap-1.5">
-          <Label htmlFor={`${id}-subject`}>Taxonomy</Label>
+          <Label className="label-caps" htmlFor={`${id}-subject`}>Taxonomy</Label>
           <Select value={side.subject ?? ""} onValueChange={(value) => onChange({ ...side, subject: value || null })}>
             <SelectTrigger id={`${id}-subject`} className="w-52 font-mono">
               <SelectValue placeholder="Pick one" />

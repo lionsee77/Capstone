@@ -140,8 +140,10 @@ frontend/
 │   │   └── sources/new/              #   new data-source integration (placeholder)
 │   ├── components/
 │   │   ├── ui/                       #   shadcn components - generated, add via the CLI
-│   │   ├── layout/                   #   app shell pieces
-│   │   └── viz/                      #   SVG trend chart, sparkline, meter, verdict chip
+│   │   ├── layout/                   #   app shell: sidebar nav, API status, PageHeader / Section / Notice
+│   │   ├── viz/                      #   SVG trend chart, sparkline, meter, verdict chip
+│   │   ├── run-status-badge.tsx      #   run and metric status as a coloured dot and label
+│   │   └── level-tag.tsx             #   a concept's level as a small mono tag
 │   ├── lib/
 │   │   ├── api/
 │   │   │   ├── schemas.ts            #   zod mirrors of models.py / config.py
@@ -151,7 +153,7 @@ frontend/
 │   │   ├── metric-labels.ts          #   labels repeated metrics by their differing params
 │   │   ├── improvement.ts            #   lines stage comparisons up into trend rows (no metric logic)
 │   │   ├── run-view.ts               #   which taxonomies a run scored
-│   │   ├── format.ts                 #   values by unit (rate -> %, change -> pts), verdict wording
+│   │   ├── format.ts                 #   values by unit (rate -> %, change -> pts), verdict wording, dates, short run ids
 │   │   └── utils.ts                  #   `cn` class-name helper (shadcn)
 │   └── stores/
 │       └── source-draft-store.ts     #   zustand: datasets + metrics for a new source run

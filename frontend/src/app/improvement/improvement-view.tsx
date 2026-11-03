@@ -4,6 +4,7 @@ import { CheckCircle2, Info, Sparkles, TriangleAlert } from "lucide-react";
 import Link from "next/link";
 import { useMemo, useState } from "react";
 
+import { Notice } from "@/components/layout/page-header";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
@@ -41,7 +42,13 @@ export function ImprovementView() {
   const chains = useMemo(() => (lineage.data ? chainOptions(lineage.data) : []), [lineage.data]);
 
   if (lineage.isPending) return <Skeleton className="h-96 w-full" />;
-  if (lineage.error) return <p className="text-sm text-destructive">Could not load the lineage: {lineage.error.message}</p>;
+  if (lineage.error) {
+    return (
+      <Notice title="Could not load the lineage" tone="error">
+        {lineage.error.message}
+      </Notice>
+    );
+  }
   if (chains.length === 0) {
     return (
       <EmptyState title="No enrichment rounds yet">
@@ -95,7 +102,7 @@ function Controls({
     <div className="flex flex-wrap items-end gap-4">
       {chains.length > 1 && (
         <div className="flex flex-col gap-1.5">
-          <Label htmlFor="lineage-chain">Rounds</Label>
+          <Label className="label-caps" htmlFor="lineage-chain">Rounds</Label>
           <Select value={String(chainIndex)} onValueChange={(value) => onChain(Number(value))}>
             <SelectTrigger id="lineage-chain" className="w-80">
               <SelectValue>{chainName(chain)}</SelectValue>
@@ -112,7 +119,7 @@ function Controls({
       )}
       {chain.runs.length > 0 && run && (
         <div className="flex flex-col gap-1.5">
-          <Label htmlFor="lineage-run">Scored in run</Label>
+          <Label className="label-caps" htmlFor="lineage-run">Scored in run</Label>
           <Select value={run.run_id} onValueChange={(value) => value && onRun(value)}>
             <SelectTrigger id="lineage-run" className="w-80">
               <SelectValue>{runName(run, chain)}</SelectValue>
@@ -180,7 +187,11 @@ function ChainReport({ chain, run }: { chain: ChainOption; run: LineageRun }) {
   return (
     <>
       <StageStepper chain={chain} scored={scored} counts={report.data ? stageCounts(report.data, scored) : null} />
-      {failed && <p className="text-sm text-destructive">Could not load the comparison: {failed.message}</p>}
+      {failed && (
+        <Notice title="Could not load the comparison" tone="error">
+          {failed.message}
+        </Notice>
+      )}
       {!ready && !failed && (
         <div className="flex flex-col gap-4">
           <p className="text-sm text-muted-foreground">Comparing {scored.length} stages…</p>

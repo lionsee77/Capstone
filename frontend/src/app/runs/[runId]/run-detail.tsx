@@ -1,10 +1,11 @@
 "use client";
 
 import { ChevronDown } from "lucide-react";
+import Link from "next/link";
 import { useState } from "react";
 
-import { RunStatusBadge } from "@/components/run-status-badge";
-import { Badge } from "@/components/ui/badge";
+import { Notice, PageHeader, Section } from "@/components/layout/page-header";
+import { RunStatusBadge, StatusDot } from "@/components/run-status-badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -13,7 +14,7 @@ import { Meter } from "@/components/viz/trend-chart";
 import type { MeasureChange, MetricChange, MetricResult, RunReport } from "@/lib/api/schemas";
 import { isRunFinished } from "@/lib/api/schemas";
 import { useRun, useRunComparison, useRunSummary } from "@/lib/api/queries";
-import { formatValue } from "@/lib/format";
+import { formatDateTime, formatValue, shortRunId } from "@/lib/format";
 import { metricLabels } from "@/lib/metric-labels";
 import { runSubjects } from "@/lib/run-view";
 import { cn } from "@/lib/utils";
@@ -27,28 +28,43 @@ export function RunDetail({ runId }: { runId: string }) {
   const { data: run, isPending, error } = useRunSummary(runId);
 
   if (isPending) return <Skeleton className="h-64 w-full max-w-5xl" />;
-  if (error) return <p className="text-sm text-destructive">Could not load run: {error.message}</p>;
+  if (error) {
+    return (
+      <Notice title="Could not load run" tone="error">
+        {error.message}
+      </Notice>
+    );
+  }
 
   const subjects = runSubjects(run);
   const finished = run.status === "done";
   return (
-    <div className="flex max-w-6xl flex-col gap-6">
-      <header className="flex flex-col gap-3">
-        <div className="flex flex-wrap items-center gap-3">
-          <h1 className="font-mono text-2xl font-semibold">{run.run_id.slice(0, 8)}</h1>
-          <RunStatusBadge status={run.status} />
-          {run.metric_definitions_version != null && (
-            <Badge variant="outline">metric definitions v{run.metric_definitions_version}</Badge>
-          )}
-        </div>
-        <p className="text-sm text-muted-foreground">
-          Started {new Date(run.created_at).toLocaleString()}
-          {run.finished_at && ` · finished ${new Date(run.finished_at).toLocaleString()}`}
-        </p>
+    <div className="flex max-w-6xl flex-col gap-8">
+      <div className="flex flex-col gap-4">
+        <Link href="/runs" className="text-sm text-muted-foreground hover:text-foreground">
+          &larr; All runs
+        </Link>
+        <PageHeader
+          eyebrow="Validation run"
+          title={shortRunId(run.run_id)}
+          titleClassName="font-mono tracking-normal"
+          actions={<RunStatusBadge status={run.status} />}
+          description={
+            <>
+              Started {formatDateTime(run.created_at)}
+              {run.finished_at && <> · finished {formatDateTime(run.finished_at)}</>}
+              {run.metric_definitions_version != null && <> · metric definitions v{run.metric_definitions_version}</>}
+            </>
+          }
+        />
         <DatasetChips run={run} subjects={subjects} />
-      </header>
-      {run.error && <p className="text-sm text-destructive">{run.error}</p>}
-      {!isRunFinished(run.status) && <p className="text-sm text-muted-foreground">Scoring… this page updates when it finishes.</p>}
+      </div>
+      {run.error && (
+        <Notice title="The run failed" tone="error">
+          {run.error}
+        </Notice>
+      )}
+      {!isRunFinished(run.status) && <Notice title="Scoring…">This page updates when the run finishes.</Notice>}
       {finished && subjects.length > 1 && (
         <Tabs defaultValue={subjects[0]}>
           <TabsList>
@@ -77,7 +93,7 @@ function DatasetChips({ run, subjects }: { run: RunReport; subjects: string[] })
       {run.datasets.map((dataset) => (
         <li
           key={dataset.name}
-          className={cn("rounded-lg border px-2.5 py-1.5 text-xs", subjects.includes(dataset.name) && "border-viz-1/40 bg-viz-1/5")}
+          className={cn("rounded-md border border-rule px-2.5 py-1.5 text-xs", subjects.includes(dataset.name) && "border-primary/40 bg-accent/60")}
         >
           <span className="font-mono font-medium">{dataset.name}</span>
           <span className="ml-2 text-muted-foreground tabular-nums">
@@ -97,7 +113,13 @@ function SubjectResults({ run, subject }: { run: RunReport; subject: string }) {
   const side = { runId: run.run_id, subject };
   const { data, isPending, error } = useRunComparison(side, side);
   if (isPending) return <Skeleton className="h-48 w-full" />;
-  if (error) return <p className="text-sm text-destructive">Could not read {subject}&apos;s measures: {error.message}</p>;
+  if (error) {
+    return (
+      <Notice title={`Could not read ${subject}'s measures`} tone="error">
+        {error.message}
+      </Notice>
+    );
+  }
   const labels = metricLabels(run.results);
   return (
     <div className="grid gap-4 lg:grid-cols-2">
@@ -122,14 +144,13 @@ function OtherResults({ run, subjects }: { run: RunReport; subjects: string[] })
     .filter(({ result }) => result.status !== "ok" || !scoresSubject(result));
   if (rest.length === 0) return null;
   return (
-    <section className="flex flex-col gap-3">
-      <h2 className="text-lg font-semibold">Other results</h2>
+    <Section title="Other results">
       <div className="grid gap-4 lg:grid-cols-2">
         {rest.map(({ result, index }) => (
           <ResultCard key={index} result={result} label={labels[index]} metric={null} runId={run.run_id} index={index} />
         ))}
       </div>
-    </section>
+    </Section>
   );
 }
 
@@ -148,9 +169,9 @@ function ResultCard({
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="flex flex-wrap items-center gap-2">
+        <CardTitle className="flex flex-wrap items-center gap-3 text-lg">
           <span className="capitalize">{result.metric_id}</span>
-          {result.status !== "ok" && <Badge variant={result.status === "error" ? "destructive" : "outline"}>{result.status}</Badge>}
+          <StatusDot status={result.status} />
         </CardTitle>
         <CardDescription className="line-clamp-1 font-mono text-xs break-all" title={label}>{label}</CardDescription>
         <p className="text-sm">{result.summary}</p>
@@ -169,7 +190,7 @@ function ResultCard({
               {numbers.map((measure) => (
                 <div key={measure.key} className="flex flex-col">
                   <dt className="text-xs text-muted-foreground">{measure.label}</dt>
-                  <dd className="text-lg font-semibold tabular-nums">{formatValue(measure.before, "number")}</dd>
+                  <dd className="font-heading text-2xl tabular-nums">{formatValue(measure.before, "number")}</dd>
                 </div>
               ))}
             </dl>
@@ -212,9 +233,15 @@ function RawDetails({ runId, index }: { runId: string; index: number }) {
 function RawDetailsBody({ runId, index }: { runId: string; index: number }) {
   const { data, isPending, error } = useRun(runId);
   if (isPending) return <Skeleton className="h-24 w-full" />;
-  if (error) return <p className="text-sm text-destructive">Could not load details: {error.message}</p>;
+  if (error) {
+    return (
+      <Notice title="Could not load details" tone="error">
+        {error.message}
+      </Notice>
+    );
+  }
   return (
-    <pre className="max-h-80 overflow-auto rounded-md bg-muted p-3 text-xs">
+    <pre className="max-h-80 overflow-auto rounded-md border border-border bg-muted/60 p-3 font-mono text-xs">
       {JSON.stringify(data.results[index]?.details ?? {}, null, 2)}
     </pre>
   );
