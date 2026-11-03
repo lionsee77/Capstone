@@ -2,8 +2,10 @@
 
 import { ArrowRight, CheckCircle2, TriangleAlert } from "lucide-react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { useState } from "react";
 
 import { Notice } from "@/components/layout/page-header";
+import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -12,7 +14,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { VerdictChip } from "@/components/viz/verdict-chip";
 import type { RunSubject } from "@/lib/api/client";
 import type { MetricChange, RunComparison, RunSummary } from "@/lib/api/schemas";
-import { useRunComparison, useRuns, useRunSummary } from "@/lib/api/queries";
+import { hasOlderRuns, RUNS_PAGE_SIZE, useLoadOlderRuns, useRunComparison, useRuns, useRunSummary } from "@/lib/api/queries";
 import { formatDateTime, formatValue, shortRunId } from "@/lib/format";
 import { runSubjects } from "@/lib/run-view";
 
@@ -36,7 +38,9 @@ function useSide(prefix: "before" | "after"): [Side, (side: Side) => void] {
 }
 
 export function CompareView() {
-  const runs = useRuns(100);
+  const [limit, setLimit] = useState(2 * RUNS_PAGE_SIZE);
+  const runs = useRuns(limit);
+  const loadOlder = useLoadOlderRuns(setLimit);
   const [before, setBefore] = useSide("before");
   const [after, setAfter] = useSide("after");
   const finished = (runs.data ?? []).filter((run) => run.status === "done");
@@ -62,6 +66,23 @@ export function CompareView() {
           <ArrowRight className="mb-2.5 hidden size-4 text-muted-foreground sm:block" aria-hidden />
           <SidePicker id="after" title="After" runs={finished} side={after} onChange={setAfter} />
         </CardContent>
+        {/* Outside the listboxes: they only offer the runs loaded so far, older ones need a page fetched first. */}
+        {hasOlderRuns(runs.data?.length ?? 0, limit) && (
+          <CardContent className="flex flex-col items-start gap-1">
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-auto px-0"
+              disabled={loadOlder.isPending}
+              onClick={() => loadOlder.mutate(limit + RUNS_PAGE_SIZE)}
+            >
+              {loadOlder.isPending ? "Loading…" : "Load older runs"}
+            </Button>
+            {loadOlder.error && (
+              <p className="text-sm text-destructive">Could not load older runs: {loadOlder.error.message}</p>
+            )}
+          </CardContent>
+        )}
       </Card>
       {!before.runId || !after.runId ? (
         <Notice title="Pick a run on each side">The comparison appears once both a before and an after run are chosen.</Notice>
