@@ -1,5 +1,6 @@
 """FastAPI app: a thin HTTP layer over the `app/` use cases (`app.scoring` for metrics and runs,
-`app.comparison` for comparing two runs, `app.browse` for taxonomy search, `app.enrichment` for proposals).
+`app.comparison` for comparing two runs, `app.browse` for taxonomy search, `app.enrichment` for proposals,
+`app.lineage` for the enrichment lineage).
 
 A run is a batch job, not a request/response - `POST /runs` validates the
 config, schedules the work as a background task, and returns immediately
@@ -28,6 +29,7 @@ from ..models import (
     TaxonomyConceptSummary,
 )
 from .changes import router as changes_router
+from .lineage import router as lineage_router
 from .proposals import router as proposals_router
 from .security import disallowed_paths, require_token
 
@@ -39,6 +41,7 @@ app = FastAPI(
 )
 app.include_router(proposals_router)
 app.include_router(changes_router)
+app.include_router(lineage_router)
 
 
 def _require_absolute_dataset_paths(config: PipelineConfig) -> None:
@@ -114,8 +117,10 @@ def list_runs(limit: int = 50) -> list[RunSummary]:
 
 
 @app.get("/runs/{run_id}")
-def get_run(run_id: str) -> RunReport:
-    report = scoring.get_run(run_id)
+def get_run(run_id: str, details: bool = True) -> RunReport:
+    """One run's report. `details=false` leaves each result's `details` empty: a saturation result lists
+    every concept it reviewed (megabytes), while a page showing summaries, params and counts needs none."""
+    report = scoring.get_run(run_id, details=details)
     if report is None:
         raise HTTPException(status_code=404, detail="run not found")
     return report
@@ -128,7 +133,9 @@ def compare_runs(
     """Compare two stored runs metric by metric (#69): values, changes and verdicts, embedding the
     comparability check. Runs come from run history only - never a file path - so a request can't
     read reports elsewhere on the server. Read `comparable` before any verdict."""
-    reports = {label: scoring.get_run(run_id) for label, run_id in (("before", before_id), ("after", after_id))}
+    before = scoring.get_run(before_id)
+    # Comparing two stages of one run (the dashboard's improvement page) reads that report once.
+    reports = {"before": before, "after": before if after_id == before_id else scoring.get_run(after_id)}
     missing = [label for label, report in reports.items() if report is None]
     if missing:
         raise HTTPException(status_code=404, detail=f"{' and '.join(missing)} run not found")

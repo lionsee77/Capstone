@@ -8,6 +8,7 @@ import {
   pipelineConfigSchema,
   proposalReviewReportSchema,
   reviewDecisionSchema,
+  taxonomyLineageSchema,
   reviewDecisionEventSchema,
   runComparisonSchema,
   runReportSchema,
@@ -15,6 +16,7 @@ import {
   taxonomyConceptSummarySchema,
 } from "@/lib/api/schemas";
 
+import { lineage } from "./fixtures/improvement";
 import { doneRunReport } from "./fixtures/reports";
 import { proposalReview } from "./fixtures/proposal-review";
 
@@ -264,5 +266,20 @@ describe("isRunFinished", () => {
       true,
       true,
     ]);
+  });
+});
+
+describe("lineage schema", () => {
+  it("reads the real GET /lineage shape", () => {
+    const parsed = taxonomyLineageSchema.parse(lineage);
+    expect(parsed.chains[0].stages).toEqual(["baseline:original", "judged-1015", "onet-1031"]);
+    expect(parsed.stages[0].parent).toBeNull();
+    expect(parsed.runs.some((run) => run.judged)).toBe(true);
+  });
+
+  it("rejects a stage without its added counts", () => {
+    const bad = structuredClone(lineage) as { stages: { added?: unknown }[] };
+    delete bad.stages[1].added;
+    expect(taxonomyLineageSchema.safeParse(bad).success).toBe(false);
   });
 });

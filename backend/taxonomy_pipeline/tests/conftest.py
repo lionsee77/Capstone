@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
@@ -250,3 +251,39 @@ def approve_data_analytics():
         members=[{"source_dataset": "case-a", "tag_id": "9"}], action="create", reason="Reviewed",
         approved_paths=[PlacementPath(service="Subject", category="Data analytics", speciality="Fire Prevention")],
     )
+
+
+@pytest.fixture
+def integration_round(tmp_path: Path) -> Callable[..., Path]:
+    """Write an `integrate`-shaped round: `integrations/<name>/` with `baseline/` copies, `additions.sql`
+    and `manifest.json`, plus its merge run's `resolution.json` with one added tag from `source`.
+
+    Call it with the round name, the baseline files' contents and the rows it added; returns the round's
+    directory. Roots are `tmp_path/integrations` and `tmp_path/merge_runs`.
+    """
+    import json
+
+    def write(
+        name: str, baseline: dict[str, str], additions: str, *, source: str | None = "skillsfuture",
+        created_at: str = "2026-10-15T10:00:00+00:00", dataset: str = "original", counts: dict[str, int] | None = None,
+    ) -> Path:
+        directory = tmp_path / "integrations" / name
+        (directory / "baseline").mkdir(parents=True)
+        files = []
+        for file_name, text in baseline.items():
+            (directory / "baseline" / file_name).write_text(text, encoding="utf-8")
+            files.append(f"baseline/{file_name}")
+        (directory / "additions.sql").write_text(additions, encoding="utf-8")
+        merge_run = tmp_path / "merge_runs" / f"{name}-reviewed"
+        merge_run.mkdir(parents=True)
+        tags = [{"id": "new:tag:1", "existing": False, "members": [{"source_dataset": source, "tag_id": "1"}]}]
+        (merge_run / "resolution.json").write_text(json.dumps({"tags": tags if source else []}), encoding="utf-8")
+        manifest = {
+            "created_at": created_at, "baseline": {"dataset": dataset, "files": files},
+            "merge_run": {"merge_run": f"merge_runs/{name}-reviewed"},
+            "counts": counts or {"tags": 1},
+        }
+        (directory / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+        return directory
+
+    return write

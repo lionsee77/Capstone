@@ -70,13 +70,23 @@ def execute_queued_run(queued: RunReport, config: PipelineConfig) -> RunReport:
 
 def list_runs(limit: int = 50) -> list[RunSummary]:
     """The most recent runs in run history, newest first, as summaries rather than full reports."""
-    return [RunSummary(run_id=r.run_id, status=r.status, created_at=r.created_at) for r in db.list_runs(limit=limit)]
+    return [
+        RunSummary(run_id=r.run_id, status=r.status, created_at=r.created_at) for r in db.list_run_history(limit=limit)
+    ]
 
 
-def get_run(run_id: str) -> RunReport | None:
-    """One run's report from run history, or None if there is no such run."""
+def get_run(run_id: str, *, details: bool = True) -> RunReport | None:
+    """One run's report from run history, or None if there is no such run.
+
+    With `details` false every result's `details` is emptied, keeping its status, summary and params.
+    """
     record = db.get_run(run_id)
-    return None if record is None else RunReport.model_validate_json(record.report_json)
+    if record is None:
+        return None
+    report = RunReport.model_validate_json(record.report_json)
+    if not details:
+        report.results = [result.model_copy(update={"details": {}}) for result in report.results]
+    return report
 
 
 def run_config(config_path: str | Path, *, save: bool = True) -> tuple[PipelineConfig, RunReport]:

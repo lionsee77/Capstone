@@ -207,7 +207,56 @@ class RunComparison(BaseModel):
         return not self.comparability.issues and not any(metric.issues for metric in self.metrics)
 
 
-ConceptLevel = Literal["services", "categories", "specialities", "tags"]
+class LineageStage(BaseModel):
+    """One taxonomy version in the enrichment lineage (`GET /lineage`): a baseline no round produced
+    (a root, `parent` None), or the snapshot one `integrate` round wrote.
+
+    Built by `app.lineage.taxonomy_lineage` from `integrations/*/manifest.json`; see
+    `enrichment/lineage.py` for how a round is linked to the snapshot it enriched.
+    """
+
+    id: str = Field(description="A root's `baseline:<dataset>`, else the round's integration directory name")
+    name: str = Field(description="The root's dataset name, or the round's directory name")
+    parent: str | None = None
+    sources: list[str] = Field(default_factory=list, description="Incoming datasets the round's tags came from")
+    created_at: datetime | None = None
+    added: dict[str, int] = Field(default_factory=dict, description="Rows the round added, per table")
+
+
+class LineageRun(BaseModel):
+    """A stored run that scored at least one lineage stage, and under which dataset name it scored each."""
+
+    run_id: str
+    created_at: str
+    judged: bool = Field(description="Whether any saturation result in the run had the LLM judge on")
+    datasets: dict[str, str] = Field(description="Stage id -> the run's dataset name for that stage")
+
+
+class LineageChain(BaseModel):
+    """One root-to-latest path through the lineage, and the runs to read it with, best first.
+
+    A run is listed when it scored at least two of the chain's stages. Best means it covers the
+    most stages, then has the judge on, then is newest - so every stage-to-stage comparison in it
+    is like for like when one run covers them all.
+    """
+
+    stages: list[str]
+    runs: list[str] = Field(default_factory=list)
+
+
+class TaxonomyLineage(BaseModel):
+    """`GET /lineage`: every stage, the chains through them (longest first) and the runs that scored them.
+
+    The dashboard reads which runs show a taxonomy's improvement from here, then compares their
+    stages through `GET /runs/{before}/compare/{after}`, so it hard-codes no run or stage.
+    """
+
+    stages: list[LineageStage] = Field(default_factory=list)
+    chains: list[LineageChain] = Field(default_factory=list)
+    runs: list[LineageRun] = Field(default_factory=list)
+
+
+ConceptLevel =Literal["services", "categories", "specialities", "tags"]
 
 
 class TaxonomyConceptRef(BaseModel):

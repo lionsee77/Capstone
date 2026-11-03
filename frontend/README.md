@@ -7,8 +7,41 @@ pipeline's FastAPI endpoints.
 
 The dashboard has no backend logic of its own. Everything it shows comes from
 the pipeline API (`GET /metrics`, `POST /runs`, `GET /runs`, `GET /runs/{id}`,
-`GET /taxonomy/search`, `GET /taxonomy/{level}/{id}`), so the CLI, the API,
-and this UI all agree on what a run is.
+`GET /runs/{before}/compare/{after}`, `GET /lineage`, `GET /taxonomy/search`,
+`GET /taxonomy/{level}/{id}`), so the CLI, the API, and this UI all agree on
+what a run is - and no metric is computed here: every value, change and
+verdict on screen is the API's.
+
+## Pages
+
+- **Improvement** (`/improvement`) - how the taxonomy grew round by round
+  (Baseline 1 -> 2 -> 3 ...). It reads `GET /lineage` for the chain of
+  enrichment rounds and the best run that scored them (most stages, then judge
+  on, then newest; a picker offers the others), then compares each stage with
+  the next and the first with the last through `/runs/{id}/compare/{id}`.
+  Shown: a card per stage (source added, size, rows added), a like-for-like
+  banner, tiles for the biggest rate changes, and a section per metric with a
+  trend chart of its rates and a table of every measure (value per stage,
+  step changes, sparkline, verdict). Saturation gets one card per incoming
+  source, so "how much of each source is still missing" is visible per round.
+  Nothing is hard-coded: a new round, source, metric or run appears from the
+  API alone.
+- **Compare runs** (`/compare`) - any two finished runs, or two taxonomies of
+  one run, side by side with changes and verdicts. The picks live in the URL
+  (`?before=&before_subject=&after=&after_subject=`), so a comparison can be
+  linked; the Improvement page links its first-vs-latest view here.
+- **Run detail** (`/runs/{id}`) - one run as readable values: a tab per
+  taxonomy it scored, each metric's rates as meters and counts as figures.
+  Values come from comparing the taxonomy with itself, so labels, units and
+  better directions are the API's. Raw details load only on "Show raw
+  details": a judged saturation run stores every concept it reviewed (tens of
+  megabytes), so pages otherwise read runs with `?details=false`.
+
+Charts are plain SVG (`src/components/viz/`), drawn to the dataviz skill's
+rules: the validated categorical slots and the reserved good/bad status pair
+are CSS variables in `globals.css` (light and dark), lines are 2px with
+direct end labels and a legend, every chart has a hover tooltip, and a
+verdict always carries an arrow and a word, never colour alone.
 
 **Stack:** Next.js 16 (App Router) · TanStack Query (server state) · zod (API
 boundary validation) · zustand (client state) · shadcn/ui on Base UI + Tailwind v4 ·
@@ -66,7 +99,9 @@ since the dashboard itself has no login yet:
 - Run the dashboard only on localhost or a trusted network until it has its own
   login. The API itself can now be exposed to the dashboard's server without
   being open to everyone.
-- The proxy forwards only `GET /metrics`, `GET /runs`, `GET /runs/{id}`,
+- The proxy forwards only `GET /metrics`, `GET /runs`, `GET /runs/{id}`
+  (with `details=false` only), `GET /runs/{id}/compare/{id}` (with
+  `before_subject`/`after_subject` only), `GET /lineage`,
   `GET /taxonomy/search`, `GET /taxonomy/{level}/{id}`,
   `GET /proposals`, `GET /proposals/{id}` and, when
   `PIPELINE_ALLOW_RUN_CREATION=true`, `POST /runs`. The allowlist lives in
@@ -98,12 +133,17 @@ frontend/
 │   │   ├── page.tsx                  #   overview: live metric catalogue
 │   │   ├── taxonomy/                 #   search a run's dataset by name, optionally filtered by level
 │   │   │   └── [level]/[conceptId]/  #   one concept's path(s), children and tags
+│   │   ├── improvement/              #   Baseline 1 -> 2 -> 3: stages, highlights, per-metric trends (GET /lineage)
+│   │   ├── compare/                  #   any two runs (or two taxonomies of one run) side by side
 │   │   ├── runs/                     #   run history (polls while runs are active, "load older")
-│   │   │   └── [runId]/              #   one run's report; polls until done/failed
+│   │   │   └── [runId]/              #   one run as meters and figures per taxonomy; polls until done/failed
 │   │   └── sources/new/              #   new data-source integration (placeholder)
 │   ├── components/
 │   │   ├── ui/                       #   shadcn components - generated, add via the CLI
-│   │   └── layout/                   #   app shell pieces
+│   │   ├── layout/                   #   app shell: sidebar nav, API status, PageHeader / Section / Notice
+│   │   ├── viz/                      #   SVG trend chart, sparkline, meter, verdict chip
+│   │   ├── run-status-badge.tsx      #   run and metric status as a coloured dot and label
+│   │   └── level-tag.tsx             #   a concept's level as a small mono tag
 │   ├── lib/
 │   │   ├── api/
 │   │   │   ├── schemas.ts            #   zod mirrors of models.py / config.py
@@ -111,6 +151,9 @@ frontend/
 │   │   │   ├── proxy.ts              #   which pipeline endpoints the proxy forwards
 │   │   │   └── queries.ts            #   TanStack Query hooks + query keys
 │   │   ├── metric-labels.ts          #   labels repeated metrics by their differing params
+│   │   ├── improvement.ts            #   lines stage comparisons up into trend rows (no metric logic)
+│   │   ├── run-view.ts               #   which taxonomies a run scored
+│   │   ├── format.ts                 #   values by unit (rate -> %, change -> pts), verdict wording, dates, short run ids
 │   │   └── utils.ts                  #   `cn` class-name helper (shadcn)
 │   └── stores/
 │       └── source-draft-store.ts     #   zustand: datasets + metrics for a new source run
