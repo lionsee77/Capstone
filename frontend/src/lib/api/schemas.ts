@@ -89,11 +89,15 @@ export const directionSchema = z.enum(["higher", "lower"]);
 export const verdictSchema = z.enum(["improved", "unchanged", "deteriorated", "changed", "not_compared"]);
 export type Verdict = z.infer<typeof verdictSchema>;
 
+/** Mirrors `Unit`: a "rate" is a fraction (show 0.25 as 25%, its change in points); a "number" is shown as is. */
+export const unitSchema = z.enum(["number", "rate"]);
+
 /** Mirrors `MeasureChange`: one headline number in both runs. `change` is null unless the pair compares. */
 export const measureChangeSchema = z.object({
   key: z.string(),
   label: z.string(),
   better: directionSchema.nullable(),
+  unit: unitSchema,
   before: z.number().nullable(),
   after: z.number().nullable(),
   change: z.number().nullable(),
@@ -115,11 +119,13 @@ export type MetricChange = z.infer<typeof metricChangeSchema>;
 
 /**
  * Mirrors `RunComparison` (`GET /runs/{before_id}/compare/{after_id}`, #69): each metric's measures in two runs,
- * with changes and verdicts only where `comparability` says the results were scored alike.
+ * with changes and verdicts only where the results were scored alike. Read `comparable`, not
+ * `comparability.comparable`: it also counts a result whose stored details couldn't be read.
  */
 export const runComparisonSchema = z.object({
   comparability: comparabilitySchema,
   metrics: z.array(metricChangeSchema),
+  comparable: z.boolean(),
 });
 export type RunComparison = z.infer<typeof runComparisonSchema>;
 

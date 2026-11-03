@@ -12,7 +12,7 @@ from typing import Any
 from rapidfuzz import fuzz, process
 
 from ..matching.names import normalize
-from ..models import Measure, MetricResult
+from ..models import Measure, MetricResult, Unit
 from ..taxonomy.base import LoadedDataset
 from .base import Metric
 
@@ -56,34 +56,31 @@ _LEVELS = (("categories", "Categories", "category"), ("specialities", "Specialit
            ("tags", "Tags", "tag"))
 
 
-def _count(value: Any) -> int | None:
-    """A defect list's length; None for a check the run skipped (recorded as None, not an empty list)."""
-    return None if value is None else len(value)
+def _cluster_rows(clusters: list[dict[str, Any]] | None) -> int | None:
+    """Rows in a level's exact-duplicate clusters; None for a level the result has no entry for."""
+    return None if clusters is None else sum(len(cluster["ids"]) for cluster in clusters)
 
 
-def _listed(section: dict[str, Any], key: str) -> int | None:
-    return _count(section.get(key))
-
-
-def _number(section: dict[str, Any], key: str) -> float | None:
-    return section.get(key)
-
-
-# (details section, key, label, how to read it) for each orphan and dead-end measure.
+# (details section, key, label, unit) for each orphan and dead-end measure. A "number" entry is
+# a list of defective rows, measured by its length, except `dangling_speciality_tag_links`,
+# which the result stores as a count already; a "rate" is stored as the fraction.
 _DEFECTS = (
-    ("orphans", "categories_without_service", "Categories without a service", _listed),
-    ("orphans", "specialities_without_category", "Specialities without a category", _listed),
-    ("orphans", "tags_unused_by_any_speciality", "Tags no speciality uses", _listed),
-    ("orphans", "dangling_speciality_tag_links", "Dangling speciality-tag links", _number),
-    ("dead_ends", "categories_with_zero_specialities", "Dead-end categories", _listed),
-    ("dead_ends", "specialities_with_zero_tags", "Dead-end specialities", _listed),
-    ("dead_ends", "category_dead_end_rate", "Dead-end category rate", _number),
-    ("dead_ends", "speciality_dead_end_rate", "Dead-end speciality rate", _number),
+    ("orphans", "categories_without_service", "Categories without a service", "number"),
+    ("orphans", "specialities_without_category", "Specialities without a category", "number"),
+    ("orphans", "tags_unused_by_any_speciality", "Tags no speciality uses", "number"),
+    ("orphans", "dangling_speciality_tag_links", "Dangling speciality-tag links", "number"),
+    ("dead_ends", "categories_with_zero_specialities", "Dead-end categories", "number"),
+    ("dead_ends", "specialities_with_zero_tags", "Dead-end specialities", "number"),
+    ("dead_ends", "category_dead_end_rate", "Dead-end category rate", "rate"),
+    ("dead_ends", "speciality_dead_end_rate", "Dead-end speciality rate", "rate"),
 )
 
 
-def _defect(key: str, label: str, value: float | None) -> Measure:
-    return Measure(key=key, label=label, value=value, better="lower")
+def _defect(key: str, label: str, value: Any, unit: Unit = "number") -> Measure:
+    """A defect measure, lower is better. A list of defective rows counts as its length; None is a
+    check the run skipped (recorded as None, not an empty list)."""
+    return Measure(key=key, label=label, value=len(value) if isinstance(value, list) else value,
+                   better="lower", unit=unit)
 
 
 class IntegrityMetric(Metric):
@@ -100,20 +97,19 @@ class IntegrityMetric(Metric):
         enrichment that adds rows can add defects too, and that is what a reviewer needs to see (#68 adds
         size-independent duplication rates). A check the run skipped (no services table) has no value."""
         details = result.details
-        exact, fuzzy = details.get("exact_duplicates", {}), details.get("fuzzy_duplicates", {})
-        orphans, dead_ends = details.get("orphans", {}), details.get("dead_ends", {})
+        exact, fuzzy = details.get("exact_duplicates") or {}, details.get("fuzzy_duplicates") or {}
         measures = [
             _defect(f"exact_duplicate_rows.{level}", f"{label} in exact-duplicate clusters",
-                    sum(len(cluster["ids"]) for cluster in exact.get(level, [])))
+                    _cluster_rows(exact.get(level)))
             for level, label, _ in _LEVELS
         ]
         measures += [
-            _defect(f"fuzzy_duplicate_pairs.{level}", f"Fuzzy-duplicate {singular} pairs", _count(fuzzy.get(level)))
+            _defect(f"fuzzy_duplicate_pairs.{level}", f"Fuzzy-duplicate {singular} pairs", fuzzy.get(level))
             for level, _, singular in _LEVELS
         ]
         return [*measures, *(
-            _defect(f"{section}.{key}", label, value(orphans if section == "orphans" else dead_ends, key))
-            for section, key, label, value in _DEFECTS
+            _defect(f"{section}.{key}", label, (details.get(section) or {}).get(key), unit)
+            for section, key, label, unit in _DEFECTS
         )]
 
     def run(self, datasets: dict[str, LoadedDataset], params: dict[str, Any]) -> MetricResult:

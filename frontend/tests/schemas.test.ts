@@ -134,17 +134,19 @@ describe("runComparisonSchema", () => {
     metrics: [{
       metric_id: "breadth", label: "breadth", before_index: 2, after_index: 2, issues: [],
       measures: [
-        { key: "occupational.matched_count", label: "SSOC occupational nodes covered", better: "higher",
+        { key: "occupational.matched_count", label: "SSOC occupational nodes covered", better: "higher", unit: "number",
           before: 16, after: 24, change: 8, relative_change: 0.5, verdict: "improved" },
-        { key: "reviewed", label: "Incoming concepts reviewed", better: null,
+        { key: "reviewed", label: "Incoming concepts reviewed", better: null, unit: "number",
           before: 4308, after: null, change: null, relative_change: null, verdict: "not_compared" },
       ],
     }],
+    comparable: true,
   };
 
   it("reads changes and verdicts, and measures one run lacks", () => {
     const parsed = runComparisonSchema.parse(comparison);
-    expect(parsed.comparability.comparable).toBe(true);
+    expect(parsed.comparable).toBe(true);
+    expect(parsed.metrics[0].measures.map((m) => m.unit)).toEqual(["number", "number"]);
     expect(parsed.metrics[0].measures.map((m) => m.verdict)).toEqual(["improved", "not_compared"]);
   });
 

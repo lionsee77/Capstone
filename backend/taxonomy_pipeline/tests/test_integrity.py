@@ -142,3 +142,17 @@ def test_a_skipped_orphan_check_has_no_measure_value():
     measures = {m.key: m.value for m in IntegrityMetric().measures(result)}
     assert measures["orphans.categories_without_service"] is None
     assert measures["orphans.specialities_without_category"] == 0
+
+
+def test_a_level_or_section_missing_from_stored_details_has_no_measure_value_rather_than_zero():
+    from tests.conftest import baseline_of_record
+
+    result = next(r for r in baseline_of_record().results if r.metric_id == "integrity").model_copy(deep=True)
+    del result.details["exact_duplicates"]["tags"]
+    result.details["dead_ends"] = None
+
+    measures = {m.key: m.value for m in IntegrityMetric().measures(result)}
+
+    assert measures["exact_duplicate_rows.tags"] is None
+    assert measures["exact_duplicate_rows.categories"] is not None
+    assert measures["dead_ends.categories_with_zero_specialities"] is None

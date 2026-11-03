@@ -18,14 +18,23 @@ from __future__ import annotations
 
 import math
 
-from ..models import Measure, MeasureChange, MetricChange, MetricResult, RunComparison, RunReport, Verdict
+from ..models import (
+    ComparabilityIssue,
+    Measure,
+    MeasureChange,
+    MetricChange,
+    MetricResult,
+    RunComparison,
+    RunReport,
+    Verdict,
+)
 from .definitions import check_comparable
 from .registry import METRICS
 
-# Absolute difference below which two values are equal: well under the rounding
-# every metric applies (3 decimals), and above the 1e-7 sentence-model scores
-# can differ by between machines.
-_EQUAL = 1e-9
+# Absolute difference below which two values are equal: above the 1e-7 that
+# sentence-model scores can differ by between machines, and well under the
+# rounding every metric applies (3 decimals).
+_EQUAL = 1e-6
 
 
 def compare_reports(
@@ -44,31 +53,50 @@ def compare_reports(
         "after": after_labels or [result.metric_id for result in after.results],
     }
     metrics = []
+    # Pairs take the before run's label; a result only the after run has could share one
+    # (e.g. both runs have "integrity #0", scored differently), so it is marked as the after run's.
+    used = {labels["before"][pair.before_index] for pair in check.metrics if pair.before_index is not None}
     for pair in check.metrics:
         old = before.results[pair.before_index] if pair.before_index is not None else None
         new = after.results[pair.after_index] if pair.after_index is not None else None
-        compared = not check.issues and not pair.issues
-        label = labels["before"][pair.before_index] if pair.before_index is not None \
-            else labels["after"][pair.after_index]
+        if pair.before_index is not None:
+            label = labels["before"][pair.before_index]
+        else:
+            label = labels["after"][pair.after_index]
+            label = f"{label} (after)" if label in used else label
+        issues = list(pair.issues)
+        old_measures = _measures(pair.metric_id, old, "before", issues)
+        new_measures = _measures(pair.metric_id, new, "after", issues)
+        compared = not check.issues and not issues
         metrics.append(MetricChange(
             metric_id=pair.metric_id, label=label, before_index=pair.before_index, after_index=pair.after_index,
-            issues=pair.issues, measures=_measure_changes(pair.metric_id, old, new, compared=compared),
+            issues=issues, measures=_measure_changes(old_measures, new_measures, compared=compared),
         ))
     return RunComparison(comparability=check, metrics=metrics)
 
 
-def _measures(metric_id: str, result: MetricResult | None) -> dict[str, Measure]:
-    """The result's measures by key; none for a missing result or one that didn't run."""
+def _measures(
+    metric_id: str, result: MetricResult | None, side: str, issues: list[ComparabilityIssue],
+) -> dict[str, Measure]:
+    """The result's measures by key; none for a missing result or one that didn't run.
+
+    A stored report whose details don't have the shape `measures()` reads (hand-edited, or
+    from an older version) adds an issue instead of failing the whole comparison, so its pair
+    goes uncompared and the rest of the report is still served."""
     metric = METRICS.get(metric_id)
     if result is None or metric is None or result.status != "ok":
         return {}
-    return {measure.key: measure for measure in metric.measures(result)}
+    try:
+        return {measure.key: measure for measure in metric.measures(result)}
+    except (AttributeError, KeyError, TypeError, ValueError) as exc:
+        issues.append(ComparabilityIssue(
+            kind="result_status",
+            message=f"the {side} run's {metric_id} details couldn't be read ({type(exc).__name__}: {exc})",
+        ))
+        return {}
 
 
-def _measure_changes(
-    metric_id: str, before: MetricResult | None, after: MetricResult | None, *, compared: bool,
-) -> list[MeasureChange]:
-    old, new = _measures(metric_id, before), _measures(metric_id, after)
+def _measure_changes(old: dict[str, Measure], new: dict[str, Measure], *, compared: bool) -> list[MeasureChange]:
     changes = []
     for key in dict.fromkeys([*old, *new]):
         shape = old.get(key) or new[key]
@@ -78,7 +106,8 @@ def _measure_changes(
 
 
 def _change(shape: Measure, before: float | None, after: float | None, *, compared: bool) -> MeasureChange:
-    common = {"key": shape.key, "label": shape.label, "better": shape.better, "before": before, "after": after}
+    common = {"key": shape.key, "label": shape.label, "better": shape.better, "unit": shape.unit,
+              "before": before, "after": after}
     if not compared or before is None or after is None:
         return MeasureChange(**common, verdict="not_compared")
     change = 0.0 if math.isclose(before, after, rel_tol=0, abs_tol=_EQUAL) else after - before

@@ -128,7 +128,7 @@ class BreadthMetric(Metric):
                 Measure(key=f"{dimension}.matched_count", label=f"{reference} {dimension} nodes covered",
                         value=section.get("matched_count"), better="higher"),
                 Measure(key=f"{dimension}.coverage", label=f"{dimension.capitalize()} coverage",
-                        value=section.get("coverage"), better="higher"),
+                        value=section.get("coverage"), better="higher", unit="rate"),
             ]
         return measures
 

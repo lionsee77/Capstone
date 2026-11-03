@@ -125,7 +125,7 @@ def compare_runs(
 ) -> RunComparison:
     """Compare two stored runs metric by metric (#69): values, changes and verdicts, embedding the
     comparability check. Runs come from run history only - never a file path - so a request can't
-    read reports elsewhere on the server. Read `comparability.comparable` before any verdict."""
+    read reports elsewhere on the server. Read `comparable` before any verdict."""
     reports = {label: scoring.get_run(run_id) for label, run_id in (("before", before_id), ("after", after_id))}
     missing = [label for label, report in reports.items() if report is None]
     if missing:

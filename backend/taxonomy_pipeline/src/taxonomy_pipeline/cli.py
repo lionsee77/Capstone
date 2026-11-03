@@ -86,8 +86,10 @@ def _cmd_compare(args: argparse.Namespace) -> int:
         print(f"[FAILED] compare: {exc}", file=sys.stderr)
         return 1
     # Like check-comparable, a comparison that isn't like for like fails, so a script can't miss it.
-    if not comparison.comparability.comparable:
-        print("[FLAGGED] NOT comparable: changes are only shown for results scored alike", file=sys.stderr)
+    if not comparison.comparable:
+        print("[FLAGGED] NOT comparable: changes are only shown for results scored alike. Why:", file=sys.stderr)
+        for reason in comparisons.not_comparable_reasons(comparison):
+            print(f"  - {reason}", file=sys.stderr)
         return 1
     return 0
 

@@ -131,6 +131,9 @@ class Comparability(BaseModel):
 
 Direction = Literal["higher", "lower"]
 Verdict = Literal["improved", "unchanged", "deteriorated", "changed", "not_compared"]
+# How a measure's value reads: a "rate" is a fraction (0.25 shows as 25%, its change in points);
+# a "number" is a count or a mean, shown as is.
+Unit = Literal["number", "rate"]
 
 
 class Measure(BaseModel):
@@ -141,13 +144,15 @@ class Measure(BaseModel):
     only diffs these, never a metric's raw `details`. `better` is None for a
     number whose change is worth showing but isn't good or bad in itself (e.g.
     how many concepts saturation reviewed). `value` is None when the result
-    couldn't measure it (e.g. a rate over an empty table).
+    couldn't measure it (e.g. a rate over an empty table). `unit` says how to
+    show it, so a report never guesses from the key.
     """
 
     key: str
     label: str
     value: float | None
     better: Direction | None = None
+    unit: Unit = "number"
 
 
 class MeasureChange(BaseModel):
@@ -162,6 +167,7 @@ class MeasureChange(BaseModel):
     key: str
     label: str
     better: Direction | None
+    unit: Unit = "number"
     before: float | None
     after: float | None
     change: float | None = None
@@ -187,10 +193,17 @@ class RunComparison(BaseModel):
     Built by `quality.comparison.compare_reports` on top of `check_comparable`,
     which it embeds as `comparability`: no measure gets a change or a verdict
     unless both the runs and its pair of results were scored alike.
+    `comparable` also counts a pair whose stored details couldn't be read, an
+    issue only the comparison finds, so read it rather than the embedded check's.
     """
 
     comparability: Comparability
     metrics: list[MetricChange] = Field(default_factory=list)
+
+    @computed_field
+    @property
+    def comparable(self) -> bool:
+        return not self.comparability.issues and not any(metric.issues for metric in self.metrics)
 
 
 ConceptLevel = Literal["services", "categories", "specialities", "tags"]

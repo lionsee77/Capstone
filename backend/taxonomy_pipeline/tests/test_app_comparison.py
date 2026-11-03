@@ -83,7 +83,7 @@ def test_json_round_trips_to_the_shared_model() -> None:
 
 @pytest.mark.parametrize(("path", "requested", "expected"), [
     (None, None, "markdown"), ("out.csv", None, "csv"), ("out.JSON", None, "json"), ("out.md", None, "markdown"),
-    ("out.txt", None, "markdown"), ("out.csv", "json", "json"),
+    ("out.txt", "csv", "csv"), ("out.csv", "json", "json"),
 ])
 def test_the_output_format_is_the_one_asked_for_else_the_files_suffix(path, requested, expected) -> None:
     assert comparison.output_format(path, requested) == expected
@@ -92,3 +92,32 @@ def test_the_output_format_is_the_one_asked_for_else_the_files_suffix(path, requ
 def test_an_unknown_format_is_refused() -> None:
     with pytest.raises(ValueError, match="unknown format 'pdf'"):
         comparison.output_format(None, "pdf")
+
+
+@pytest.mark.parametrize("path", ["cmp.json.gz", "cmp.txt", "cmp"])
+def test_an_output_file_whose_suffix_names_no_format_is_refused_without_format(path) -> None:
+    with pytest.raises(ValueError, match="can't tell the format"):
+        comparison.output_format(path)
+
+
+def test_markdown_names_the_reason_when_only_one_result_is_scored_differently() -> None:
+    after = _enriched()
+    next(result for result in after.results if result.metric_id == "integrity").params["fuzzy_threshold"] = 90
+
+    result = comparison.compare(baseline_of_record(), after)
+    text = comparison.to_markdown(result)
+
+    assert not result.comparability.issues and not result.comparable
+    reasons = text.split("fix these first:\n", 1)[1].split("\n\n", 1)[0]
+    assert reasons.startswith("- integrity: ") and "fuzzy_threshold" in reasons
+
+
+def test_percentages_follow_the_measures_unit_not_its_key() -> None:
+    result = comparison.compare(baseline_of_record(), _enriched())
+    measure = next(m for metric in result.metrics for m in metric.measures if m.key == "occupational.matched_count")
+    measure.key = "moderate_matches"  # a count whose key happens to contain "rate"
+
+    text = comparison.to_markdown(result)
+
+    assert "| SSOC occupational nodes covered | 16 | 16 | 0 | +0.0% | unchanged |" in text
+    assert "| Occupational coverage | 11.0% | 11.0% | +0.0 pp | +0.0% | unchanged |" in text

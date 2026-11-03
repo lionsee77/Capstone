@@ -45,12 +45,31 @@ _SUFFIX_FORMATS = {".md": "markdown", ".markdown": "markdown", ".csv": "csv", ".
 
 
 def output_format(path: str | Path | None, requested: str | None = None) -> str:
-    """The format asked for, else the one the output file's suffix names, else Markdown."""
+    """The format asked for, else the one the output file's suffix names, else Markdown (stdout).
+
+    A suffix that names no format (`.gz`, `.txt`) is refused rather than read as Markdown, so
+    `--output cmp.json.gz` can't quietly write Markdown under a JSON name."""
     if requested:
         if requested not in FORMATS:
             raise ValueError(f"unknown format {requested!r}; choose one of {', '.join(FORMATS)}")
         return requested
-    return _SUFFIX_FORMATS.get(Path(path).suffix.lower(), "markdown") if path else "markdown"
+    if not path:
+        return "markdown"
+    suffix = Path(path).suffix.lower()
+    if suffix not in _SUFFIX_FORMATS:
+        raise ValueError(
+            f"can't tell the format from {str(path)!r}: name a {', '.join(_SUFFIX_FORMATS)} file "
+            f"or pass --format ({', '.join(FORMATS)})"
+        )
+    return _SUFFIX_FORMATS[suffix]
+
+
+def not_comparable_reasons(comparison: RunComparison) -> list[str]:
+    """Why the comparison isn't like for like: the run-level issues, then each result's, by label.
+    Empty when `comparison.comparable`."""
+    reasons = [issue.message for issue in comparison.comparability.issues]
+    return reasons + [f"{metric.label}: {issue.message}" for metric in comparison.metrics
+                      for issue in metric.issues]
 
 
 def render(comparison: RunComparison, fmt: str) -> str:
@@ -73,11 +92,11 @@ def to_markdown(comparison: RunComparison) -> str:
         f"- **After:** {_run_text(check.after_run_id, check.after_subject, check.after_definitions_version)}",
         "",
     ]
-    if check.comparable:
+    if comparison.comparable:
         lines.append("Both runs were scored alike, so every change below is a change in the taxonomy.")
     else:
         lines.append("**Not comparable.** Changes are only shown for results scored alike; fix these first:")
-        lines += [f"- {issue.message}" for issue in check.issues]
+        lines += [f"- {reason}" for reason in not_comparable_reasons(comparison)]
     counts = _verdict_counts(comparison)
     if counts:
         lines += ["", "**Summary:** " + ", ".join(f"{count} {_VERDICT_TEXT[verdict]}" for verdict, count in counts)]
@@ -102,12 +121,12 @@ def to_csv(comparison: RunComparison) -> str:
     """One row per measure, with raw numbers, for a spreadsheet."""
     out = io.StringIO()
     writer = csv.writer(out, lineterminator="\n")
-    writer.writerow(["metric_id", "result", "measure_key", "measure", "better", "before", "after", "change",
-                     "relative_change", "verdict"])
+    writer.writerow(["metric_id", "result", "measure_key", "measure", "better", "unit", "before", "after",
+                     "change", "relative_change", "verdict"])
     for metric in comparison.metrics:
         for measure in metric.measures:
             writer.writerow([
-                metric.metric_id, metric.label, measure.key, measure.label, measure.better or "",
+                metric.metric_id, metric.label, measure.key, measure.label, measure.better or "", measure.unit,
                 *("" if value is None else value for value in (
                     measure.before, measure.after, measure.change, measure.relative_change,
                 )),
@@ -129,10 +148,6 @@ def _run_text(run_id: str, subject: str | None, version: int | None) -> str:
     return f"run `{run_id}` ({subject or 'no scored taxonomy'}, {definitions})"
 
 
-def _is_rate(measure: MeasureChange) -> bool:
-    return measure.key.endswith(("rate", "coverage")) or "rate_" in measure.key
-
-
 def _number(value: float) -> str:
     return f"{value:,.0f}" if float(value).is_integer() else f"{value:,.2f}"
 
@@ -140,13 +155,13 @@ def _number(value: float) -> str:
 def _value(measure: MeasureChange, value: float | None) -> str:
     if value is None:
         return "-"
-    return f"{value:.1%}" if _is_rate(measure) else _number(value)
+    return f"{value:.1%}" if measure.unit == "rate" else _number(value)
 
 
 def _delta(measure: MeasureChange) -> str:
     if measure.change is None:
         return "-"
-    if _is_rate(measure):
+    if measure.unit == "rate":
         return f"{measure.change * 100:+.1f} pp"
     return ("+" if measure.change > 0 else "") + _number(measure.change)
 

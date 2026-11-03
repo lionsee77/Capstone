@@ -510,6 +510,16 @@ def test_compare_still_writes_the_report_but_fails_when_the_runs_are_not_compara
     out = capsys.readouterr()
     assert "not_compared" in out.out
     assert "[FLAGGED] NOT comparable" in out.err
+    assert "  - " in out.err and "definitions" in out.err  # says why, not just that it isn't
+
+
+def test_compare_refuses_an_output_suffix_it_cant_read_a_format_from(tmp_path, capsys):
+    before, after = _baseline_and_enriched(tmp_path)
+
+    assert main(["compare", before, after, "--output", str(tmp_path / "cmp.json.gz")]) == 1
+
+    assert "can't tell the format" in capsys.readouterr().err
+    assert not (tmp_path / "cmp.json.gz").exists()
 
 
 def test_compare_fails_cleanly_for_an_unknown_report(tmp_path, isolated_db, capsys):

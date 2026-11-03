@@ -827,7 +827,7 @@ anything is flagged:
 | `definitions_version` | Scored with different definitions versions, or one run predates versioning: nothing compares |
 | `run_status` | A run failed |
 | `missing_result` | A metric scored the taxonomy in one run only, or a run has no result scoring its subject at all (e.g. a mistyped `--before-subject`), so nothing would be compared |
-| `result_status` | A result is `error` or `skipped` |
+| `result_status` | A result is `error` or `skipped` (or, in `compare` only, its stored details can't be read) |
 | `settings` | Same metric, different params (all but the scored taxonomy's `dataset`/`target`/`baseline`); the changes are listed |
 | `reference_data` | A dataset the result reads (SSIC, SSOC, the incoming source) has different row counts |
 
@@ -850,20 +850,25 @@ taxonomy-pipeline compare <before-run-id> <after-run-id> --format json
 prints, for every paired result, each of its headline numbers in both runs,
 the absolute and relative change, and a verdict. `--output` writes a file
 instead, in the format its suffix names (`.md`, `.csv`, `.json`) unless
-`--format` says otherwise. The API serves the same comparison as JSON at
+`--format` says otherwise; any other suffix (e.g. `.gz`) is refused without one. The API serves the same comparison as JSON at
 `GET /runs/{before_id}/compare/{after_id}` (run IDs only).
 
 | Verdict | Meaning |
 |---|---|
 | `improved` / `deteriorated` | Moved in the measure's better / worse direction (any change counts) |
-| `unchanged` | Equal to within 1e-9, below every metric's rounding |
+| `unchanged` | Equal to within 1e-6: above sentence-model noise between machines (~1e-7), below every metric's rounding (3 decimals) |
 | `changed` | Moved, but the measure has no better direction (e.g. incoming concepts reviewed) |
 | `not_compared` | The runs, or this pair of results, weren't scored alike (see the flags above): values shown, no change |
 
 The report starts with the comparability check: changes are only computed for
 pairs scored alike, and when the runs themselves aren't (e.g. different
 definitions versions) nothing gets a verdict and `compare` exits non-zero,
-though it still writes the report. The verdict is deliberately strict; the
+though it still writes the report. When it isn't comparable, the report and
+`compare`'s error output list every reason, the run's and each result's. A
+result whose stored details `measures()` can't read (a hand-edited or older
+report) goes uncompared with a `result_status` issue instead of failing the
+comparison; the JSON's top-level `comparable` counts it, so read that rather
+than `comparability.comparable`. The verdict is deliberately strict; the
 tolerance for calling a small change "unchanged" belongs to the PB11
 evaluation (#73, from the criteria agreed in #88), applied on top of this
 report so the raw change stays visible.
@@ -876,6 +881,13 @@ What each metric compares, and which way is better, is its `measures()`:
 | `depth` | Tags per speciality, mean and median (higher); specialities per category, and the category and speciality counts (no direction) |
 | `breadth` | SSIC and SSOC nodes covered, and coverage (higher) |
 | `saturation` | After the last incoming source: add candidates, concepts needing review, new-items rate min and max (lower); concepts reviewed, new placements, other-level matches (no direction) |
+
+Each measure also has a `unit`: `rate` (a fraction, shown as a percentage
+with its change in points: dead-end rates, coverage, new-items rates) or
+`number` (everything else), so the report never guesses from a key. A result
+only one run has is labelled as that run's; one only the after run has whose
+label the before run already uses gets ` (after)` appended. A level with no
+entry in a result's details has no value, not 0, so it is `not_compared`.
 
 Measures only read a result's `details`, so stored reports compare without
 rerunning anything, and the directions aren't part of the metric definitions
@@ -1472,7 +1484,7 @@ adding one, or changing its defaults or formula, means a new version (see
 [Changing a definition](#changing-a-definition)). Override `definition()` to
 pin anything its scores depend on that no param exposes, as breadth does for
 its sentence model. Override `measures(result)` to put its headline numbers,
-and which way is better, into `compare` reports; a metric without it is paired
+which way is better, and `unit="rate"` for any fraction, into `compare` reports; a metric without it is paired
 and checked but shows no numbers.
 
 ## Config and report reference
