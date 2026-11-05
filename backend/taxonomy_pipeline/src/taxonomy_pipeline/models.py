@@ -130,7 +130,133 @@ class Comparability(BaseModel):
         return not self.issues and not any(metric.issues for metric in self.metrics)
 
 
-ConceptLevel = Literal["services", "categories", "specialities", "tags"]
+Direction = Literal["higher", "lower"]
+Verdict = Literal["improved", "unchanged", "deteriorated", "changed", "not_compared"]
+# How a measure's value reads: a "rate" is a fraction (0.25 shows as 25%, its change in points);
+# a "number" is a count or a mean, shown as is.
+Unit = Literal["number", "rate"]
+
+
+class Measure(BaseModel):
+    """One headline number read from a metric result, and which way is better.
+
+    Each metric says which of its numbers matter for a version comparison by
+    overriding `Metric.measures` (`quality/base.py`); the comparison report (#69)
+    only diffs these, never a metric's raw `details`. `better` is None for a
+    number whose change is worth showing but isn't good or bad in itself (e.g.
+    how many concepts saturation reviewed). `value` is None when the result
+    couldn't measure it (e.g. a rate over an empty table). `unit` says how to
+    show it, so a report never guesses from the key.
+    """
+
+    key: str
+    label: str
+    value: float | None
+    better: Direction | None = None
+    unit: Unit = "number"
+
+
+class MeasureChange(BaseModel):
+    """One measure in both runs, the change, and whether it got better.
+
+    `change` and `verdict` are only set for a pair of results scored alike
+    (`Comparability`): otherwise the verdict is "not_compared" and the values
+    are shown for reference only. "changed" is the verdict for a measure that
+    moved but has no better direction.
+    """
+
+    key: str
+    label: str
+    better: Direction | None
+    unit: Unit = "number"
+    before: float | None
+    after: float | None
+    change: float | None = None
+    relative_change: float | None = Field(default=None, description="change / |before|; None when before is 0")
+    verdict: Verdict
+
+
+class MetricChange(BaseModel):
+    """One paired scoring result: its measures, compared, and any reason it doesn't compare."""
+
+    metric_id: str
+    label: str = Field(description="Display label, unique within the comparison (see `app.scoring.result_labels`)")
+    before_index: int | None = None
+    after_index: int | None = None
+    issues: list[ComparabilityIssue] = Field(default_factory=list)
+    measures: list[MeasureChange] = Field(default_factory=list)
+
+
+class RunComparison(BaseModel):
+    """A version-to-version quality comparison of two runs (PB10, #69): what a reviewer
+    reads instead of two raw reports, and what PB11's verdicts (#73) build on.
+
+    Built by `quality.comparison.compare_reports` on top of `check_comparable`,
+    which it embeds as `comparability`: no measure gets a change or a verdict
+    unless both the runs and its pair of results were scored alike.
+    `comparable` also counts a pair whose stored details couldn't be read, an
+    issue only the comparison finds, so read it rather than the embedded check's.
+    """
+
+    comparability: Comparability
+    metrics: list[MetricChange] = Field(default_factory=list)
+
+    @computed_field
+    @property
+    def comparable(self) -> bool:
+        return not self.comparability.issues and not any(metric.issues for metric in self.metrics)
+
+
+class LineageStage(BaseModel):
+    """One taxonomy version in the enrichment lineage (`GET /lineage`): a baseline no round produced
+    (a root, `parent` None), or the snapshot one `integrate` round wrote.
+
+    Built by `app.lineage.taxonomy_lineage` from `integrations/*/manifest.json`; see
+    `enrichment/lineage.py` for how a round is linked to the snapshot it enriched.
+    """
+
+    id: str = Field(description="A root's `baseline:<dataset>`, else the round's integration directory name")
+    name: str = Field(description="The root's dataset name, or the round's directory name")
+    parent: str | None = None
+    sources: list[str] = Field(default_factory=list, description="Incoming datasets the round's tags came from")
+    created_at: datetime | None = None
+    added: dict[str, int] = Field(default_factory=dict, description="Rows the round added, per table")
+
+
+class LineageRun(BaseModel):
+    """A stored run that scored at least one lineage stage, and under which dataset name it scored each."""
+
+    run_id: str
+    created_at: str
+    judged: bool = Field(description="Whether any saturation result in the run had the LLM judge on")
+    datasets: dict[str, str] = Field(description="Stage id -> the run's dataset name for that stage")
+
+
+class LineageChain(BaseModel):
+    """One root-to-latest path through the lineage, and the runs to read it with, best first.
+
+    A run is listed when it scored at least two of the chain's stages. Best means it covers the
+    most stages, then has the judge on, then is newest - so every stage-to-stage comparison in it
+    is like for like when one run covers them all.
+    """
+
+    stages: list[str]
+    runs: list[str] = Field(default_factory=list)
+
+
+class TaxonomyLineage(BaseModel):
+    """`GET /lineage`: every stage, the chains through them (longest first) and the runs that scored them.
+
+    The dashboard reads which runs show a taxonomy's improvement from here, then compares their
+    stages through `GET /runs/{before}/compare/{after}`, so it hard-codes no run or stage.
+    """
+
+    stages: list[LineageStage] = Field(default_factory=list)
+    chains: list[LineageChain] = Field(default_factory=list)
+    runs: list[LineageRun] = Field(default_factory=list)
+
+
+ConceptLevel =Literal["services", "categories", "specialities", "tags"]
 
 
 class TaxonomyConceptRef(BaseModel):

@@ -24,6 +24,7 @@ taxonomy_pipeline/
 │   └── baseline_v1.json.gz           #   the original taxonomy scored with definitions v1
 ├── configs/                          # pipeline configs
 │   ├── baseline_v1.yaml              #   pinned config that produced baselines/baseline_v1.json.gz
+│   ├── lineage_scorecard.yaml        #   every enrichment stage scored in one run, judge on (/lineage reads it)
 │   └── original_vs_skillsfuture.yaml #   classification rounds: scores both taxonomies, saturation judge on
 ├── docs/                             # design notes and future-work references
 │   ├── saturation-coverage-options.md      #   options for deciding "good coverage" from the saturation curve
@@ -49,12 +50,13 @@ taxonomy_pipeline/
 │   │   ├── judge.py                  #   optional LLM judge (OpenAI Decisions API) for saturation's ambiguous concepts
 │   │   └── engine.py                 #   the comparison engine saturation and Case A share
 │   ├── quality/                      # pluggable quality checks that score one taxonomy
-│   │   ├── base.py                   #   Metric ABC
+│   │   ├── base.py                   #   Metric ABC (run; measures for comparisons)
 │   │   ├── integrity.py              #   duplicates, orphans, dead ends
 │   │   ├── depth.py                  #   branching factor
 │   │   ├── breadth.py                #   coverage vs. a reference dataset
 │   │   ├── saturation.py             #   new-items curve across ordered incoming sources
 │   │   ├── definitions.py            #   METRIC_DEFINITIONS_VERSION and check_comparable (see "Official metric definitions")
+│   │   ├── comparison.py             #   compare_reports: each metric's measures in two runs, change and verdict (#69)
 │   │   └── registry.py               #   METRICS dict - register new metrics here
 │   ├── providers/                    # what is specific to one external source
 │   │   ├── base.py                   #   SourceProvider ABC: per-tag context and display name for Case B
@@ -80,6 +82,7 @@ taxonomy_pipeline/
 │   │   ├── runner.py                 #   chains merge 1-5 for `merge-preview`
 │   │   ├── bulk_decisions.py         #   `bulk-decide`: draft decisions for ambiguous tags by similarity
 │   │   ├── integrate.py              #   reviewed merge run -> enriched snapshot (real IDs, additions.sql)
+│   │   ├── lineage.py                #   read integrations/* back as rounds; file-content fingerprints
 │   │   └── proposals/                #   proposed categories and specialities, until governance (PB06)
 │   │       ├── intake.py             #     collect proposed hierarchy paths
 │   │       ├── screening.py          #     screen them against the baseline's categories and specialities
@@ -90,6 +93,8 @@ taxonomy_pipeline/
 │   ├── app/                          # use cases: what every CLI command and API route calls
 │   │   ├── changes.py                #   history queries and durable audit-event recovery
 │   │   ├── scoring.py                #   run_pipeline(config) -> RunReport; dataset/report I/O; check_runs; run history
+│   │   ├── comparison.py             #   compare / compare_runs; Markdown, CSV and JSON exports
+│   │   ├── lineage.py                #   taxonomy_lineage: stages, chains and the runs that scored them
 │   │   ├── enrichment.py             #   case_a, case_b, merge_preview, review_proposals, bulk_decide, integrate
 │   │   ├── browse.py                 #   taxonomy search/detail over a past run's dataset (/taxonomy)
 │   │   └── sources.py                #   import_source: flat source -> dump, tag context, next round's config
@@ -99,11 +104,12 @@ taxonomy_pipeline/
 │   ├── env.py                        # loads backend/.env for `serve` and llm.py
 │   ├── llm.py                        # the one OpenAI client setup (judge + Case B): key check, base URL
 │   ├── api/
-│   │   ├── app.py                    #   FastAPI: /metrics, /runs, /taxonomy routes over app/
+│   │   ├── app.py                    #   FastAPI: /metrics, /runs (incl. compare), /taxonomy routes over app/
 │   │   ├── proposals.py              #   /proposals: which merge runs a request may read, over app.enrichment
+│   │   ├── lineage.py                #   /lineage: which integrations and merge roots it reads, over app.lineage
 │   │   ├── changes.py                #   authenticated, read-only GET /changes over app.changes
 │   │   └── security.py               #   API token and allowed data directories
-│   └── cli.py                        # `taxonomy-pipeline run|check-comparable|serve|import-source|case-a|case-b|merge-preview|review-proposals|bulk-decide|integrate`
+│   └── cli.py                        # `taxonomy-pipeline run|check-comparable|compare|serve|import-source|case-a|case-b|merge-preview|review-proposals|bulk-decide|integrate`
 ├── schemas/
 │   └── classification_output.schema.json # JSON Schema for the producer contract
 └── tests/
@@ -240,6 +246,7 @@ taxonomy-pipeline merge-preview --input case_a_output.json --input case_b_output
 taxonomy-pipeline integrate --merge-run merge_runs/reviewed --config configs/baseline_v1.yaml
 taxonomy-pipeline run --config integrations/<timestamp>/enriched.yaml --output enriched_report.json
 taxonomy-pipeline check-comparable baselines/baseline_v1.json.gz enriched_report.json
+taxonomy-pipeline compare baselines/baseline_v1.json.gz enriched_report.json --output comparison.md
 ```
 
 **Run saturation once per round and give both producers the same
@@ -1078,6 +1085,7 @@ sitting exactly on a threshold could in principle land differently.
 taxonomy-pipeline integrate --merge-run merge_runs/reviewed --config configs/baseline_v1.yaml
 taxonomy-pipeline run --config integrations/<timestamp>/enriched.yaml --output enriched_report.json
 taxonomy-pipeline check-comparable baselines/baseline_v1.json.gz enriched_report.json
+taxonomy-pipeline compare baselines/baseline_v1.json.gz enriched_report.json --output comparison.md
 ```
 
 `integrate --config configs/baseline_v1.yaml` writes an `enriched.yaml` with
@@ -1094,7 +1102,7 @@ anything is flagged:
 | `definitions_version` | Scored with different definitions versions, or one run predates versioning: nothing compares |
 | `run_status` | A run failed |
 | `missing_result` | A metric scored the taxonomy in one run only, or a run has no result scoring its subject at all (e.g. a mistyped `--before-subject`), so nothing would be compared |
-| `result_status` | A result is `error` or `skipped` |
+| `result_status` | A result is `error` or `skipped` (or, in `compare` only, its stored details can't be read) |
 | `settings` | Same metric, different params (all but the scored taxonomy's `dataset`/`target`/`baseline`); the changes are listed |
 | `reference_data` | A dataset the result reads (SSIC, SSOC, the incoming source) has different row counts |
 
@@ -1102,8 +1110,63 @@ Each run's subject, the taxonomy it scores, is read from its results. Name it
 with `--before-subject`/`--after-subject` for a run that scores several (e.g.
 one from `original_vs_skillsfuture.yaml`). The library call,
 `definitions.check_comparable`, also pairs each result with its counterpart;
-the comparison report (#69) builds on it. Row counts are the only data check,
+the comparison report below builds on it. Row counts are the only data check,
 so reference data edited without changing its size isn't caught.
+
+### Read what changed: the comparison report
+
+```bash
+taxonomy-pipeline compare baselines/baseline_v1.json.gz enriched_report.json               # Markdown to stdout
+taxonomy-pipeline compare baselines/baseline_v1.json.gz enriched_report.json --output comparison.csv
+taxonomy-pipeline compare <before-run-id> <after-run-id> --format json
+```
+
+`compare BEFORE AFTER` takes the same arguments as `check-comparable` and
+prints, for every paired result, each of its headline numbers in both runs,
+the absolute and relative change, and a verdict. `--output` writes a file
+instead, in the format its suffix names (`.md`, `.csv`, `.json`) unless
+`--format` says otherwise; any other suffix (e.g. `.gz`) is refused without one. The API serves the same comparison as JSON at
+`GET /runs/{before_id}/compare/{after_id}` (run IDs only).
+
+| Verdict | Meaning |
+|---|---|
+| `improved` / `deteriorated` | Moved in the measure's better / worse direction (any change counts) |
+| `unchanged` | Equal to within 1e-6: above sentence-model noise between machines (~1e-7), below every metric's rounding (3 decimals) |
+| `changed` | Moved, but the measure has no better direction (e.g. incoming concepts reviewed) |
+| `not_compared` | The runs, or this pair of results, weren't scored alike (see the flags above): values shown, no change |
+
+The report starts with the comparability check: changes are only computed for
+pairs scored alike, and when the runs themselves aren't (e.g. different
+definitions versions) nothing gets a verdict and `compare` exits non-zero,
+though it still writes the report. When it isn't comparable, the report and
+`compare`'s error output list every reason, the run's and each result's. A
+result whose stored details `measures()` can't read (a hand-edited or older
+report) goes uncompared with a `result_status` issue instead of failing the
+comparison; the JSON's top-level `comparable` counts it, so read that rather
+than `comparability.comparable`. The verdict is deliberately strict; the
+tolerance for calling a small change "unchanged" belongs to the PB11
+evaluation (#73, from the criteria agreed in #88), applied on top of this
+report so the raw change stays visible.
+
+What each metric compares, and which way is better, is its `measures()`:
+
+| Metric | Measures (better direction) |
+|---|---|
+| `integrity` | Rows in exact-duplicate clusters and fuzzy-duplicate pairs per level; orphans; unused tags; dangling links; dead ends and dead-end rates (all lower). Counts grow with the taxonomy; size-independent duplication rates are #68 |
+| `depth` | Tags per speciality, mean and median (higher); specialities per category, and the category and speciality counts (no direction) |
+| `breadth` | SSIC and SSOC nodes covered, and coverage (higher) |
+| `saturation` | After the last incoming source: add candidates, concepts needing review, new-items rate min and max (lower); concepts reviewed, new placements, other-level matches (no direction) |
+
+Each measure also has a `unit`: `rate` (a fraction, shown as a percentage
+with its change in points: dead-end rates, coverage, new-items rates) or
+`number` (everything else), so the report never guesses from a key. A result
+only one run has is labelled as that run's; one only the after run has whose
+label the before run already uses gets ` (after)` appended. A level with no
+entry in a result's details has no value, not 0, so it is `not_compared`.
+
+Measures only read a result's `details`, so stored reports compare without
+rerunning anything, and the directions aren't part of the metric definitions
+version: they change how a change is labelled, not any number.
 
 ### Changing a definition
 
@@ -1615,7 +1678,18 @@ the token, so use curl or the dashboard to call endpoints.
 - `GET /runs/{run_id}` - poll for status, which moves `"queued"` ->
   `"running"` -> `"done"` or `"failed"`; once finished, the full report is
   in the response.
+  `?details=false` empties each result's `details` (keeping status, summary
+  and params): a saturation result lists every concept it reviewed, so a
+  judged multi-stage run is tens of megabytes, and a page showing summaries
+  and counts needs none of it.
 - `GET /runs` - recent run history.
+- `GET /runs/{before_id}/compare/{after_id}?before_subject=&after_subject=` -
+  the comparison report as JSON (`RunComparison`): each metric's measures,
+  changes and verdicts, with the comparability check embedded. Runs come from
+  run history only, never a file path (404 for an unknown ID); a run scoring
+  several taxonomies needs its subject named (422 otherwise).
+- `GET /lineage` - the enrichment lineage as JSON (`TaxonomyLineage`); see
+  "Enrichment lineage" below. It takes no parameters.
 - `GET /proposals?merge_run=&level=&offset=&limit=` and
   `GET /proposals/{proposal_id}?merge_run=` - saved hierarchy proposals with
   parent branches, matching evidence and decisions (see the #58 review view above).
@@ -1631,6 +1705,52 @@ the token, so use curl or the dashboard to call endpoints.
   it's linked to, since it can be linked to more than one; an orphan row
   (e.g. a speciality whose category doesn't resolve) gets a shorter path
   rather than an error, the same row `integrity` would report as an orphan.
+
+### Enrichment lineage
+
+`GET /lineage` (`app/lineage.py`) is how the dashboard's Improvement page finds
+out, with nothing hard-coded, how the taxonomy grew and which runs show it:
+
+- **Stages.** Each `integrations/<name>/` round is a stage: the snapshot it
+  wrote, with the rows it added (`manifest.json` `counts`) and the sources its
+  added tags came from (their members' `source_dataset` in its merge run's
+  `resolution.json`, so excluded or deferred records don't count). A
+  baseline no round produced is a root stage, `baseline:<dataset>`.
+- **Order.** A round's parent is the stage whose files hold the same bytes as
+  its `baseline/` copies (`enrichment/lineage.py`). The manifests' snapshot IDs
+  can't link rounds: `taxonomy_snapshot_id` fingerprints the dataset name too,
+  so the same rows named `enriched` and `round_baseline` get different IDs.
+  `chains` lists every root-to-latest path, longest first; a trial round off the
+  same baseline becomes its own shorter chain.
+- **Runs.** A finished run from history (newest 200) is linked to a stage when
+  one of the datasets it scores (a metric's subject: integrity's `dataset`,
+  breadth's `target`, saturation's `baseline`) loads exactly that stage's
+  files, compared by content, so the original dump and a round's copy of it
+  both match. A stage the run only loads, say as saturation's incoming data,
+  doesn't count. `datasets` maps
+  stage id -> the run's dataset name, which is the subject to pass to
+  `/runs/{before}/compare/{after}`. Each chain ranks the runs scoring at least
+  two of its stages: most stages, then judge on, then newest. One run scoring
+  every stage gives like-for-like comparisons between all of them.
+- `TAXONOMY_INTEGRATIONS_ROOT` selects the integrations directory (default
+  `backend/taxonomy_pipeline/integrations`), and `TAXONOMY_MERGE_ROOT` the merge
+  runs, as for `/proposals`. A round whose manifest or files can't be read is
+  skipped with a warning.
+
+`configs/lineage_scorecard.yaml` is that one run for the current chain
+(original -> judged-1015 -> onet-1031): integrity, depth and breadth for each
+stage, and saturation against SkillsFuture and against O*NET with the judge
+on, all with the official scorecard's settings. Run it from
+`backend/taxonomy_pipeline/` so the judge reuses `judge_cache.json` and
+`judge_cache_onet.json`:
+
+```bash
+taxonomy-pipeline run --config configs/lineage_scorecard.yaml
+```
+
+After a new round, add its snapshot as another dataset (and its source as
+another saturation entry per stage) and rerun; the dashboard picks the new run
+up from `/lineage`.
 
 Both `/taxonomy` endpoints re-read the dataset from disk on every call, using
 the file paths saved in that run's own config - nothing is kept loaded
@@ -1694,7 +1814,9 @@ That makes it part of the metric definitions version and of `check_comparable`:
 adding one, or changing its defaults or formula, means a new version (see
 [Changing a definition](#changing-a-definition)). Override `definition()` to
 pin anything its scores depend on that no param exposes, as breadth does for
-its sentence model.
+its sentence model. Override `measures(result)` to put its headline numbers,
+which way is better, and `unit="rate"` for any fraction, into `compare` reports; a metric without it is paired
+and checked but shows no numbers.
 
 ## Config and report reference
 
@@ -1809,9 +1931,9 @@ Ruff linting and the test suite run in CI (see the root
   validate the complete service/category/speciality path.
 - **No promotion step:** `integrate` writes and checks an enriched snapshot,
   `enriched.yaml` scores it, and `check-comparable` confirms that run is scored
-  like the baseline of record. The before/after comparison report (#69) and
-  promoting the snapshot to the next baseline are still the incremental flow
-  in #49 (and the PB11 evaluation, #29).
+  like the baseline of record, and `compare` reports what changed (#69).
+  Applying agreed tolerances (#73) and promoting the snapshot to the next
+  baseline are still the incremental flow in #49 (and the PB11 evaluation, #29).
 
 - **`saturation`** recommendations are review aids, not database
   operations. Its thresholds are not yet calibrated against a hand-labelled

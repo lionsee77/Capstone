@@ -125,3 +125,15 @@ def test_invalid_preprocessing_is_metric_error(profile):
     result = run(preprocessing=profile)
     assert result.status == "error"
     assert "preprocessing" in result.summary
+
+
+def test_measures_report_covered_nodes_and_coverage_with_higher_as_better():
+    from tests.conftest import baseline_of_record
+
+    result = next(r for r in baseline_of_record().results if r.metric_id == "breadth")
+    measures = {m.key: m for m in BreadthMetric().measures(result)}
+
+    assert measures["industry.matched_count"].value == 18
+    assert measures["occupational.matched_count"].value == 16
+    assert measures["occupational.coverage"].value == 0.11
+    assert {m.better for m in measures.values()} == {"higher"}

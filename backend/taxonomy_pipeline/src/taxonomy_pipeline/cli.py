@@ -1,9 +1,9 @@
-"""`taxonomy-pipeline run|check-comparable|serve|import-source|case-a|case-b|merge-preview|review-proposals|
-bulk-decide|integrate`
+"""`taxonomy-pipeline run|check-comparable|compare|serve|import-source|case-a|case-b|merge-preview|
+review-proposals|bulk-decide|integrate`
 
 A thin adapter over `app/`: each command parses its flags, calls the one use
-case behind it (`app.scoring` for `run` and `check-comparable`, `app.sources`
-for `import-source`, `app.enrichment` for the classification commands) and turns the result into
+case behind it (`app.scoring` for `run` and `check-comparable`, `app.comparison` for `compare`,
+`app.sources` for `import-source`, `app.enrichment` for the classification commands) and turns the result into
 printed text and an exit code. `run` calls the same `run_pipeline` the FastAPI
 `/runs` route calls. Anything else a command does - loading, checks, writing
 outputs - belongs in its use case, not here.
@@ -16,6 +16,7 @@ import sqlite3
 import sys
 from pathlib import Path
 
+from .app import comparison as comparisons
 from .app import enrichment as use_cases
 from .app.changes import changes, sync_changes
 from .app.scoring import check_runs, result_labels, run_config, write_report
@@ -72,6 +73,29 @@ def _cmd_check_comparable(args: argparse.Namespace) -> int:
     ]
     print(f"{'comparable' if check.comparable else 'NOT comparable'}: before {runs[0]}, after {runs[1]}")
     return 0 if check.comparable else 1
+
+
+def _cmd_compare(args: argparse.Namespace) -> int:
+    try:
+        fmt = comparisons.output_format(args.output, args.format)
+        comparison = comparisons.compare_runs(
+            args.before, args.after, before_subject=args.before_subject, after_subject=args.after_subject,
+        )
+        if args.output:
+            comparisons.write_comparison(comparison, args.output, fmt)
+            print(f"wrote {fmt} comparison to {args.output}", file=sys.stderr)
+        else:
+            print(comparisons.render(comparison, fmt), end="")
+    except (OSError, ValueError) as exc:
+        print(f"[FAILED] compare: {exc}", file=sys.stderr)
+        return 1
+    # Like check-comparable, a comparison that isn't like for like fails, so a script can't miss it.
+    if not comparison.comparable:
+        print("[FLAGGED] NOT comparable: changes are only shown for results scored alike. Why:", file=sys.stderr)
+        for reason in comparisons.not_comparable_reasons(comparison):
+            print(f"  - {reason}", file=sys.stderr)
+        return 1
+    return 0
 
 
 def _cmd_serve(args: argparse.Namespace) -> int:
@@ -277,6 +301,18 @@ def build_parser() -> argparse.ArgumentParser:
     check.add_argument("--before-subject", help="taxonomy the before run scores (needed if it scores several)")
     check.add_argument("--after-subject", help="taxonomy the after run scores (needed if it scores several)")
     check.set_defaults(func=_cmd_check_comparable)
+
+    compare = subparsers.add_parser(
+        "compare", help="compare two runs metric by metric: values, changes and improved/deteriorated verdicts",
+    )
+    compare.add_argument("before", help=f"the earlier run, e.g. the baseline of record: {report_source}")
+    compare.add_argument("after", help=f"the later run, e.g. the enriched snapshot's: {report_source}")
+    compare.add_argument("--before-subject", help="taxonomy the before run scores (needed if it scores several)")
+    compare.add_argument("--after-subject", help="taxonomy the after run scores (needed if it scores several)")
+    compare.add_argument("--output", help="write the comparison here instead of stdout")
+    compare.add_argument("--format", choices=comparisons.FORMATS,
+                         help="markdown, csv or json (default: from --output's suffix, else markdown)")
+    compare.set_defaults(func=_cmd_compare)
 
     # start FastAPI server
     serve_parser = subparsers.add_parser("serve", help="run the FastAPI app")

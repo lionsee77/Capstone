@@ -82,6 +82,88 @@ export const comparabilitySchema = z.object({
 });
 export type Comparability = z.infer<typeof comparabilitySchema>;
 
+/** Mirrors `Direction`: which way a measure is better; null when neither is. */
+export const directionSchema = z.enum(["higher", "lower"]);
+
+/** Mirrors `Verdict`. "changed" is a move with no better direction; "not_compared" a pair not scored alike. */
+export const verdictSchema = z.enum(["improved", "unchanged", "deteriorated", "changed", "not_compared"]);
+export type Verdict = z.infer<typeof verdictSchema>;
+
+/** Mirrors `Unit`: a "rate" is a fraction (show 0.25 as 25%, its change in points); a "number" is shown as is. */
+export const unitSchema = z.enum(["number", "rate"]);
+
+/** Mirrors `MeasureChange`: one headline number in both runs. `change` is null unless the pair compares. */
+export const measureChangeSchema = z.object({
+  key: z.string(),
+  label: z.string(),
+  better: directionSchema.nullable(),
+  unit: unitSchema,
+  before: z.number().nullable(),
+  after: z.number().nullable(),
+  change: z.number().nullable(),
+  relative_change: z.number().nullable(),
+  verdict: verdictSchema,
+});
+export type MeasureChange = z.infer<typeof measureChangeSchema>;
+
+/** Mirrors `MetricChange`: one paired scoring result, labelled as the CLI prints it. */
+export const metricChangeSchema = z.object({
+  metric_id: z.string(),
+  label: z.string(),
+  before_index: z.number().int().nullable(),
+  after_index: z.number().int().nullable(),
+  issues: z.array(comparabilityIssueSchema),
+  measures: z.array(measureChangeSchema),
+});
+export type MetricChange = z.infer<typeof metricChangeSchema>;
+
+/**
+ * Mirrors `RunComparison` (`GET /runs/{before_id}/compare/{after_id}`, #69): each metric's measures in two runs,
+ * with changes and verdicts only where the results were scored alike. Read `comparable`, not
+ * `comparability.comparable`: it also counts a result whose stored details couldn't be read.
+ */
+export const runComparisonSchema = z.object({
+  comparability: comparabilitySchema,
+  metrics: z.array(metricChangeSchema),
+  comparable: z.boolean(),
+});
+export type RunComparison = z.infer<typeof runComparisonSchema>;
+
+/** Mirrors `LineageStage`: one taxonomy version, a root baseline (`parent` null) or one integrate round's snapshot. */
+export const lineageStageSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  parent: z.string().nullable(),
+  sources: z.array(z.string()),
+  created_at: z.string().nullable(),
+  added: z.record(z.string(), z.number()),
+});
+export type LineageStage = z.infer<typeof lineageStageSchema>;
+
+/** Mirrors `LineageRun`: a stored run that scored lineage stages, keyed stage id -> its dataset name. */
+export const lineageRunSchema = z.object({
+  run_id: z.string(),
+  created_at: z.string(),
+  judged: z.boolean(),
+  datasets: z.record(z.string(), z.string()),
+});
+export type LineageRun = z.infer<typeof lineageRunSchema>;
+
+/** Mirrors `LineageChain`: one root-to-latest path of stage ids, and the runs to read it with, best first. */
+export const lineageChainSchema = z.object({
+  stages: z.array(z.string()),
+  runs: z.array(z.string()),
+});
+export type LineageChain = z.infer<typeof lineageChainSchema>;
+
+/** Mirrors `TaxonomyLineage` (`GET /lineage`): stages, chains longest first, and runs that scored them. */
+export const taxonomyLineageSchema = z.object({
+  stages: z.array(lineageStageSchema),
+  chains: z.array(lineageChainSchema),
+  runs: z.array(lineageRunSchema),
+});
+export type TaxonomyLineage = z.infer<typeof taxonomyLineageSchema>;
+
 /** Mirrors `RunSummary`: `GET /runs` rows - a summary, not the full report. */
 export const runSummarySchema = runReportSchema.pick({ run_id: true, status: true, created_at: true });
 export type RunSummary = z.infer<typeof runSummarySchema>;

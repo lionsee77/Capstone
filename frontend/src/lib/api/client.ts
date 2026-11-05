@@ -14,10 +14,12 @@ import {
   metricCatalogueSchema,
   type PipelineConfig,
   proposalReviewReportSchema,
+  runComparisonSchema,
   runReportSchema,
   runSummarySchema,
   taxonomyConceptDetailSchema,
   taxonomyConceptSummarySchema,
+  taxonomyLineageSchema,
 } from "./schemas";
 
 export const API_BASE = "/api/pipeline";
@@ -68,6 +70,9 @@ async function request<T>(path: string, schema: z.ZodType<T>, init?: RequestInit
 /** Identifies which loaded dataset to read: a past run, and a dataset name within its config. */
 export type TaxonomySource = { runId: string; dataset: string };
 
+/** One side of a comparison: a stored run, and which of its taxonomies (dataset name) when it scored several. */
+export type RunSubject = { runId: string; subject?: string | null };
+
 export const api = {
   // Fetch saved screening evidence through the same validated boundary as other dashboard data.
   listProposals: (mergeRun: string, options: { level?: "category" | "speciality"; offset?: number; limit?: number } = {}) => {
@@ -84,7 +89,21 @@ export const api = {
   ),
   listMetrics: () => request("/metrics", metricCatalogueSchema),
   listRuns: (limit = 50) => request(`/runs?limit=${limit}`, runSummarySchema.array()),
-  getRun: (runId: string) => request(`/runs/${encodeURIComponent(runId)}`, runReportSchema),
+  /** A run's report; `details: false` leaves out each result's (possibly megabytes of) details. */
+  getRun: (runId: string, options: { details?: boolean } = {}) =>
+    request(`/runs/${encodeURIComponent(runId)}${options.details === false ? "?details=false" : ""}`, runReportSchema),
+  /** Compare two stored runs; a run that scored several taxonomies needs its subject (dataset name). */
+  compareRuns: (before: RunSubject, after: RunSubject) => {
+    const params = new URLSearchParams();
+    if (before.subject) params.set("before_subject", before.subject);
+    if (after.subject) params.set("after_subject", after.subject);
+    const query = params.size > 0 ? `?${params}` : "";
+    return request(
+      `/runs/${encodeURIComponent(before.runId)}/compare/${encodeURIComponent(after.runId)}${query}`,
+      runComparisonSchema,
+    );
+  },
+  getLineage: () => request("/lineage", taxonomyLineageSchema),
   createRun: (config: PipelineConfig) =>
     request("/runs", createRunResponseSchema, { method: "POST", body: JSON.stringify(config) }),
   searchTaxonomy: (source: TaxonomySource, options: { q?: string; level?: ConceptLevel; limit?: number } = {}) => {

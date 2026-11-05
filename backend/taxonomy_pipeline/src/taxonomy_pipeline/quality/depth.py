@@ -7,7 +7,7 @@ import statistics
 from collections import Counter
 from typing import Any
 
-from ..models import MetricResult
+from ..models import Measure, MetricResult
 from ..taxonomy.base import LoadedDataset
 from .base import Metric
 
@@ -29,6 +29,25 @@ class DepthMetric(Metric):
     subject_param = "dataset"
     description = "Category -> speciality and speciality -> tag branching factor."
     default_params = {"dataset": None}
+
+    def measures(self, result: MetricResult) -> list[Measure]:
+        """Tags per speciality, higher is better: a speciality with more tags gives matching more to go on.
+        Specialities per category has no better direction (adding categories with few specialities lowers
+        it), and the row counts give the size the means are over."""
+        to_speciality = result.details.get("category_to_speciality", {})
+        to_tag = result.details.get("speciality_to_tag", {})
+        return [
+            Measure(key="speciality_to_tag.mean", label="Tags per speciality (mean)",
+                    value=to_tag.get("mean"), better="higher"),
+            Measure(key="speciality_to_tag.median", label="Tags per speciality (median)",
+                    value=to_tag.get("median"), better="higher"),
+            Measure(key="category_to_speciality.mean", label="Specialities per category (mean)",
+                    value=to_speciality.get("mean")),
+            Measure(key="category_to_speciality.median", label="Specialities per category (median)",
+                    value=to_speciality.get("median")),
+            Measure(key="category_to_speciality.n", label="Categories", value=to_speciality.get("n")),
+            Measure(key="speciality_to_tag.n", label="Specialities", value=to_tag.get("n")),
+        ]
 
     def run(self, datasets: dict[str, LoadedDataset], params: dict[str, Any]) -> MetricResult:
         p = self.resolve_params(params)

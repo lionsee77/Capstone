@@ -203,3 +203,34 @@ describe("upstreamHeaders", () => {
     expect(upstreamHeaders(null, { TAXONOMY_API_TOKEN: "" })).toEqual({});
   });
 });
+
+describe("proxy routes for lineage and comparisons", () => {
+  it("forwards GET /lineage and nothing below it", () => {
+    expect(resolve("GET", "lineage")).toEqual({ ok: true, url: "http://pipeline:8000/lineage" });
+    expect(resolve("GET", "lineage/x")).toMatchObject({ ok: false, status: 404 });
+    expect(resolve("POST", "lineage")).toMatchObject({ ok: false, status: 404 });
+  });
+
+  it("forwards a comparison of two run ids with optional subjects", () => {
+    expect(resolve("GET", "runs/aaa/compare/bbb")).toEqual({ ok: true, url: "http://pipeline:8000/runs/aaa/compare/bbb" });
+    expect(resolve("GET", "runs/aaa/compare/aaa", "before_subject=stage 0 (orig)&after_subject=b&x=1")).toEqual({
+      ok: true,
+      url: "http://pipeline:8000/runs/aaa/compare/aaa?before_subject=stage+0+%28orig%29&after_subject=b",
+    });
+  });
+
+  it("refuses malformed comparison paths and subjects", () => {
+    for (const path of ["runs/aaa/compare", "runs/aaa/compare/bbb/extra", "runs/a.a/compare/bbb", "runs/aaa/other/bbb"]) {
+      expect(resolve("GET", path)).toMatchObject({ ok: false, status: 404 });
+    }
+    expect(resolve("GET", "runs/aaa/compare/bbb", "before_subject=%01")).toMatchObject({ ok: false, status: 404 });
+    expect(resolve("POST", "runs/aaa/compare/bbb")).toMatchObject({ ok: false });
+  });
+});
+
+describe("proxy: light run reports", () => {
+  it("forwards details=false for one run and drops any other query", () => {
+    expect(resolve("GET", "runs/abc", "details=false")).toEqual({ ok: true, url: "http://pipeline:8000/runs/abc?details=false" });
+    expect(resolve("GET", "runs/abc", "details=true&x=1")).toEqual({ ok: true, url: "http://pipeline:8000/runs/abc" });
+  });
+});

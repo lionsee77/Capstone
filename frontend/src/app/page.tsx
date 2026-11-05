@@ -1,23 +1,18 @@
-import { Card, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { PageHeader, Section } from "@/components/layout/page-header";
 
 import { MetricCatalogue } from "./metric-catalogue";
 
 export default function OverviewPage() {
   return (
-    <div className="flex max-w-5xl flex-col gap-6">
-      <header>
-        <h1 className="text-2xl font-semibold">Overview</h1>
-        <p className="text-sm text-muted-foreground">
-          Quality checks available from the taxonomy validation pipeline.
-        </p>
-      </header>
-      <Card>
-        <CardHeader>
-          <CardTitle>Metrics</CardTitle>
-          <CardDescription>Served live by `GET /metrics`.</CardDescription>
-        </CardHeader>
+    <div className="flex max-w-5xl flex-col gap-10">
+      <PageHeader
+        eyebrow="Pipeline"
+        title="Overview"
+        description="The quality checks the taxonomy validation pipeline scores every run with."
+      />
+      <Section title="Metrics">
         <MetricCatalogue />
-      </Card>
+      </Section>
     </div>
   );
 }
