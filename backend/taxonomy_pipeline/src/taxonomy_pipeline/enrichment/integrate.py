@@ -117,14 +117,16 @@ def integrate(
     if out_dir.exists():
         raise IntegrationError(f"{out_dir} already exists; choose a new --out-dir")
 
+    # loads the baseline sql dumps
     source = SqlDumpSource(baseline.name, baseline.paths, baseline.table_map)
     taxonomy = source.load()
     try:
-        preview = build_preview(resolution, taxonomy)
+        preview = build_preview(resolution, taxonomy) # based on the reviewed merge run previously
     except ValueError as exc:  # baseline snapshot changed since the merge run
         raise IntegrationError(f"{exc}. Rerun merge-preview against the current baseline.") from exc
     _check_ready(preview)
 
+    # for each new data, assign it a new id that continues from the end of baseline
     additions, id_map = _assign_ids(preview.taxonomy, taxonomy)
     if not any(additions.values()):
         omitted = sum(resolution.evidence.omitted_counts.values())
@@ -135,6 +137,7 @@ def integrate(
     _check_unique_keys(additions, taxonomy)
     table_names = {concept: source.table_map[concept] for concept in COLUMNS}
 
+    # build in a staging folder
     staging = Path(tempfile.mkdtemp(prefix=f".{out_dir.name}.", dir=_ensure_parent(out_dir)))
     try:
         copies = _copy_baseline(source.paths, staging / "baseline")
@@ -147,7 +150,7 @@ def integrate(
         )
         manifest["exact_duplicate_rows"] = duplicates
         operation_id = str(uuid4())
-        events = integration_events(
+        events = integration_events( # creates an audit trail; loaded as a manifest.json
             resolution, additions, id_map, manifest, operation_id=operation_id, actor=actor,
             review_events=review_events,
         )
@@ -157,7 +160,7 @@ def integrate(
         (staging / "enriched.yaml").write_text(
             _config_yaml(copies, staging, source.table_map, baseline.name, scoring_config), encoding="utf-8",
         )
-        os.replace(staging, out_dir)
+        os.replace(staging, out_dir) # change the staging folder to a real one
     except BaseException:
         shutil.rmtree(staging, ignore_errors=True)
         raise

@@ -261,6 +261,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="taxonomy_pipeline")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
+    # score taxonomies with the metrics
     run_parser = subparsers.add_parser("run", help="run a pipeline config once")
     run_parser.add_argument("--config", required=True, help="path to a YAML pipeline config")
     run_parser.add_argument("--output", help="write the JSON report here instead of stdout (gzipped if it ends in .gz)")
@@ -277,12 +278,14 @@ def build_parser() -> argparse.ArgumentParser:
     check.add_argument("--after-subject", help="taxonomy the after run scores (needed if it scores several)")
     check.set_defaults(func=_cmd_check_comparable)
 
+    # start FastAPI server
     serve_parser = subparsers.add_parser("serve", help="run the FastAPI app")
     serve_parser.add_argument("--host", default="127.0.0.1")
     serve_parser.add_argument("--port", type=int, default=8000)
     serve_parser.add_argument("--reload", action="store_true")
     serve_parser.set_defaults(func=_cmd_serve)
 
+    # convert the csv/xlsx source data into a sql dump
     source = subparsers.add_parser("import-source", help="turn a flat CSV/xlsx source into a taxonomy SQL dump")
     source.add_argument("--mapping", required=True, help="source mapping YAML: file, columns, service, filters")
     source.add_argument("--out-dir", help="where to write <name>_taxonomy.sql and <name>_tag_context.json "
@@ -294,6 +297,7 @@ def build_parser() -> argparse.ArgumentParser:
                         "(default: configs/original_vs_skillsfuture.yaml)")
     source.set_defaults(func=_cmd_import_source)
 
+    # Case A
     report_help = "saved `run` report whose saturation result decides which tags are new"
     case_a = subparsers.add_parser("case-a", help="place new tags that have their own source category")
     _add_dataset_args(case_a)
@@ -301,7 +305,7 @@ def build_parser() -> argparse.ArgumentParser:
     case_a.add_argument("--semantic-model", default="all-MiniLM-L6-v2", help="sentence model; '' for lexical only")
     case_a.add_argument("--output", default="case_a_output.json")
     case_a.set_defaults(func=_cmd_case_a)
-
+    # Case B
     case_b = subparsers.add_parser("case-b", help="propose placements for parentless new tags with an LLM")
     _add_dataset_args(case_b)
     case_b.add_argument("--report", default="report.json", help=report_help)
@@ -316,6 +320,7 @@ def build_parser() -> argparse.ArgumentParser:
                         help="also log the endpoint, model and up to 4,000 characters per response")
     case_b.set_defaults(func=_cmd_case_b)
 
+    # validate, deduplicate, resolve
     merge = subparsers.add_parser("merge-preview", help="validate, deduplicate and resolve outputs into a preview CSV")
     _add_dataset_args(merge, incoming=False)
     merge.add_argument("--input", action="append", default=[], help="nine-field contract file (repeatable)")
@@ -332,6 +337,7 @@ def build_parser() -> argparse.ArgumentParser:
                        "(default: <out-dir>/change_log.jsonl); decisions it already holds aren't logged again")
     merge.set_defaults(func=_cmd_merge_preview)
 
+    # read-only view of the proposed actions
     review = subparsers.add_parser("review-proposals", help="read saved proposals, branches, matches and decisions")
     review.add_argument("--merge-run", required=True, help="merge-preview output folder")
     review.add_argument("--proposal-id", help="show a single screened hierarchy proposal")
@@ -340,6 +346,7 @@ def build_parser() -> argparse.ArgumentParser:
     review.add_argument("--limit", type=int, default=50, help="page size, 1-200 (default: 50)")
     review.set_defaults(func=_cmd_review_proposals)
 
+    # draft decisions for the ambiguous tags
     bulk = subparsers.add_parser("bulk-decide", help="draft decisions for ambiguous tags by saturation similarity")
     _add_dataset_args(bulk)
     bulk.add_argument("--merge-run", required=True, help="merge-preview output folder (merge_runs/<timestamp>)")
@@ -352,6 +359,7 @@ def build_parser() -> argparse.ArgumentParser:
     bulk.add_argument("--output", default="decisions.json", help="where to write all decisions")
     bulk.set_defaults(func=_cmd_bulk_decide)
 
+    # at the end of a run, create a snapshot folder that contains sql code required to add data to taxonomy
     integrate = subparsers.add_parser("integrate", help="turn a fully reviewed merge run into an enriched taxonomy")
     _add_dataset_args(integrate, incoming=False)
     integrate.add_argument("--merge-run", required=True, help="merge-preview output folder (merge_runs/<timestamp>)")
@@ -359,6 +367,7 @@ def build_parser() -> argparse.ArgumentParser:
     integrate.add_argument("--actor", default="unspecified", help="self-reported operator identity for audit events")
     integrate.set_defaults(func=_cmd_integrate)
 
+    # read audit history / retry audit delivery
     history = subparsers.add_parser("changes", help="read audit history without changing the taxonomy")
     for field in ChangeQuery.model_fields:
         if field not in {"limit", "offset"}:

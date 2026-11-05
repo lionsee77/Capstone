@@ -3,6 +3,13 @@ phpMyAdmin-style exports (`backend/sql-files-nus/*.sql`) or a bare generated
 file (`backend/skillsfuture/skillsfuture_taxonomy.sql`). No database
 connection needed; both formats are just `INSERT INTO ... VALUES (...);`
 statements with an explicit column list, which is all this parser assumes.
+
+                 flat_import.py  (WRITER)                     sql_dump.py  (READER)
+Software Skills.xlsx ──────────────────────► onet_taxonomy.sql ──────────────────────► TaxonomyDataset
+ + onet_mapping.yaml   read, filter, dedupe,                      parse INSERTs,         (in memory,
+                       give IDs, write SQL text                    map table names        used by metrics)
+reads any .sql dump file into memory as a TaxonomyDataset, without connecting to a database.
+
 """
 from __future__ import annotations
 
@@ -234,8 +241,11 @@ def iter_insert_statements(sql_text: str) -> Iterator[tuple[str, list[dict[str, 
         columns = [c.strip().strip("`\"") for c in header.group("columns").split(",")]
         values_text = sql_text[header.end():end]
 
+        # INSERT INTO `onet_categories` (`id`, `name`, `service_id`, `status`) VALUES
+        # (1000, 'Architecture and Engineering', 2, '1'),
+        # (1001, 'Arts, Design, Entertainment, Sports, and Media', 2, '1');
         rows = []
-        for tuple_text in _split_top_level(values_text, ","):
+        for tuple_text in _split_top_level(values_text, ","): # split the ',' btwn each entry
             tuple_text = tuple_text.strip()
             if not tuple_text:
                 continue

@@ -5,6 +5,12 @@ Both the CLI (`cli.py`) and the FastAPI app (`api/app.py`) call `run_pipeline`
 directly - neither talks to the other over HTTP, so there is exactly one
 implementation of "what a run does". The dataset loaders here are shared with
 the enrichment use cases (`app/enrichment.py`).
+
+                              run_pipeline  (ORCHESTRATOR)
+judged-1015_vs_onet.yaml ──────────────────────────────────────► RunReport
+  (round config)           load every dataset, run every         (one result per metric,
+                           metric listed in the config            saved to SQLite / report.json)
+
 """
 from __future__ import annotations
 
@@ -46,7 +52,8 @@ def metric_catalogue() -> dict[str, MetricInfo]:
         for metric_id, metric in METRICS.items()
     }
 
-
+# mainly used by API for our frontend; each run is slow, so this function allows the dashboard to fetch a runID
+# while it continues to poll for progress instead of hanging on a long wait request
 def queue_run(config: PipelineConfig) -> RunReport:
     """Record a run as queued in run history, so its id can be polled before it starts."""
     report = RunReport(status="queued")
@@ -116,6 +123,7 @@ def run_pipeline(config: PipelineConfig) -> RunReport:
 
     report.datasets = [DatasetSummary(name=name, counts=ds.counts()) for name, ds in datasets.items()]
 
+    # loop through each metric defined in the round's config file; will call saturation metric here;
     results: list[MetricResult] = []
     for index, metric_config in enumerate(config.metrics):
         params = dict(metric_config.params)
@@ -139,6 +147,7 @@ def _failed(report: RunReport, error: str) -> RunReport:
     return report
 
 
+# option to save the report as a file via our CLI
 def write_report(report: RunReport, path: str | Path) -> None:
     """Save a report as JSON, gzip-compressed when the file name ends in `.gz`
     (a saturation run lists every concept, so a full report runs to megabytes)."""
@@ -177,7 +186,7 @@ def load_report(source: str) -> RunReport:
         raise ValueError(f"{source!r} is neither a report file nor a run ID in run history")
     return report
 
-
+# fetches the reports of 2 separate runs
 def check_runs(
     before: str, after: str, *, before_subject: str | None = None, after_subject: str | None = None,
 ) -> tuple[RunReport, RunReport, Comparability]:
@@ -188,13 +197,9 @@ def check_runs(
 
 
 def result_labels(results: list[MetricResult]) -> list[str]:
-    """A display label per result: the metric id, plus the params that tell repeated runs of it apart.
-
-    `integrity` once stays `integrity`; run for two datasets it becomes
-    `integrity (dataset=original)` and `integrity (dataset=skillsfuture)`. Only
-    params whose values differ between the repeats are shown. Repeats those
-    params still don't tell apart (identical or unrecorded params) get their
-    config position too, `#<index>`, so every label in a report is unique.
+    """safeguard so every label in a report is unique.
+    possible for the config to define the same metric twice. this ensures every result has a short
+    unique name, e.g. `integrity (dataset=original)`.
     Mirrored by the dashboard's `metricLabels`; keep the two in step.
     """
     groups: dict[str, list[MetricResult]] = {}

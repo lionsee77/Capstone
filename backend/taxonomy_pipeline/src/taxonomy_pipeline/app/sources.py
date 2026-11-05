@@ -7,6 +7,27 @@ unchanged, and - given the previous round's `integrate` snapshot - writes the
 next round's pipeline config: that snapshot as the baseline, the new source
 as incoming, and a template round config's metrics re-pointed at both. Rounds
 chain this way without anyone editing the original dumps or running SQL.
+
+Output: <name>_taxonomy.sql, <name>_tag_context.json and, given a snapshot, the
+next round's config.
+
+import_source
+ ├─ _snapshot_config      (is the snapshot real?)        ┐  checks before
+ ├─ _template_roles       (can the template be used?)    ┘  writing anything
+ ├─ writes .sql + .json, reloads the .sql to check it
+ └─ write_round_config
+       ├─ _template_roles (get the rename map)
+       ├─ _snapshot_config (find enriched.yaml)
+       ├─ _relative       (fix the paths)
+       └─ _repoint        (swap names in each metric)
+
+inputs                                        outputs
+onet_mapping.yaml ──────────────────────┐
+  (+ the xlsx it points to)             ├──► onet_taxonomy.sql
+                                        │    onet_tag_context.json
+integrations/judged-1015/  (optional) ──┤
+original_vs_skillsfuture.yaml (template,├──► configs/judged-1015_vs_onet.yaml
+          read only, never changed)  ───┘
 """
 from __future__ import annotations
 
@@ -39,13 +60,24 @@ def import_source(
     mapping_path: str | Path, *, out_dir: str | Path | None = None, baseline_snapshot: str | Path | None = None,
     template_config: str | Path | None = None, round_config: str | Path | None = None,
 ) -> SourceImport:
-    """Write the source's dump and tag context into `out_dir` (default: next to the mapping).
+    """
+    - Input:
+        - the mapping YAML, e.g. onet/onet_mapping.yaml
+        - optionally the previous round's snapshot folder, e.g. integrations/judged-1015
+    - Output:
+        - it writes onet_taxonomy.sql and onet_tag_context.json
+        - it writes configs/judged-1015_vs_onet.yaml, if a snapshot was given
+        - it returns a SourceImport summary with the file paths, the counts and the warnings
 
-    With `baseline_snapshot` (an `integrations/<name>/` folder), also write the
-    round config to `round_config` (default `configs/<snapshot>_vs_<name>.yaml`),
-    built from `template_config` (default `configs/original_vs_skillsfuture.yaml`).
-    Refuses to overwrite an existing round config; the dump and context are
-    regenerated freely, since they follow from the mapping alone.
+    Steps:
+    1. Read the mapping, read the spreadsheet, and build the 4 tables in memory.
+    2. If there are no tags, stop with an error.
+    3. If a snapshot was given, check everything about the round config before writing anything.
+       An existing round config is never overwritten; the .sql and .json are regenerated freely.
+    4. Write the .sql and .json files.
+    5. Reload the .sql it just wrote and confirm it matches what was built.
+    6. Collect warnings: skipped rows, parentless tags, merged spellings, missing labels, missing descriptions.
+    7. If a snapshot was given, call write_round_config.
     """
     mapping_path = Path(mapping_path)
     mapping = load_mapping(mapping_path)
@@ -111,13 +143,24 @@ def import_source(
 def write_round_config(
     snapshot: Path, source_dataset: dict[str, Any], path: Path, *, template: str | Path | None = None,
 ) -> None:
-    """Write a config comparing `source_dataset` against `snapshot`, scored like `template`'s round.
+    """
+    - Input:
+        - the snapshot folder (integrations/judged-1015)
+        - a description of the new source dataset (name onet, the path to onet_taxonomy.sql, its table names)
+        - where to write the config
+        - a template config to copy metrics from (default original_vs_skillsfuture.yaml)
+    - Output: configs/judged-1015_vs_onet.yaml on disk. It returns nothing.
 
-    The template's saturation metric names its baseline and incoming datasets;
-    every metric param naming one of those is re-pointed (baseline ->
-    `round_baseline`, incoming -> the new source), and a judge cache is renamed
-    per source so verdicts from different rounds never mix. Other template
-    datasets (ssic, ssoc) are kept. Paths are written relative to `path`.
+    Steps:
+    1. Load the template and work out the renames using _template_roles.
+    2. Build the dataset list:
+    - the snapshot, named round_baseline
+    - onet
+    - the template's other datasets, ssic and ssoc
+    3. Copy every metric from the template, renaming its dataset names with _repoint, and drop exact duplicates.
+       The judge cache is renamed per source, so verdicts from different rounds never mix.
+    4. Write the YAML with a header comment.
+    5. Load the file it just wrote with load_config. If that fails, delete the file and raise the error.
     """
     template = Path(template) if template is not None else DEFAULT_TEMPLATE
     raw, rename = _template_roles(source_dataset["name"], template)
@@ -158,6 +201,10 @@ def write_round_config(
 
 
 def _snapshot_config(snapshot: Path) -> Path:
+    """
+    - Input: a folder, integrations/judged-1015
+    - Output: the path integrations/judged-1015/enriched.yaml
+    """
     path = snapshot / "enriched.yaml"
     if not path.exists():
         raise ValueError(f"{snapshot} is not an integrate snapshot (no enriched.yaml)")

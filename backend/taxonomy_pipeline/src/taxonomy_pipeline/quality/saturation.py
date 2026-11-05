@@ -30,6 +30,13 @@ count toward the new-items rate. Every recommendation is a review aid, not a dat
 operation. Every incoming concept - duplicates included - carries its parents
 within its own source, so a downstream integration team knows where each one
 hangs off (e.g. which SkillsFuture job roles link to a skill we already have).
+
+                              SaturationMetric  (METRIC)
+round_baseline + onet ──────────────────────────────────────────► verdict per O*NET concept
+  (TaxonomyDatasets)       compare each incoming concept           (ADD_CANDIDATE, REVIEW_AMBIGUOUS,
+                           against the baseline via                 duplicate ... + its parents)
+                           matching/engine.py
+
 """
 from __future__ import annotations
 
@@ -144,10 +151,11 @@ class SaturationMetric(Metric):
             "pinned_model_revisions": dict(embeddings.PINNED_REVISIONS),
         }
 
+    # checks the settings, loads the models and engine, builds the summary
     def run(self, datasets: dict[str, LoadedDataset], params: dict[str, Any]) -> MetricResult:
         p = self.resolve_params(params)
         try:
-            incoming_names = _incoming_names(p["incoming"], p["baseline"])
+            incoming_names = _incoming_names(p["incoming"], p["baseline"]) # check if they are valid datasets
         except ValueError as exc:
             return MetricResult(metric_id=self.id, status="error", summary=str(exc))
         roles = {"baseline": p["baseline"], **{f"incoming[{i}]": n for i, n in enumerate(incoming_names)}}
@@ -155,7 +163,7 @@ class SaturationMetric(Metric):
         if isinstance(resolved, MetricResult):
             return resolved
 
-        try:
+        try: # check if the threshold values are within a valid range
             settings = {
                 "threshold": validated_float(p, "threshold", 0, 100),
                 "semantic_threshold": validated_float(p, "semantic_threshold", -1, 1),
@@ -167,7 +175,8 @@ class SaturationMetric(Metric):
         if not isinstance(p["cross_level"], bool):
             return MetricResult(metric_id=self.id, status="error", summary="cross_level must be true or false")
         settings["cross_level"] = p["cross_level"]
-        try:
+
+        try: # check if we are using the openAI decisions API
             settings["semantic_threshold_by_level"] = _level_thresholds(p["semantic_threshold_by_level"])
             judge_cfg = _judge_settings(p["judge"])
         except (TypeError, ValueError) as exc:
@@ -219,7 +228,7 @@ class SaturationMetric(Metric):
             except JudgeError as exc:
                 return MetricResult(metric_id=self.id, status="error", summary=f"judge: {exc}")
             settings["judge"] = (judge, judge_cfg)
-
+        # main saturation logic
         try:
             steps, curve, pool = self._compare_sources(baseline, incoming_names, incoming, settings, semantic_matcher)
         except JudgeError as exc:
@@ -271,6 +280,7 @@ class SaturationMetric(Metric):
             },
         )
 
+    # contains the main saturation idea: compare sources in order, add each one to the pool, measure how much is new
     @staticmethod
     def _compare_sources(
         baseline: TaxonomyDataset, incoming_names: list[str], incoming: list[TaxonomyDataset],
@@ -278,19 +288,22 @@ class SaturationMetric(Metric):
     ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], KnownPool]:
         """Compare each incoming source in order against everything known before it."""
         judged = bool(settings.get("judge"))
-        pool = KnownPool()
+        pool = KnownPool() # everything that we have found so far in this run
         pool.add(baseline.name, baseline)
         steps, curve = [], []
         for number, (name, source) in enumerate(zip(incoming_names, incoming, strict=True), start=1):
-            parents = SourceParents(source)
-            seen_in_source: dict[str, str] = {}
+            parents = SourceParents(source) # obtains the parents for each data, used as context for matching
+            seen_in_source: dict[str, str] = {} # prevent double counting
             by_level = {
-                level: compare_level(
+                level: compare_level( # main engine
                     level, getattr(source, level), pool, parents, settings, semantic_matcher, seen_in_source
                 )
+                # for each level (cat/spec/tag), give every incoming concept a verdict
                 for level in CONCEPT_LEVELS
             }
             pool.add(name, source)
+
+            # summarise the result of the run
             reviewed = sum(result["relevant_concepts_reviewed"] for result in by_level.values())
             ambiguous = sum(result["ambiguous"] for result in by_level.values())
             adds = sum(result["recommended_action_counts"][ADD_CANDIDATE] for result in by_level.values())

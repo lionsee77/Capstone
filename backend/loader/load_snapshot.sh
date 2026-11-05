@@ -25,7 +25,7 @@ TARGET=${TARGET_DATABASE:-taxonomy_latest}
 PROTECTED=${PROTECTED_DATABASE:-greygigz_beta}
 CONCEPTS="services categories specialities tags speciality_tags"
 
-available() {
+available() { # helper function to find which snapshot folders contain enriched.yaml
     echo "available snapshots:" >&2
     for dir in "$SNAPSHOTS"/*/; do
         [ -f "${dir}enriched.yaml" ] && echo "  $(basename "$dir")" >&2
@@ -33,7 +33,7 @@ available() {
     return 0
 }
 
-identifier() {  # a name safe to put inside backticks or quotes unescaped
+identifier() {  # returns true only if name is letters / digits / underscores
     printf '%s' "$1" | grep -Eq '^[A-Za-z0-9_]+$'
 }
 
@@ -115,6 +115,7 @@ done > "$WORK/counts.sql"
 # One session: take the lock (GET_LOCK returns 0 when another session holds it, and
 # the IF then runs a two-row subquery, which fails with ERROR 1242 and stops the
 # client), rebuild, label, count. A file failing stops the session the same way.
+# Build one full SQL script
 SESSION="$WORK/session.sql"
 {
     printf "DO IF(GET_LOCK('taxonomy_loader.%s', 0) = 1, 0, (SELECT 1 UNION ALL SELECT 2));\n" "$TARGET"
@@ -131,6 +132,7 @@ SESSION="$WORK/session.sql"
     cat "$WORK/counts.sql"
 } > "$SESSION"
 
+# run the session sql script and output if there are any failures
 echo "rebuilding '$TARGET' from snapshot '$NAME'"
 if ! mysql -h "${MYSQL_HOST:-db}" -uroot --default-character-set=utf8mb4 -N -B < "$SESSION" 2> "$WORK/error"; then
     if grep -q "ERROR 1242" "$WORK/error" && grep -q "at line 1:" "$WORK/error"; then

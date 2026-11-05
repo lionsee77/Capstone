@@ -58,7 +58,7 @@ class JudgeCandidate:
 
 
 @dataclass(frozen=True)
-class JudgeQuestion:
+class JudgeQuestion: # the incoming concept, its parents and its 5 candidates
     """One ambiguous concept, the parents it has in its own source, and its closest known concepts."""
 
     name: str
@@ -71,7 +71,7 @@ class JudgeQuestion:
 class JudgeVerdict:
     """The judge's answer: a candidate number ("1".."k"), `none`, or an error instead."""
 
-    choice: str | None = None
+    choice: str | None = None # select the most valid candidate
     probability: float | None = None
     probabilities: dict[str, float] = field(default_factory=dict)
     confidence: float | None = None
@@ -95,7 +95,10 @@ def _describe(name: str, level: str, parents: tuple[str, ...]) -> str:
     noun = _LEVEL_NOUNS.get(level, level)
     return f'"{name}" ({noun}; under: {", ".join(parents)})' if parents else f'"{name}" ({noun})'
 
-
+# The question asked is: "Is the incoming concept the same as one of the numbered candidates
+# (same skill under a different wording, or a synonym)?
+# Choose none if every candidate is only related: broader, narrower, a different skill in the same field,
+# or just similar-sounding."
 def build_request(model: str, question: JudgeQuestion) -> dict[str, Any]:
     """The Decisions API request for one question."""
     lines = [f"Incoming concept: {_describe(question.name, question.level, question.parents)}",
@@ -159,6 +162,8 @@ class DecisionsJudge:
         self._cache = self._load_cache()
         self.client = client if client is not None else _openai_client(max_retries)
 
+    # we keep a cache of the previous questions that we have already asked,
+    # avoids us calling the API for repeated questions, saving money
     def _load_cache(self) -> dict[str, dict[str, Any]]:
         if not self.cache_path or not self.cache_path.exists():
             return {}
@@ -167,6 +172,7 @@ class DecisionsJudge:
         except (OSError, json.JSONDecodeError) as exc:
             raise JudgeError(f"judge cache {self.cache_path} is unreadable ({exc}); delete it to start fresh") from exc
 
+    # updates the cache after the run
     def _save_cache(self) -> None:
         if self.cache_path:
             # Write beside the cache, then swap it in, so an interrupted write never truncates paid answers.
@@ -176,10 +182,11 @@ class DecisionsJudge:
             os.replace(partial, self.cache_path)
 
     @staticmethod
-    def _key(request: dict[str, Any]) -> str:
+    def _key(request: dict[str, Any]) -> str: # deterministic key created from questions, used to store in cache
         payload = json.dumps({"prompt_version": PROMPT_VERSION, **request}, sort_keys=True)
         return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
+    # calls the decisions API
     def _ask(self, request: dict[str, Any]) -> JudgeVerdict:
         try:
             response = self.client.post("/decisions", body=request, cast_to=object)
@@ -194,6 +201,7 @@ class DecisionsJudge:
             return JudgeVerdict(error=f"{type(exc).__name__}: {message}")
         return parse_response(response, request)
 
+    # called by saturation.py
     def judge(self, questions: list[JudgeQuestion]) -> list[JudgeVerdict]:
         requests = [build_request(self.model, question) for question in questions]
         keys = [self._key(request) for request in requests]
@@ -202,7 +210,7 @@ class DecisionsJudge:
         rejected: JudgeError | None = None
         try:
             with ThreadPoolExecutor(max_workers=max(1, self.workers)) as pool:
-                futures = {index: pool.submit(self._ask, requests[index]) for index in todo}
+                futures = {index: pool.submit(self._ask, requests[index]) for index in todo} # call the API through _ask
                 # Collect every answer before raising a rejection, so requests that did succeed are cached.
                 for index, future in futures.items():
                     try:
@@ -212,7 +220,7 @@ class DecisionsJudge:
                         continue
                     fresh[index] = verdict
                     if verdict.error is None:
-                        self._cache[keys[index]] = asdict(verdict)
+                        self._cache[keys[index]] = asdict(verdict) # add to cache
         finally:
             # Keep whatever was paid for, even if a rejected request stops the run.
             if fresh:

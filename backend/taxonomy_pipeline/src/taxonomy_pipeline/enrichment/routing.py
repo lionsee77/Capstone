@@ -17,6 +17,12 @@ Duplicates (`SKIP_*`) and other review outcomes are not routed.
 Each producer stamps the report's `run_id` into its records as
 `saturation_run_id`; the merge-preview runner refuses to combine outputs from
 different runs.
+
+                         routing.py  (SPLITTER)
+judged_report_onet.json ──────────────────────────────► Case A tag IDs (HAS_PARENT)
+  (saturation verdicts)   keep ADD + AMBIGUOUS tags,    Case B tag IDs (NO_PARENT)
+                          split by parent_status;
+
 """
 from __future__ import annotations
 
@@ -49,8 +55,8 @@ class SaturationReport:
         tag_ids = [
             tag_id
             for concept in concepts
-            if concept.get("recommended_action") in actions
-            and (parent_status is None or concept.get("parent_status") == parent_status)
+            if concept.get("recommended_action") in actions # only pass on data flagged as ADD or AMBIGUOUS
+            and (parent_status is None or concept.get("parent_status") == parent_status) # check if has parent or not
             for tag_id in concept.get("incoming_ids", [])
         ]
         return list(dict.fromkeys(tag_ids))
@@ -79,12 +85,11 @@ def load_saturation(path: str | Path, incoming: str) -> SaturationReport:
         )
     try:
         report = json.loads(path.read_text(encoding="utf-8"))
+        # pick the saturation result
         saturation = next(result for result in report["results"] if result.get("metric_id") == "saturation")
         if saturation.get("status", "ok") != "ok":
             raise ValueError(f"saturation did not run successfully: {saturation.get('summary')}")
         details = saturation["details"]
-        # Older reports have no per-source `steps`; their top level describes the single incoming
-        # source, and `incoming` was a plain name rather than a list.
         sources = details.get("incoming") or [None]
         sources = [sources] if isinstance(sources, str) else sources
         steps = details.get("steps") or [{**details, "source": sources[-1]}]

@@ -16,6 +16,14 @@ source's content decisions live, so they stay in code rather than in the
 mapping. Each tag's description (if mapped) is written to a
 separate tag-context JSON for Case B's `tag_context` provider, since the
 client schema's `tags` table has no description column.
+
+
+                 flat_import.py  (WRITER)                     sql_dump.py  (READER)
+Software Skills.xlsx ──────────────────────► onet_taxonomy.sql ──────────────────────► TaxonomyDataset
+ + onet_mapping.yaml   read, filter, dedupe,                      parse INSERTs,         (in memory,
+                       give IDs, write SQL text                    map table names        used by metrics)
+
+
 """
 from __future__ import annotations
 
@@ -274,6 +282,7 @@ def build_flat_taxonomy(rows: list[dict[str, str]], mapping: SourceMapping) -> F
     tag_id = {key: ID_OFFSETS["tags"] + i for i, key in enumerate(tag_keys)}
     link_ids = sorted({(speciality_id[(category, speciality)], tag_id[tag]) for category, speciality, tag in links})
 
+    # build the tables
     tables = {
         "categories": [
             {"id": category_id[key], "name": key[1], "service_id": key[0], "status": ACTIVE_STATUS}

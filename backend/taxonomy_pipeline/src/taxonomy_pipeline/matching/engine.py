@@ -7,6 +7,33 @@ candidate, or one to review), optionally asking the LLM judge about the ambiguou
 evidence tiers and verdicts are described in `quality/saturation.py`, which turns these
 per-level results into the saturation curve. Case A (`enrichment/category_adaptation.py`)
 runs the same comparison against a reduced pool to place tags.
+
+                            matching/  (COMPARER)
+incoming concept ─────────────────────────────────────────────► verdict
+ + KnownPool        names.py: exact key, spelling score           (duplicate / ADD_CANDIDATE /
+   (baseline)       semantic.py: meaning score                     REVIEW_AMBIGUOUS / new placement)
+                    judge.py: LLM only for the unclear middle
+
+ADD_CANDIDATE
+- no_close_match: nothing close by spelling or by meaning
+- judged_new: the judge said "none" with ≥ 0.8 probability (e.g. Adobe Illustrator)
+
+REVIEW_AMBIGUOUS
+- partial_similarity: moderately close by spelling or meaning
+- close_spelling_unconfirmed: the spelling was close (≥ 90) but the meaning didn't agree
+  (the "evaluation ≠ valuation" case)
+- judge_unsure: the judge wasn't confident either way
+- judge_failed: the judge's call errored
+
+REVIEW_NEW_PLACEMENT
+- parent_differs: the known concept has different parents
+- existing_has_no_parent: the known concept has no parents to compare with
+
+REVIEW_OTHER_LEVEL
+- parent_not_comparable
+
+Duplicates carry match_type (exact, close_spelling, semantic, judged) and parent_check
+(same_parent, not_checked_for_tags, no_incoming_parent) instead.
 """
 from __future__ import annotations
 
@@ -34,7 +61,7 @@ PARENT_LEVEL = {"categories": "services", "specialities": "categories", "tags": 
 # Parents shown to the judge per concept: enough for context, few enough to keep requests small.
 JUDGE_CONTEXT = 3
 
-
+# Python, python, PYTHON gets grouped as one concept;
 def group_concepts(rows: Iterable[dict[str, Any]]) -> tuple[dict[str, list[dict[str, Any]]], list[dict[str, Any]]]:
     """Group valid named rows by match key (first-seen order), so a concept
     repeated under several parents counts once. Returns (groups, invalid)."""
@@ -45,7 +72,7 @@ def group_concepts(rows: Iterable[dict[str, Any]]) -> tuple[dict[str, list[dict[
         if not is_valid_name(name):
             invalid.append({"incoming_id": row.get("id"), "incoming_name": name})
             continue
-        groups.setdefault(match_key(name), []).append(row)
+        groups.setdefault(match_key(name), []).append(row) # match_key handles the logic
     return groups, invalid
 
 
@@ -164,7 +191,7 @@ class _Evidence:
     def semantic_agrees(self, p: dict[str, Any]) -> bool:
         return self.semantic is not None and self.semantic[2] >= p["semantic_threshold"]
 
-
+# compare incoming data against known pool via exact match/spelling/semantic
 def _gather_evidence(
     concepts: list[tuple[str, list[dict[str, Any]]]],
     candidates: dict[str, tuple[str, dict[str, Any]]],
@@ -195,7 +222,7 @@ def _gather_evidence(
                 item.semantic = (*candidates[key_by_normalized[name]], score)
     return evidence
 
-
+# pick the strongest match by tier
 def _best(*matches: tuple[str, dict[str, Any], float] | None) -> tuple[str, dict[str, Any], float] | None:
     """Highest-scoring match; earlier arguments (the same level) win ties."""
     best = None
@@ -225,7 +252,7 @@ def _uncovered_parents(
         ]
     return uncovered
 
-
+# tags entries as ambiguous if it fails all thresholds
 def _ambiguous_entry(
     row: dict[str, Any], incoming_ids: list[Any], same: _Evidence, other: _Evidence,
     parent_info: dict[str, Any], p: dict[str, Any],
@@ -275,7 +302,7 @@ def _winning_match(
             return "semantic", evidence.semantic, evidence
     return None
 
-
+# sends the potential candidates ambiguous tags to the decisions api judge
 def _judge_candidates(
     level: str, pool: KnownPool, cross_level: bool,
 ) -> dict[str, tuple[str, dict[str, Any]]]:
@@ -356,7 +383,7 @@ def _ask_judge(
             entry["reason"] = "judge_unsure"
     return matches, counts
 
-
+# main entry point
 def compare_level(
     level: str,
     incoming_rows: list[dict[str, Any]],
@@ -366,9 +393,7 @@ def compare_level(
     semantic_matcher: SemanticMatcher | None,
     seen_in_source: dict[str, str],
 ) -> dict[str, Any]:
-    groups, invalid = group_concepts(incoming_rows)
-    # Concept matching may use a stricter per-level meaning threshold (e.g.
-    # job titles vs skills); the parent check keeps the global one.
+    groups, invalid = group_concepts(incoming_rows) #Python python PYTHON grouped as a singular concept
     level_p = {**p, "semantic_threshold": p["semantic_threshold_by_level"].get(level, p["semantic_threshold"])}
     # A name already counted at an earlier level of this same source is the
     # same concept; count it once.
@@ -391,26 +416,31 @@ def compare_level(
     matched: list[tuple[list[dict[str, Any]], str, tuple[str, dict[str, Any], float], _Evidence]] = []
     remaining = list(groups.items())
 
+    # the best match among concepts at the same hierarchy level
     same_evidence = _gather_evidence(remaining, pool.candidates(level, other_levels=False), semantic_matcher)
+    # the best match among concepts at a different level
+    # -> different taxonomies may put the same idea at different depths
     other_candidates = pool.candidates(level, other_levels=True) if p["cross_level"] else {}
     other_evidence = _gather_evidence(remaining, other_candidates, semantic_matcher)
     unmatched: list[tuple[list[dict[str, Any]], _Evidence, dict[str, Any]]] = []
     for (_, rows), same, other in zip(remaining, same_evidence, other_evidence, strict=True):
-        winner = _winning_match(same, other, level_p)
+        winner = _winning_match(same, other, level_p) #obtain the highest score for exact/spelling/semantic similarity
         if winner is None:
             entry = _ambiguous_entry(
                 rows[0], [r.get("id") for r in rows], same, other, parents.classify(level, rows), level_p
-            )
+            ) # tag entries as ambiguous if necessary
             ambiguous.append(entry)
             unmatched.append((rows, same, entry))
         else:
-            matched.append((rows, *winner))
+            matched.append((rows, *winner)) #(row, match_type, match, evidence)
 
+    # ambiguous tags are parsed to decisionAPI with its top5 candidates
     judge_report: dict[str, Any] = {}
-    # The verdict _ask_judge records on each entry, so a judged duplicate keeps it once moved out of the list.
     judge_records: dict[int, dict[str, Any]] = {}
     if p.get("judge") and level in p["judge"][1]["levels"] and semantic_matcher:
+        # obtain original count of ambiguous
         before = sum(entry["recommended_action"] == REVIEW_AMBIGUOUS for entry in ambiguous)
+        # calls the Decisions API
         judged, judge_counts = _ask_judge(level, unmatched, pool, parents, level_p, semantic_matcher)
         judged_ids = {id(rows) for rows, *_ in judged}
         judge_records = {id(rows): entry["judge"] for rows, _, entry in unmatched if "judge" in entry}
@@ -422,6 +452,8 @@ def compare_level(
     skips_by_type = {
         "exact": exact_matches, "close_spelling": fuzzy_matches, "semantic": semantic_matches, "judged": judged_matches,
     }
+
+    # sort every matched concept into a verdict
     for rows, match_type, (known_level, known_entry, score), evidence in matched:
         row = rows[0]
         parent_info = parents.classify(level, rows)
@@ -455,6 +487,7 @@ def compare_level(
             })
             continue
         else:
+            # compare parents of entries that are marked as "matched"
             placements_checked += 1
             uncovered = _uncovered_parents(parent_info["parents"], known_entry, p, semantic_matcher)
             if uncovered:

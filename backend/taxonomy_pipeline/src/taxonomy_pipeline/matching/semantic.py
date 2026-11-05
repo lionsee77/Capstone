@@ -28,7 +28,7 @@ class SemanticMatcher:
     uses), and any other model at its current default branch, which can move.
     """
 
-    def __init__(self, model_name: str, revision: str | None = None):
+    def __init__(self, model_name: str, revision: str | None = None): # loads the sentence transformer
         revision = revision or embeddings.pinned_revision(model_name)
         try:
             from sentence_transformers import SentenceTransformer
@@ -51,6 +51,7 @@ class SemanticMatcher:
             return np.zeros((len(queries), len(choices)))
         return np.stack([self._cache[q] for q in queries]) @ np.stack([self._cache[c] for c in choices]).T
 
+    # obtain the closest known match for each query
     def best_matches(self, queries: list[str], choices: list[str]) -> list[tuple[str | None, float | None]]:
         if not queries or not choices:
             return [(None, None) for _ in queries]
@@ -58,6 +59,7 @@ class SemanticMatcher:
         best_indexes = np.argmax(scores, axis=1)
         return [(choices[index], round(float(scores[row, index]), 4)) for row, index in enumerate(best_indexes)]
 
+    # used in judge.py to feed as a question to decisions api
     def top_matches(self, queries: list[str], choices: list[str], k: int) -> list[list[tuple[str, float]]]:
         """The k closest choices per query, closest first (ties keep choice order)."""
         if not queries or not choices:
