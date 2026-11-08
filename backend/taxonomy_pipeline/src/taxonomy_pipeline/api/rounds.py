@@ -18,6 +18,7 @@ from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 from pydantic import BaseModel, ConfigDict
 
 from ..app import rounds as use_cases
+from ..enrichment.models import ReviewDecision, ReviewQueue, SourceTagRef
 from ..models import RoundFile, RoundOptions, RoundSettings, RoundState
 from ..taxonomy.flat_import import SourceMapping
 from .lineage import DEFAULT_INTEGRATIONS_ROOT
@@ -51,6 +52,30 @@ class RoundConfiguration(BaseModel):
 
     mapping: SourceMapping
     settings: RoundSettings = RoundSettings()
+
+
+class DecisionSubmission(BaseModel):
+    """Decisions to save, and earlier ones to take back. `reviewer` is self-reported, as the CLI's `--actor` is."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    reviewer: str
+    decisions: list[ReviewDecision] = []
+    clear_tags: list[SourceTagRef] = []
+    clear_proposals: list[str] = []
+
+
+class BulkDraftRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    reviewer: str
+    create_below: float | None = None
+    reuse_above: float | None = None
+
+
+class BulkDraftResult(BaseModel):
+    round: RoundState
+    counts: dict[str, int]
 
 
 class RoundConfigText(BaseModel):
@@ -166,6 +191,62 @@ def run_round(round_id: str, background_tasks: BackgroundTasks) -> RoundState:
     roots = _roots()
     try:
         state, stages = use_cases.start_round(roots, round_id)
+    except _HANDLED as exc:
+        raise _translate(exc) from exc
+    background_tasks.add_task(use_cases.run_stages, roots, round_id, stages)
+    return state
+
+
+@router.get("/{round_id}/review")
+def get_review(
+    round_id: str, state: str = "undecided", q: str | None = None, offset: int = 0, limit: int = 50,
+) -> ReviewQueue:
+    try:
+        return use_cases.get_review(_roots(), round_id, state=state, query=q, offset=offset, limit=limit)
+    except _HANDLED as exc:
+        raise _translate(exc) from exc
+
+
+@router.post("/{round_id}/decisions")
+def save_decisions(round_id: str, body: DecisionSubmission) -> RoundState:
+    try:
+        return use_cases.save_decisions(
+            _roots(), round_id, body.reviewer, body.decisions, clear_tags=body.clear_tags,
+            clear_proposals=body.clear_proposals,
+        )
+    except _HANDLED as exc:
+        raise _translate(exc) from exc
+
+
+@router.post("/{round_id}/bulk-decide")
+def draft_decisions(round_id: str, body: BulkDraftRequest) -> BulkDraftResult:
+    try:
+        state, counts = use_cases.draft_decisions(
+            _roots(), round_id, body.reviewer, create_below=body.create_below, reuse_above=body.reuse_above,
+        )
+    except _HANDLED as exc:
+        raise _translate(exc) from exc
+    return BulkDraftResult(round=state, counts=counts)
+
+
+@router.post("/{round_id}/apply", status_code=202)
+def apply_decisions(round_id: str, background_tasks: BackgroundTasks) -> RoundState:
+    """Rebuild the merge preview with the saved decisions, in the background."""
+    roots = _roots()
+    try:
+        state, stages = use_cases.start_apply(roots, round_id)
+    except _HANDLED as exc:
+        raise _translate(exc) from exc
+    background_tasks.add_task(use_cases.run_stages, roots, round_id, stages)
+    return state
+
+
+@router.post("/{round_id}/integrate", status_code=202)
+def integrate_round(round_id: str, background_tasks: BackgroundTasks) -> RoundState:
+    """Generate the enriched snapshot and score it, in the background, once nothing is held for review."""
+    roots = _roots()
+    try:
+        state, stages = use_cases.start_integrate(roots, round_id)
     except _HANDLED as exc:
         raise _translate(exc) from exc
     background_tasks.add_task(use_cases.run_stages, roots, round_id, stages)

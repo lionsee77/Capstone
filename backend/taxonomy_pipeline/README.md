@@ -74,6 +74,7 @@ taxonomy_pipeline/
 │   │   ├── deduplication.py          #   merge 2: group hierarchy paths, suggest duplicate tag pairs
 │   │   ├── resolution.py             #   merge 3: apply review decisions, assign temporary IDs
 │   │   ├── review.py                 #   hierarchy decisions applied to screened proposals
+│   │   ├── review_queue.py           #   held tags and proposals with their evidence, for dashboard review
 │   │   ├── review_view.py            #   saved proposal review view behind `review-proposals` and /proposals
 │   │   ├── change_log.py             #   retain submitted decisions in the legacy JSONL handoff
 │   │   ├── audit.py                  #   review/snapshot evidence -> durable shared audit events
@@ -1731,6 +1732,11 @@ a hand-run round.
 | `PUT /rounds/{id}/config` | Save `{mapping, settings}`: imports the source and writes the round config |
 | `GET /rounds/{id}/config` | The generated round config, as text |
 | `POST /rounds/{id}/run` | Run or resume the stages before review, in the background |
+| `GET /rounds/{id}/review?state=&q=&offset=&limit=` | The review queue: `undecided`, `decided` or `all` tags, plus proposals |
+| `POST /rounds/{id}/decisions` | Save `{reviewer, decisions, clear_tags, clear_proposals}` |
+| `POST /rounds/{id}/bulk-decide` | Draft clear-cut decisions: `{reviewer, create_below, reuse_above}` |
+| `POST /rounds/{id}/apply` | Rebuild the merge preview with the saved decisions, in the background |
+| `POST /rounds/{id}/integrate` | Generate the snapshot and score it, in the background |
 | `DELETE /rounds/{id}` | Remove a round and what it produced |
 
 - **`mapping`** is the `SourceMapping` from "Next round", except that `source` and any
@@ -1746,6 +1752,19 @@ a hand-run round.
   without a parent are left out of the round, with a warning. Judge verdicts are cached
   in `judge_cache_<source>.json` beside `rounds/`, so rerunning a source reuses them.
   `POST /runs` still refuses judge settings.
+- **Review:** the queue lists tags `merge-preview` is holding, with the reason, every proposed
+  placement and saturation's closest matches, plus hierarchy proposals screening is holding.
+  `decisions` are the same `ReviewDecision` records as a hand-edited file, and each replaces any
+  earlier one on that tag or proposal. Saving only writes `rounds/<id>/decisions.json`. `apply`
+  runs them through `merge-preview`, which has the last word: a decision it refuses fails the
+  stage with the reason, and the saved decisions stay to be corrected. A `create` on a path
+  screening still blocks leaves the tag pending. `reviewer` is self-reported, like `--actor`, and
+  is what the audit history records. `bulk-decide` is the CLI's, and only drafts: its decisions are
+  saved and can be changed before applying. It reads saved decisions, so apply yours first.
+- **Integrate** is refused while a tag is pending or decisions are unapplied. Deferred and
+  excluded tags don't hold it up, and they aren't in the snapshot. It then scores the snapshot with
+  the round's metrics, so `score_run_id` and `enriched_run_id` can be compared through
+  `GET /runs/{before}/compare/{after}?before_subject=round_baseline&after_subject=enriched`.
 - **Resuming:** `POST /rounds/{id}/run` skips finished stages, so a retry never repeats a
   paid step. A stage still marked running after a server restart reads back as failed.
 - **Removing:** only rounds made through `/rounds` can be removed, and not one that is

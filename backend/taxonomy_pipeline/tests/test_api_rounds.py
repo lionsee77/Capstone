@@ -180,3 +180,52 @@ def test_a_duplicate_round_name_is_409(client: TestClient) -> None:
     response = client.post("/rounds", json={"round_id": "r1", "baseline_snapshot": "base"})
 
     assert response.status_code == 409
+
+
+def test_the_whole_review_flow_works_over_http(client: TestClient) -> None:
+    csv = b"Sector,Role,Skill\nMarketing,Brand Strategy,advisory services\nMarketing,Brand Strategy,tax advisory plan\n"
+    _created(client)
+    client.put("/rounds/r1/files/flat.csv", content=csv)
+    client.put("/rounds/r1/config", json={"mapping": MAPPING})
+    client.post("/rounds/r1/run")
+    assert client.get("/rounds/r1").json()["status"] == "review"
+    assert client.post("/rounds/r1/integrate").status_code == 409
+
+    queue = client.get("/rounds/r1/review").json()
+    decisions = [{
+        "members": [item["source"]], "action": "create", "reason": "Reviewed",
+        "approved_paths": [{key: item["placements"][0][key] for key in ("service", "category", "speciality")}],
+    } for item in queue["tags"]]
+    saved = client.post("/rounds/r1/decisions", json={"reviewer": "Pat", "decisions": decisions})
+    assert saved.status_code == 200
+    assert saved.json()["decisions_applied"] is False
+
+    assert client.post("/rounds/r1/apply").status_code == 202
+    assert client.get("/rounds/r1").json()["status"] == "ready_to_integrate"
+    assert client.post("/rounds/r1/integrate").status_code == 202
+    body = client.get("/rounds/r1").json()
+    assert body["status"] == "complete"
+    compared = client.get(
+        f"/runs/{body['score_run_id']}/compare/{body['enriched_run_id']}",
+        params={"before_subject": "round_baseline", "after_subject": "enriched"},
+    )
+    assert compared.status_code == 200
+
+
+def test_a_bad_decision_shape_is_422(client: TestClient) -> None:
+    _created(client)
+
+    response = client.post("/rounds/r1/decisions", json={"reviewer": "Pat", "decisions": [
+        {"members": [{"source_dataset": "x", "tag_id": "1"}], "action": "reuse", "reason": "no target"},
+    ]})
+
+    assert response.status_code == 422
+
+
+def test_review_routes_before_a_preview_are_409(client: TestClient) -> None:
+    _created(client)
+
+    assert client.get("/rounds/r1/review").status_code == 409
+    assert client.post("/rounds/r1/apply").status_code == 409
+    assert client.post("/rounds/r1/integrate").status_code == 409
+    assert client.post("/rounds/r1/bulk-decide", json={"reviewer": "Pat", "create_below": 0.5}).status_code == 409
