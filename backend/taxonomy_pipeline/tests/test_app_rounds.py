@@ -108,6 +108,11 @@ def test_a_round_name_that_cannot_name_a_folder_is_refused(roots: rounds.RoundRo
         rounds.create_round(roots, name, "base")
 
 
+def test_a_name_that_is_a_route_under_rounds_is_refused(roots: rounds.RoundRoots) -> None:
+    with pytest.raises(ValueError, match="route"):
+        rounds.create_round(roots, "options", "base")
+
+
 def test_a_round_must_build_on_a_real_snapshot(roots: rounds.RoundRoots) -> None:
     for snapshot in ("nope", "../base"):
         with pytest.raises(ValueError, match="no integrated snapshot"):
@@ -361,6 +366,71 @@ def test_a_running_round_cannot_be_started_or_changed_again(roots: rounds.RoundR
 
     rounds.run_stages(roots, configured, stages)
     assert rounds.get_round(roots, configured).status != "running"
+
+
+def test_nothing_can_start_or_remove_a_round_while_it_is_being_reconfigured(
+    roots: rounds.RoundRoots, configured: str, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    real_import = rounds.import_source
+    refused = []
+
+    def during_import(*args: object, **kwargs: object) -> object:
+        for attempt in (rounds.start_round, rounds.delete_round):
+            with pytest.raises(rounds.RoundConflict):
+                attempt(roots, configured)
+            refused.append(attempt.__name__)
+        return real_import(*args, **kwargs)
+
+    monkeypatch.setattr(rounds, "import_source", during_import)
+
+    state = rounds.configure_round(roots, configured, _mapping(), RoundSettings())
+
+    assert refused == ["start_round", "delete_round"]
+    assert state.status == "ready"
+    assert _statuses(_run(roots, configured))["merge"] == "done"
+
+
+def test_a_failed_reconfigure_releases_the_round(roots: rounds.RoundRoots, configured: str) -> None:
+    with pytest.raises(ValueError):
+        rounds.configure_round(roots, configured, _mapping(source="missing.csv"), RoundSettings())
+
+    assert _statuses(_run(roots, configured))["merge"] == "done"
+
+
+def test_a_stage_interrupted_by_a_restart_does_not_block_later_edits(roots: rounds.RoundRoots, configured: str) -> None:
+    path = roots.rounds / configured / "round.json"
+    saved = json.loads(path.read_text("utf-8"))
+    next(stage for stage in saved["stages"] if stage["id"] == "score")["status"] = "running"
+    path.write_text(json.dumps(saved), "utf-8")
+
+    assert rounds.add_file(roots, configured, "other.csv", b"a,b\n1,2\n").columns == ["a", "b"]
+
+
+def test_two_rounds_of_one_source_cannot_use_its_judge_cache_at_once(
+    roots: rounds.RoundRoots, configured: str, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("TAXONOMY_ALLOW_LLM", "true")
+    monkeypatch.setenv("OPENAI_API_KEY", "real-looking-key")
+    rounds.create_round(roots, "second", "base")
+    rounds.add_file(roots, "second", "flat.csv", CSV.encode())
+    judged = RoundSettings(judge=True)
+    rounds.configure_round(roots, configured, _mapping(), judged)
+    rounds.configure_round(roots, "second", _mapping(), judged)
+    rounds.start_round(roots, configured)
+
+    with pytest.raises(rounds.RoundConflict, match="judge cache"):
+        rounds.start_round(roots, "second")
+
+
+def test_rounds_of_one_source_can_run_together_without_the_judge(roots: rounds.RoundRoots, configured: str) -> None:
+    rounds.create_round(roots, "second", "base")
+    rounds.add_file(roots, "second", "flat.csv", CSV.encode())
+    rounds.configure_round(roots, "second", _mapping(), RoundSettings())
+    rounds.start_round(roots, configured)
+
+    state, _ = rounds.start_round(roots, "second")
+
+    assert state.status == "running"
 
 
 def test_a_finished_round_has_nothing_left_to_start(roots: rounds.RoundRoots, configured: str) -> None:

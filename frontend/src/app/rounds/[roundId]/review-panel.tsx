@@ -13,9 +13,11 @@ import { useApplyDecisions, useDraftDecisions, useIntegrateRound, useReviewQueue
 import type { ReviewQueueProposal, ReviewQueueTag, RoundState } from "@/lib/api/schemas";
 import {
   bulkTagDecisions,
+  clampOffset,
   type DecisionInput,
   placementLabel,
   proposalDecision,
+  reusableMatches,
   reuseCandidates,
   tagDecision,
   type TagAction,
@@ -40,6 +42,11 @@ export function ReviewPanel({ round }: { round: RoundState }) {
   const { data: queue, isPending, error } = useReviewQueue(round, { state: filter, q: search, offset, limit: PAGE_SIZE });
   const save = useSaveDecisions(round.round_id);
   const locked = round.status === "running";
+
+  // Deciding the tags on a later page empties it; move back to the last page that still has some.
+  // Set during render, as React recommends for state that follows from new data, not in an effect.
+  const lastOffset = queue ? clampOffset(offset, queue.total, PAGE_SIZE) : offset;
+  if (lastOffset !== offset) setOffset(lastOffset);
   const named = reviewer.trim().length > 0;
 
   function submit(decisions: DecisionInput[], clearTags: ReviewQueueTag["source"][] = [], clearProposals: string[] = []) {
@@ -178,7 +185,7 @@ export function ReviewPanel({ round }: { round: RoundState }) {
               onClear={() => submit([], [tag.source])}
             />
           ))}
-          {queue.total > PAGE_SIZE && (
+          {(queue.total > PAGE_SIZE || offset > 0) && (
             <div className="flex items-center gap-3 text-sm text-muted-foreground">
               <Button size="sm" variant="outline" disabled={offset === 0} onClick={() => setOffset(Math.max(0, offset - PAGE_SIZE))}>
                 Previous
@@ -383,7 +390,7 @@ function ProposalCard({
   onDecide: (decision: DecisionInput) => void;
   onClear: () => void;
 }) {
-  const reusable = proposal.matches.filter((match) => match.reusable && match.id !== null);
+  const reusable = reusableMatches(proposal);
   const [conceptId, setConceptId] = useState(reusable[0]?.id ?? undefined);
   const [reason, setReason] = useState("");
 
@@ -413,7 +420,7 @@ function ProposalCard({
               >
                 {reusable.map((match) => (
                   <option key={String(match.id)} value={String(match.id)}>
-                    {match.path.join(" › ")}{match.same_parent ? "" : " (different parent)"}
+                    {match.path.join(" › ")}
                   </option>
                 ))}
               </NativeSelect>
