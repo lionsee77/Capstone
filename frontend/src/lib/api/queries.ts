@@ -240,7 +240,8 @@ export function useUploadRoundFile(roundId: string) {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (file: File) => api.uploadRoundFile(roundId, file),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: queryKeys.roundFiles(roundId) }),
+    // The whole round, not just its files: changing an imported file sends the round back to setup.
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: queryKeys.round(roundId) }),
   });
 }
 
@@ -248,7 +249,7 @@ export function useRemoveRoundFile(roundId: string) {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (name: string) => api.removeRoundFile(roundId, name),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: queryKeys.roundFiles(roundId) }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: queryKeys.round(roundId) }),
   });
 }
 

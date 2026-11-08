@@ -352,6 +352,11 @@ function ConfigureRound({ round, files, options }: { round: RoundState; files: R
             {configure.error.message}
           </Notice>
         )}
+        {round.status === "setup" && round.warnings.length > 0 && (
+          <Notice title="Import again before running">
+            {round.warnings.join(" ")}
+          </Notice>
+        )}
         {saved && !upToDate && (
           <Notice title="These settings aren't imported yet">
             The last import used different settings. Import again before running, so the round runs what is shown here.
