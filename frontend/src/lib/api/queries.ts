@@ -5,9 +5,10 @@
 import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { isLookupTerm } from "@/lib/lookup";
+import { isRoundActive } from "@/lib/rounds";
 
 import { api, type RunSubject, type TaxonomySource } from "./client";
-import { type ConceptLevel, isRunFinished, type PipelineConfig, type RunStatus } from "./schemas";
+import { type ConceptLevel, isRunFinished, type PipelineConfig, type RoundState, type RunStatus } from "./schemas";
 
 export const RUN_POLL_INTERVAL_MS = 2_000;
 
@@ -19,6 +20,11 @@ export const RUN_POLL_INTERVAL_MS = 2_000;
 export function pollWhileActive(runs: { status: RunStatus }[] | undefined): number | false {
   if (!runs) return false;
   return runs.some((run) => !isRunFinished(run.status)) ? RUN_POLL_INTERVAL_MS : false;
+}
+
+/** Poll a round while it runs, so its stages update on their own and polling stops when it does. */
+export function pollRound(round: RoundState | undefined): number | false {
+  return isRoundActive(round) ? RUN_POLL_INTERVAL_MS : false;
 }
 
 export const RUNS_PAGE_SIZE = 50;
@@ -37,6 +43,10 @@ export const queryKeys = {
   runComparison: (before: RunSubject, after: RunSubject) =>
     ["runs", "compare", before.runId, before.subject ?? null, after.runId, after.subject ?? null] as const,
   lineage: ["lineage"] as const,
+  rounds: ["rounds"] as const,
+  roundOptions: ["rounds", "options"] as const,
+  round: (roundId: string) => ["rounds", "detail", roundId] as const,
+  roundConfig: (roundId: string) => ["rounds", "detail", roundId, "config"] as const,
   health: ["health"] as const,
   taxonomySearch: (source: TaxonomySource | null, q: string, level: ConceptLevel | "") =>
     ["taxonomy", "search", source?.runId, source?.dataset, q, level] as const,
@@ -167,6 +177,49 @@ export function useTaxonomyConcept(source: TaxonomySource | null, level: Concept
     queryKey: queryKeys.taxonomyConcept(source, level, conceptId),
     queryFn: () => api.getTaxonomyConcept(source as TaxonomySource, level, conceptId),
     enabled: source !== null,
+  });
+}
+
+export function useRoundOptions() {
+  return useQuery({ queryKey: queryKeys.roundOptions, queryFn: api.getRoundOptions });
+}
+
+export function useRounds() {
+  return useQuery({
+    queryKey: queryKeys.rounds,
+    queryFn: api.listRounds,
+    refetchInterval: (query) => (query.state.data?.some(isRoundActive) ? RUN_POLL_INTERVAL_MS : false),
+  });
+}
+
+export function useRound(roundId: string) {
+  return useQuery({
+    queryKey: queryKeys.round(roundId),
+    queryFn: () => api.getRound(roundId),
+    refetchInterval: (query) => pollRound(query.state.data),
+  });
+}
+
+export function useRoundConfigText(roundId: string, enabled: boolean) {
+  return useQuery({ queryKey: queryKeys.roundConfig(roundId), queryFn: () => api.getRoundConfigText(roundId), enabled });
+}
+
+export function useRunRound(roundId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.runRound(roundId),
+    onSuccess: (round) => queryClient.setQueryData(queryKeys.round(roundId), round),
+  });
+}
+
+export function useDeleteRound(roundId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.deleteRound(roundId),
+    onSuccess: () => {
+      queryClient.removeQueries({ queryKey: queryKeys.round(roundId) });
+      return queryClient.invalidateQueries({ queryKey: queryKeys.rounds, exact: true });
+    },
   });
 }
 

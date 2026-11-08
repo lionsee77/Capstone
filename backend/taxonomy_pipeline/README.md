@@ -97,6 +97,7 @@ taxonomy_pipeline/
 │   │   ├── comparison.py             #   compare / compare_runs; Markdown, CSV and JSON exports
 │   │   ├── lineage.py                #   taxonomy_lineage: stages, chains and the runs that scored them
 │   │   ├── enrichment.py             #   case_a, case_b, merge_preview, review_proposals, bulk_decide, integrate
+│   │   ├── rounds.py                 #   a whole enrichment round as tracked background stages (/rounds)
 │   │   ├── browse.py                 #   taxonomy search/detail over a past run's dataset (/taxonomy)
 │   │   ├── lookup.py                 #   lookup_term: does a term exist in the newest snapshot? (/lookup)
 │   │   └── sources.py                #   import_source: flat source -> dump, tag context, next round's config
@@ -108,6 +109,7 @@ taxonomy_pipeline/
 │   ├── api/
 │   │   ├── app.py                    #   FastAPI: /metrics, /runs (incl. compare), /taxonomy routes over app/
 │   │   ├── proposals.py              #   /proposals: which merge runs a request may read, over app.enrichment
+│   │   ├── rounds.py                 #   /rounds: which folders a round may use, over app.rounds
 │   │   ├── lineage.py                #   /lineage: which integrations and merge roots it reads, over app.lineage
 │   │   ├── lookup.py                 #   /lookup: which integrations root it reads, over app.lookup
 │   │   ├── changes.py                #   authenticated, read-only GET /changes over app.changes
@@ -1693,6 +1695,8 @@ the token, so use curl or the dashboard to call endpoints.
   several taxonomies needs its subject named (422 otherwise).
 - `GET /lineage` - the enrichment lineage as JSON (`TaxonomyLineage`); see
   "Enrichment lineage" below. It takes no parameters.
+- `/rounds` - run a whole enrichment round from the dashboard. See "Run a round
+  from the API" below.
 - `GET /proposals?merge_run=&level=&offset=&limit=` and
   `GET /proposals/{proposal_id}?merge_run=` - saved hierarchy proposals with
   parent branches, matching evidence and decisions (see the #58 review view above).
@@ -1710,6 +1714,55 @@ the token, so use curl or the dashboard to call endpoints.
   rather than an error, the same row `integrity` would report as an orphan.
 - `GET /lookup?q=&level=&limit=&min_score=&semantic=&snapshot=` - does a proposed
   term already exist? See "Tag lookup" below. It needs no run ID.
+
+### Run a round from the API
+
+`/rounds` runs what "Next round" above does by hand, as stages a dashboard can follow:
+import -> score -> Case A -> Case B -> merge preview -> review -> integrate -> score the
+snapshot. It adds no pipeline logic: each stage calls the use case its CLI command calls
+(`app/rounds.py`). A round's inputs and intermediates live in `rounds/<round_id>/`
+(gitignored), while its merge run and snapshot go to `merge_runs/<round_id>` and
+`integrations/<round_id>`, so `/lineage`, `/proposals` and the Docker loader treat it like
+a hand-run round.
+
+| Route | What it does |
+|---|---|
+| `GET /rounds/options` | Snapshots to build on, services, LLM availability, saturation defaults |
+| `GET /rounds`, `GET /rounds/{id}` | Round state: overall `status`, and each stage's status, summary and error |
+| `POST /rounds` | Create a round: `{round_id, baseline_snapshot}` |
+| `PUT /rounds/{id}/files/{name}` | Upload a `.csv`, `.tsv`, `.xlsx` or `.xlsm` as the raw body, up to 50 MB |
+| `GET /rounds/{id}/files`, `GET /rounds/{id}/files/{name}?sheet=` | Each file's sheets, columns, row count and sample values |
+| `DELETE /rounds/{id}/files/{name}` | Remove an uploaded file |
+| `PUT /rounds/{id}/config` | Save `{mapping, settings}`: imports the source and writes the round config |
+| `GET /rounds/{id}/config` | The generated round config, as text |
+| `POST /rounds/{id}/run` | Run or resume the stages before review, in the background |
+| `DELETE /rounds/{id}` | Remove a round and what it produced |
+
+- **`mapping`** is the `SourceMapping` from "Next round", except that `source` and any
+  `labels` must name files uploaded to this round. A mapping that fails (422 with the
+  reason) leaves the last good import in place. Saving a new one discards later progress,
+  including decisions, because they described the old source.
+- **`settings`** has `judge`, `case_b` and saturation's `threshold`, `semantic_threshold`,
+  `add_candidate_lexical_threshold` and `add_candidate_semantic_threshold`. Unset values keep the
+  template's (`configs/original_vs_skillsfuture.yaml`). Nothing else can be set, so a
+  caller can't choose a judge model or cache path.
+- **LLM steps** are off unless the server sets `TAXONOMY_ALLOW_LLM=true` and has a real
+  `OPENAI_API_KEY`. With the judge off, more tags reach review. With Case B off, new tags
+  without a parent are left out of the round, with a warning. Judge verdicts are cached
+  in `judge_cache_<source>.json` beside `rounds/`, so rerunning a source reuses them.
+  `POST /runs` still refuses judge settings.
+- **Changing files:** replacing or removing a file the imported mapping reads, with different
+  contents, sends the round back to `setup` and discards what was built from it, including saved
+  decisions. Import it again to continue; the saved mapping stays. Uploading the same bytes again, or a
+  file the mapping doesn't use, changes nothing.
+- **Resuming:** `POST /rounds/{id}/run` skips finished stages, so a retry never repeats a
+  paid step. A stage still marked running after a server restart reads back as failed.
+- **Removing:** only rounds made through `/rounds` can be removed, and not one that is
+  running or that a later round builds on. Stored runs and audit events remain.
+- **`status`:** `setup`, `ready`, `running`, `failed`, `review`, `ready_to_integrate` or `complete`.
+
+Set `TAXONOMY_ROUNDS_ROOT` to keep rounds elsewhere. Uploads are limited to 20 files per round.
+A source split across linked files still needs a script to flatten it first (#118).
 
 ### Enrichment lineage
 
@@ -1973,6 +2026,10 @@ Ruff linting and the test suite run in CI (see the root
 `.github/workflows/ci.yml`).
 
 ## Known gaps
+
+- **One model at a time:** `embeddings.MODEL_LOCK` makes every sentence-model load and
+  encode take turns, because running them on two threads at once kills the process. A long
+  encode therefore delays any other request that needs a model.
 
 - **Ambiguous tags make a large review queue:** routing every
   `REVIEW_AMBIGUOUS` tag holds each one for a decision. A historical lexical-only

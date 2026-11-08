@@ -40,6 +40,9 @@ const CONCEPT_LEVEL = /^(services|categories|specialities|tags)$/;
 // Concept ids are usually a plain integer, but a proposed-but-not-yet-integrated
 // concept can carry a temporary id like "skillsfuture:501" or "new:category:<hash>".
 const CONCEPT_ID = /^[\w:.-]{1,200}$/;
+const ROUND_ID = /^[a-z0-9][a-z0-9_-]{0,63}$/;
+// An uploaded file's own name; the API checks its type, and it is forwarded percent-encoded as one path segment.
+const ROUND_FILE = /^(?!\.)[^/\\\x00-\x1f\x7f]{1,200}$/;
 const LOOKUP_TERM_MAX = 200;
 
 /** The query `GET /lookup` may forward, or null if any of it is malformed. Unknown parameters are dropped. */
@@ -68,6 +71,44 @@ function requireRunAndDataset(searchParams: URLSearchParams): { run_id: string; 
   return { run_id: runId, dataset };
 }
 
+/**
+ * `/rounds` routes. Reads are always forwarded; anything that changes a round needs the same switch as
+ * creating a run, since it can start stages that write files and, if the server allows it, spend LLM credits.
+ * Null means not an allowed route.
+ */
+function resolveRound(
+  method: string, base: string, id: string | undefined, action: string | undefined, rest: string[],
+  searchParams: URLSearchParams, env: ProxyEnv,
+): ProxyDecision | null {
+  if (id !== undefined && id !== "options" && !ROUND_ID.test(id)) return null;
+  const root = `${base}/rounds`;
+  const encoded = rest[0];
+  if (encoded !== undefined && (rest.length !== 1 || !ROUND_FILE.test(encoded))) return null;
+  let url: string | null = null;
+  if (method === "GET") {
+    if (id === undefined || id === "options") url = action === undefined ? `${root}${id ? "/options" : ""}` : null;
+    else if (action === undefined) url = `${root}/${id}`;
+    else if (action === "config" && !encoded) url = `${root}/${id}/config`;
+    else if (action === "files" && !encoded) url = `${root}/${id}/files`;
+    else if (action === "files" && encoded) {
+      const sheet = searchParams.get("sheet");
+      const query = sheet && DATASET_NAME.test(sheet) ? `?${new URLSearchParams({ sheet })}` : "";
+      url = `${root}/${id}/files/${encodeURIComponent(encoded)}${query}`;
+    }
+  } else if (id !== undefined && id !== "options") {
+    if (method === "POST" && action === "run") url = `${root}/${id}/run`;
+    else if (method === "PUT" && action === "config" && !encoded) url = `${root}/${id}/config`;
+    else if ((method === "PUT" || method === "DELETE") && action === "files" && encoded) {
+      url = `${root}/${id}/files/${encodeURIComponent(encoded)}`;
+    } else if (method === "DELETE" && action === undefined) url = `${root}/${id}`;
+  } else if (method === "POST" && id === undefined && action === undefined) url = root;
+  if (url === null) return null;
+  if (method !== "GET" && env.PIPELINE_ALLOW_RUN_CREATION !== "true") {
+    return { ok: false, status: 403, reason: "Changing rounds is disabled for this dashboard" };
+  }
+  return { ok: true, url };
+}
+
 export function resolveUpstream(
   method: string,
   segments: string[],
@@ -79,7 +120,9 @@ export function resolveUpstream(
   // fourth itself; a resource with fewer just leaves the later ones undefined.
   const [resource, a, b, ...rest] = segments;
   const notFound = { ok: false, status: 404, reason: "Not an allowed pipeline endpoint" } as const;
-  if (rest.length > 0 && !(resource === "runs" && b === "compare")) return notFound;
+  if (rest.length > 0 && !(resource === "runs" && b === "compare") && !(resource === "rounds" && b === "files")) {
+    return notFound;
+  }
 
   if (method === "GET" && resource === "proposals" && b === undefined) {
     const mergeRun = searchParams.get("merge_run");
@@ -117,6 +160,7 @@ export function resolveUpstream(
     const light = searchParams.get("details") === "false";
     return { ok: true, url: light ? `${base}/runs/${a}?details=false` : `${base}/runs/${a}` };
   }
+  if (resource === "rounds") return resolveRound(method, base, a, b, rest, searchParams, env) ?? notFound;
   if (method === "GET" && resource === "lookup" && a === undefined) {
     const forwarded = lookupQuery(searchParams);
     return forwarded ? { ok: true, url: `${base}/lookup?${forwarded}` } : notFound;
@@ -187,10 +231,16 @@ export function resolveUpstream(
  *   `X-Forwarded-Host` without triggering a preflight, so trusting it here is
  *   safe. Non-browser clients such as curl send neither header and are allowed.
  */
-export function checkWriteRequest(headers: WriteRequestHeaders): ProxyRejection | null {
+export function checkWriteRequest(
+  headers: WriteRequestHeaders, body: "json" | "binary" | "none" = "json",
+): ProxyRejection | null {
   const mediaType = (headers.get("content-type") ?? "").split(";", 1)[0].trim().toLowerCase();
-  if (mediaType !== "application/json") {
+  if (body === "json" && mediaType !== "application/json") {
     return { ok: false, status: 415, reason: "Request body must be application/json" };
+  }
+  // A cross-site page can't send either without a preflight, and the same-origin check below still applies.
+  if (body === "binary" && mediaType !== "application/octet-stream") {
+    return { ok: false, status: 415, reason: "An upload must be application/octet-stream" };
   }
 
   const fetchSite = headers.get("sec-fetch-site");
@@ -237,6 +287,8 @@ export function decideProxyRequest(
   env: ProxyEnv,
 ): ProxyDecision {
   const allowed = resolveUpstream(method, segments, searchParams, env);
-  if (!allowed.ok || method !== "POST") return allowed;
-  return checkWriteRequest(headers) ?? allowed;
+  if (!allowed.ok || method === "GET") return allowed;
+  const isUpload = method === "PUT" && segments[2] === "files";
+  const isBare = method === "DELETE" || (segments[0] === "rounds" && segments[2] === "run");
+  return checkWriteRequest(headers, isUpload ? "binary" : isBare ? "none" : "json") ?? allowed;
 }

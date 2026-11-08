@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Annotated, Any, Literal
 from uuid import uuid4
 
-from pydantic import BaseModel, Field, StringConstraints, computed_field
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints, computed_field
 
 NonBlankText = Annotated[str, StringConstraints(pattern=r"\S")]
 TaxonomyId = Annotated[int, Field(gt=0)]
@@ -349,3 +349,96 @@ class SourceImport(BaseModel):
     counts: dict[str, int]
     round_config: Path | None = None
     warnings: list[str] = Field(default_factory=list)
+
+
+RoundStageId = Literal["import", "score", "case_a", "case_b", "merge", "integrate", "score_enriched"]
+RoundStageStatus = Literal["pending", "running", "done", "failed", "skipped"]
+
+
+class RoundStage(BaseModel):
+    """One step of an enrichment round; `summary` and `error` are written for a person to read."""
+
+    id: RoundStageId
+    status: RoundStageStatus = "pending"
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
+    summary: str | None = None
+    error: str | None = None
+
+
+class RoundSettings(BaseModel):
+    """The round form's switches. Thresholds left unset keep the template's value.
+
+    `judge` and `case_b` spend LLM credits, and need the server to allow them (`app.rounds.llm_status`).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    judge: bool = False
+    case_b: bool = False
+    threshold: float | None = Field(default=None, ge=0, le=100)
+    semantic_threshold: float | None = Field(default=None, ge=0, le=1)
+    add_candidate_lexical_threshold: float | None = Field(default=None, ge=0, le=100)
+    add_candidate_semantic_threshold: float | None = Field(default=None, ge=0, le=1)
+
+
+class RoundState(BaseModel):
+    """A round's saved progress (`app/rounds.py`), and everything a status page shows."""
+
+    round_id: str
+    baseline_snapshot: str
+    created_at: datetime
+    source_name: str | None = None
+    settings: RoundSettings = Field(default_factory=RoundSettings)
+    stages: list[RoundStage] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+    import_counts: dict[str, int] = Field(default_factory=dict)
+    merge_counts: dict[str, int] = Field(default_factory=dict)
+    pending_sources: int = 0
+    decisions_applied: bool = True
+    reviewer: str | None = None
+    score_run_id: str | None = None
+    enriched_run_id: str | None = None
+
+    @computed_field
+    @property
+    def status(self) -> Literal["setup", "ready", "running", "failed", "review", "ready_to_integrate", "complete"]:
+        """Where the round stands, from its stages: what a person can do next."""
+        by_id = {stage.id: stage.status for stage in self.stages}
+        statuses = set(by_id.values())
+        if "running" in statuses:
+            return "running"
+        if "failed" in statuses:
+            return "failed"
+        if by_id.get("score_enriched") == "done":
+            return "complete"
+        if by_id.get("merge") == "done":
+            return "review" if self.pending_sources or not self.decisions_applied else "ready_to_integrate"
+        return "ready" if by_id.get("import") == "done" else "setup"
+
+
+class RoundFile(BaseModel):
+    """An uploaded file, read far enough to offer its columns as choices. `error` says why it can't be read."""
+
+    name: str
+    size: int
+    sheets: list[str] = Field(default_factory=list)
+    columns: list[str] = Field(default_factory=list)
+    row_count: int = 0
+    samples: dict[str, list[str]] = Field(default_factory=dict)
+    error: str | None = None
+
+
+class RoundServiceOption(BaseModel):
+    id: int
+    name: str
+
+
+class RoundOptions(BaseModel):
+    """What the new-round form offers. `saturation_defaults` are the values thresholds left unset will use."""
+
+    snapshots: list[str] = Field(default_factory=list)
+    services: list[RoundServiceOption] = Field(default_factory=list)
+    llm_allowed: bool = False
+    llm_key_configured: bool = False
+    saturation_defaults: dict[str, float] = Field(default_factory=dict)

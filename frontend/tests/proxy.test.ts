@@ -40,6 +40,66 @@ describe("pipeline proxy allowlist", () => {
 
   const runAndDataset = "run_id=3f2a9c0e&dataset=original";
 
+  it("forwards round reads and refuses malformed round ids", () => {
+    const base = "http://pipeline:8000/rounds";
+    expect(resolve("GET", "rounds")).toEqual({ ok: true, url: base });
+    expect(resolve("GET", "rounds/options")).toEqual({ ok: true, url: `${base}/options` });
+    expect(resolve("GET", "rounds/onet-demo")).toEqual({ ok: true, url: `${base}/onet-demo` });
+    expect(resolve("GET", "rounds/onet-demo/config")).toEqual({ ok: true, url: `${base}/onet-demo/config` });
+    expect(resolve("GET", "rounds/onet-demo/files")).toEqual({ ok: true, url: `${base}/onet-demo/files` });
+    expect(resolve("GET", "rounds/UPPER")).toMatchObject({ ok: false, status: 404 });
+    expect(resolve("GET", "rounds/..")).toMatchObject({ ok: false, status: 404 });
+    expect(resolve("GET", "rounds/onet-demo/secrets")).toMatchObject({ ok: false, status: 404 });
+  });
+
+  it("encodes an uploaded file's name as one path segment and forwards only its sheet", () => {
+    expect(resolve("GET", "rounds/r1/files/Software Skills.xlsx", "sheet=Sheet 1&extra=x")).toEqual({
+      ok: true,
+      url: "http://pipeline:8000/rounds/r1/files/Software%20Skills.xlsx?sheet=Sheet+1",
+    });
+    for (const name of [".hidden.csv", "a\\b.csv"]) {
+      expect(resolve("GET", `rounds/r1/files/${name}`)).toMatchObject({ ok: false, status: 404 });
+    }
+    expect(resolveUpstream("GET", ["rounds", "r1", "files", "a", "b"], new URLSearchParams(), env))
+      .toMatchObject({ ok: false, status: 404 });
+  });
+
+  it("keeps every round change behind the run-creation switch", () => {
+    const writes: [string, string][] = [
+      ["POST", "rounds"], ["POST", "rounds/r1/run"], ["PUT", "rounds/r1/config"],
+      ["PUT", "rounds/r1/files/a.csv"], ["DELETE", "rounds/r1/files/a.csv"], ["DELETE", "rounds/r1"],
+    ];
+    for (const [method, path] of writes) {
+      expect(resolve(method, path)).toMatchObject({ ok: false, status: 403 });
+      expect(resolve(method, path, "", { PIPELINE_ALLOW_RUN_CREATION: "true" })).toMatchObject({ ok: true });
+    }
+    expect(resolve("DELETE", "rounds/options", "", { PIPELINE_ALLOW_RUN_CREATION: "true" }))
+      .toMatchObject({ ok: false, status: 404 });
+    expect(resolve("POST", "rounds/r1/unknown", "", { PIPELINE_ALLOW_RUN_CREATION: "true" }))
+      .toMatchObject({ ok: false, status: 404 });
+  });
+
+  it("judges each round write by the body it should carry, and always by its origin", () => {
+    const allowed = { ...env, PIPELINE_ALLOW_RUN_CREATION: "true" };
+    const headers = (values: Record<string, string>) => ({ get: (name: string) => values[name.toLowerCase()] ?? null });
+    const decide = (method: string, path: string, values: Record<string, string>) =>
+      decideProxyRequest(method, path.split("/"), new URLSearchParams(), headers(values), allowed);
+    const sameOrigin = { "sec-fetch-site": "same-origin" };
+
+    expect(decide("PUT", "rounds/r1/files/a.csv", { ...sameOrigin, "content-type": "application/octet-stream" }))
+      .toMatchObject({ ok: true });
+    expect(decide("PUT", "rounds/r1/files/a.csv", { ...sameOrigin, "content-type": "text/plain" }))
+      .toMatchObject({ ok: false, status: 415 });
+    expect(decide("PUT", "rounds/r1/config", { ...sameOrigin, "content-type": "application/json" }))
+      .toMatchObject({ ok: true });
+    expect(decide("PUT", "rounds/r1/config", { ...sameOrigin, "content-type": "text/plain" }))
+      .toMatchObject({ ok: false, status: 415 });
+    expect(decide("POST", "rounds/r1/run", sameOrigin)).toMatchObject({ ok: true });
+    expect(decide("DELETE", "rounds/r1", sameOrigin)).toMatchObject({ ok: true });
+    expect(decide("DELETE", "rounds/r1", { "sec-fetch-site": "cross-site" })).toMatchObject({ ok: false, status: 403 });
+    expect(decide("POST", "rounds/r1/run", { "sec-fetch-site": "cross-site" })).toMatchObject({ ok: false, status: 403 });
+  });
+
   it("forwards a tag lookup with only the parameters the dashboard sends", () => {
     expect(resolve("GET", "lookup", "q=Tax+%26+Audit&level=tags&semantic=true&snapshot=other&limit=5")).toEqual({
       ok: true,
