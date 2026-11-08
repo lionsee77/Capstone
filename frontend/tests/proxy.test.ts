@@ -64,9 +64,20 @@ describe("pipeline proxy allowlist", () => {
       .toMatchObject({ ok: false, status: 404 });
   });
 
+  it("forwards only the review queue's own parameters", () => {
+    expect(resolve("GET", "rounds/r1/review", "state=decided&q=Adobe+Acrobat&offset=25&limit=25&x=1")).toEqual({
+      ok: true,
+      url: "http://pipeline:8000/rounds/r1/review?state=decided&offset=25&limit=25&q=Adobe+Acrobat",
+    });
+    for (const query of ["state=other", "offset=-1", "limit=lots"]) {
+      expect(resolve("GET", "rounds/r1/review", query)).toMatchObject({ ok: false, status: 404 });
+    }
+  });
+
   it("keeps every round change behind the run-creation switch", () => {
     const writes: [string, string][] = [
-      ["POST", "rounds"], ["POST", "rounds/r1/run"], ["PUT", "rounds/r1/config"],
+      ["POST", "rounds"], ["POST", "rounds/r1/run"], ["POST", "rounds/r1/decisions"], ["POST", "rounds/r1/bulk-decide"],
+      ["POST", "rounds/r1/apply"], ["POST", "rounds/r1/integrate"], ["PUT", "rounds/r1/config"],
       ["PUT", "rounds/r1/files/a.csv"], ["DELETE", "rounds/r1/files/a.csv"], ["DELETE", "rounds/r1"],
     ];
     for (const [method, path] of writes) {
@@ -95,6 +106,10 @@ describe("pipeline proxy allowlist", () => {
     expect(decide("PUT", "rounds/r1/config", { ...sameOrigin, "content-type": "text/plain" }))
       .toMatchObject({ ok: false, status: 415 });
     expect(decide("POST", "rounds/r1/run", sameOrigin)).toMatchObject({ ok: true });
+    expect(decide("POST", "rounds/r1/apply", sameOrigin)).toMatchObject({ ok: true });
+    expect(decide("POST", "rounds/r1/decisions", sameOrigin)).toMatchObject({ ok: false, status: 415 });
+    expect(decide("POST", "rounds/r1/decisions", { ...sameOrigin, "content-type": "application/json" }))
+      .toMatchObject({ ok: true });
     expect(decide("DELETE", "rounds/r1", sameOrigin)).toMatchObject({ ok: true });
     expect(decide("DELETE", "rounds/r1", { "sec-fetch-site": "cross-site" })).toMatchObject({ ok: false, status: 403 });
     expect(decide("POST", "rounds/r1/run", { "sec-fetch-site": "cross-site" })).toMatchObject({ ok: false, status: 403 });

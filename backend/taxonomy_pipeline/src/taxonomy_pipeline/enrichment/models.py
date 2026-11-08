@@ -373,6 +373,98 @@ class ResolutionReport(BaseModel):
     screening: ProposalScreeningReport | None = None
 
 
+class ReviewQueuePlacement(BaseModel):
+    """One path proposed for a held tag, as a reviewer can approve it."""
+
+    service: str
+    category: str
+    speciality: str
+    confidence: float | None = None
+    reason: str
+
+
+class ReviewQueueMatch(BaseModel):
+    """What a held tag resembles in the baseline. `tag_id` is set when it is one baseline tag a reviewer can reuse."""
+
+    score: float
+    basis: str
+    name: str | None = None
+    level: str | None = None
+    tag_id: int | None = None
+
+
+class ReviewQueueDuplicate(BaseModel):
+    """Another incoming tag this one may duplicate."""
+
+    source: SourceTagRef
+    tag: str
+    reason: str
+    similarity: float | None = None
+
+
+class ReviewQueueTag(BaseModel):
+    """One tag a reviewer has to, or did, decide: its status, why, and the evidence. `decision` is the saved one."""
+
+    source: SourceTagRef
+    tag: str
+    status: Literal["accepted", "excluded", "deferred", "pending"]
+    reason: str
+    reason_codes: list[ReasonCode] = Field(default_factory=list)
+    placements: list[ReviewQueuePlacement] = Field(default_factory=list)
+    closest: list[ReviewQueueMatch] = Field(default_factory=list)
+    duplicates: list[ReviewQueueDuplicate] = Field(default_factory=list)
+    decision: ReviewDecision | None = None
+
+
+class ReviewQueueProposalMatch(BaseModel):
+    """An existing category or speciality a proposal resembles; `id` is what a `reuse` decision points at."""
+
+    id: int | str | None
+    name: str
+    level: str
+    path: list[str]
+    reusable: bool
+    same_parent: bool
+    match_types: list[str]
+    lexical_score: float
+    semantic_score: float | None = None
+
+
+class ReviewQueueProposal(BaseModel):
+    """A proposed category or speciality that needs a decision before tags can be created under it."""
+
+    proposal_id: str
+    level: Literal["category", "speciality"]
+    name: str
+    path: list[str]
+    status: Literal["new", "reuse", "review"]
+    reason: str
+    blocks_creation: bool
+    source_tags: int
+    matches: list[ReviewQueueProposalMatch] = Field(default_factory=list)
+    decision: ReviewDecision | None = None
+
+
+class ReviewQueueEvidence(BaseModel):
+    """Saved after each merge preview, so the queue can be paged without re-reading the merge run's reports."""
+
+    tags: list[ReviewQueueTag] = Field(default_factory=list)
+    proposals: list[ReviewQueueProposal] = Field(default_factory=list)
+
+
+class ReviewQueue(BaseModel):
+    """`GET /rounds/{id}/review`: one page of tags, every proposal, and how much of the queue is left."""
+
+    tags: list[ReviewQueueTag] = Field(default_factory=list)
+    proposals: list[ReviewQueueProposal] = Field(default_factory=list)
+    total: int = 0
+    offset: int = 0
+    limit: int = 50
+    undecided: int = 0
+    decided: int = 0
+    proposals_undecided: int = 0
+
+
 class ProposalReviewItem(BaseModel):
     """Keep original screening evidence separate from the reviewer's saved choice and resolved node."""
 

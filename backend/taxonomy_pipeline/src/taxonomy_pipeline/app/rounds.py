@@ -38,7 +38,10 @@ import yaml
 from .. import env
 from ..config import load_config
 from ..enrichment.lineage import file_fingerprint, read_rounds
+from ..enrichment.models import ReviewDecision, ReviewQueue, ReviewQueueEvidence, SourceTagRef
+from ..enrichment.review_queue import build_review_queue
 from ..enrichment.routing import ROUTED_ACTIONS, load_saturation
+from ..enrichment.runner import REVIEW_DECISIONS, load_decisions, load_merge_run
 from ..llm import PLACEHOLDER_KEYS
 from ..models import (
     RoundFile,
@@ -69,6 +72,8 @@ SATURATION_SETTINGS = (
 PIPELINE_STAGES: tuple[RoundStageId, ...] = ("score", "case_a", "case_b", "merge")
 FINISHED = {"done", "skipped"}
 SOURCE_DIR = "source"
+QUEUE_FILE = "review_queue.json"
+DECISIONS_FILE = "decisions.json"
 
 
 class RoundNotFound(Exception):
@@ -541,9 +546,180 @@ def _merge(roots: RoundRoots, state: RoundState) -> tuple[str, str]:
     state.pending_sources = counts.pending_sources
     state.decisions_applied = True
     state.warnings = _unique([*state.warnings, *run.warnings])
+    _write_queue(roots, state)
     return "done", (
         f"{counts.added_tags} new tags, {counts.reused_tags} reused, {counts.pending_sources} waiting for review"
     )
+
+
+def _write_queue(roots: RoundRoots, state: RoundState) -> None:
+    directory = roots.directory(state.round_id)
+    resolution, _ = load_merge_run(roots.merge_runs / state.round_id)
+    decisions = _saved_decisions(directory)
+    evidence = build_review_queue(
+        resolution, load_saturation(directory / "report.json", state.source_name or ""),
+        load_taxonomies(directory / "config.yaml", ROUND_BASELINE)[ROUND_BASELINE],
+        decided_sources={key for decision in decisions for key in _tag_keys(decision)},
+        decided_proposals={decision.proposal_id for decision in decisions if decision.proposal_id},
+    )
+    (directory / QUEUE_FILE).write_text(evidence.model_dump_json(), encoding="utf-8")
+
+
+def get_review(
+    roots: RoundRoots, round_id: str, *, state: str = "undecided", query: str | None = None, offset: int = 0,
+    limit: int = 50,
+) -> ReviewQueue:
+    """One page of the review queue, with each item's saved decision; `state` is undecided, decided or all."""
+    get_round(roots, round_id)
+    if state not in {"undecided", "decided", "all"}:
+        raise ValueError("state must be undecided, decided or all")
+    if offset < 0 or not 1 <= limit <= 200:
+        raise ValueError("offset must be nonnegative and limit must be between 1 and 200")
+    directory = roots.directory(round_id)
+    evidence = _load_queue(directory)
+    decisions = _saved_decisions(directory)
+    by_tag = {key: decision for decision in decisions for key in _tag_keys(decision)}
+    by_proposal = {decision.proposal_id: decision for decision in decisions if decision.proposal_id}
+    for tag in evidence.tags:
+        tag.decision = by_tag.get((tag.source.source_dataset, tag.source.tag_id))
+    for proposal in evidence.proposals:
+        proposal.decision = by_proposal.get(proposal.proposal_id)
+    selected = [
+        tag for tag in evidence.tags
+        if state == "all" or (tag.decision is not None) == (state == "decided")
+    ]
+    if query:
+        selected = [tag for tag in selected if query.casefold() in tag.tag.casefold()]
+    decided = sum(tag.decision is not None for tag in evidence.tags)
+    return ReviewQueue(
+        tags=selected[offset:offset + limit], proposals=evidence.proposals, total=len(selected), offset=offset,
+        limit=limit, decided=decided, undecided=len(evidence.tags) - decided,
+        proposals_undecided=sum(item.decision is None for item in evidence.proposals),
+    )
+
+
+def save_decisions(
+    roots: RoundRoots, round_id: str, reviewer: str, decisions: list[ReviewDecision],
+    *, clear_tags: list[SourceTagRef] = (), clear_proposals: list[str] = (),
+) -> RoundState:
+    """Save decisions, replacing any earlier one on the same tag or proposal. Applying them is a separate step.
+
+    Checks what can be checked against the queue now, so a mistake shows while the reviewer is on that tag.
+    `merge-preview` still has the last word when they're applied, as it does for a hand-edited file.
+    """
+    reviewer = reviewer.strip()
+    if not reviewer:
+        raise ValueError("name the reviewer: decisions are recorded in the audit history under it")
+    with _lock:
+        state = _claimable(roots, round_id)
+        _require_editable(state)
+        directory = roots.directory(round_id)
+        evidence = _load_queue(directory)
+        tags = {(tag.source.source_dataset, tag.source.tag_id): tag for tag in evidence.tags}
+        proposals = {proposal.proposal_id for proposal in evidence.proposals}
+        for decision in decisions:
+            _check_decision(decision, tags, proposals)
+        removed = {(ref.source_dataset, ref.tag_id) for ref in clear_tags}
+        removed |= {key for decision in decisions for key in _tag_keys(decision)}
+        removed_proposals = set(clear_proposals) | {d.proposal_id for d in decisions if d.proposal_id}
+        kept = [
+            decision for decision in _saved_decisions(directory)
+            if not _tag_keys(decision) & removed and decision.proposal_id not in removed_proposals
+        ]
+        (directory / DECISIONS_FILE).write_bytes(
+            REVIEW_DECISIONS.dump_json([*kept, *decisions], indent=2, exclude_defaults=True) + b"\n",
+        )
+        state.reviewer, state.decisions_applied = reviewer, False
+        _save(roots, state)
+        return state
+
+
+def _check_decision(decision: ReviewDecision, tags: dict[tuple[str, str], Any], proposals: set[str]) -> None:
+    if decision.proposal_id is not None:
+        if decision.proposal_id not in proposals:
+            raise ValueError(f"proposal {decision.proposal_id} isn't in this round's review queue")
+        return
+    for key in _tag_keys(decision):
+        if key not in tags:
+            raise ValueError(f"tag {key[1]} from {key[0]} isn't in this round's review queue")
+        proposed = {(place.service, place.category, place.speciality) for place in tags[key].placements}
+        approved = {(path.service, path.category, path.speciality) for path in decision.approved_paths}
+        if len(decision.members) == 1 and approved - proposed:
+            raise ValueError(f"{tags[key].tag}: an approved path must be one of the tag's proposed placements")
+
+
+def draft_decisions(
+    roots: RoundRoots, round_id: str, reviewer: str, *, create_below: float | None, reuse_above: float | None,
+) -> tuple[RoundState, dict[str, int]]:
+    """Draft decisions for the clear-cut tags with `bulk-decide`. They're saved, editable, and not yet applied."""
+    reviewer = reviewer.strip()
+    if not reviewer:
+        raise ValueError("name the reviewer: decisions are recorded in the audit history under it")
+    with _lock:
+        state = _claimable(roots, round_id)
+        _require_editable(state)
+        if _stage(state, "merge").status != "done":
+            raise RoundConflict("build the merge preview before drafting decisions")
+        if not state.decisions_applied:
+            raise RoundConflict("apply your saved decisions first, so the draft can build on them")
+        directory = roots.directory(round_id)
+        decisions = directory / DECISIONS_FILE
+        draft = use_cases.bulk_decide(
+            directory / "config.yaml", roots.merge_runs / round_id, directory / "report.json",
+            baseline=ROUND_BASELINE, incoming=state.source_name, output=decisions,
+            create_below=create_below, reuse_above=reuse_above, decisions=decisions if decisions.is_file() else None,
+        )
+        if draft.drafted:
+            state.reviewer, state.decisions_applied = reviewer, False
+            _save(roots, state)
+        return state, dict(draft.counts)
+
+
+def start_apply(roots: RoundRoots, round_id: str) -> tuple[RoundState, list[RoundStageId]]:
+    """Rebuild the merge preview with the saved decisions; `run_stages` runs it in the background."""
+    with _lock:
+        state = _claimable(roots, round_id)
+        _require_editable(state)
+        if not (roots.directory(round_id) / QUEUE_FILE).is_file():
+            raise RoundConflict("this round has no review queue yet; run it first")
+        # A snapshot that failed to build is out of date now the decisions are changing.
+        for stage in state.stages:
+            if stage.id in {"merge", "integrate", "score_enriched"}:
+                stage.status, stage.error, stage.summary = "pending", None, None
+        return _claim(roots, state, ["merge"]), ["merge"]
+
+
+def start_integrate(roots: RoundRoots, round_id: str) -> tuple[RoundState, list[RoundStageId]]:
+    """Generate the snapshot and score it, once nothing is held; refused while decisions are unapplied."""
+    with _lock:
+        state = _claimable(roots, round_id)
+        if _stage(state, "merge").status != "done":
+            raise RoundConflict("build the merge preview first")
+        if not state.decisions_applied:
+            raise RoundConflict("apply your saved decisions before integrating")
+        if state.pending_sources:
+            raise RoundConflict(f"{state.pending_sources} tag(s) still need a decision")
+        _check_llm(state.settings)  # scoring the snapshot repeats the round's metrics, judge included
+        stages = [stage for stage in ("integrate", "score_enriched") if _stage(state, stage).status != "done"]
+        if not stages:
+            raise RoundConflict("this round is already complete")
+        return _claim(roots, state, stages), stages
+
+
+def _load_queue(directory: Path) -> ReviewQueueEvidence:
+    path = directory / QUEUE_FILE
+    if not path.is_file():
+        raise RoundConflict("this round has no review queue yet; run it first")
+    return ReviewQueueEvidence.model_validate_json(path.read_text(encoding="utf-8"))
+
+
+def _saved_decisions(directory: Path) -> list[ReviewDecision]:
+    path = directory / DECISIONS_FILE
+    return load_decisions(path) if path.is_file() else []
+
+
+def _tag_keys(decision: ReviewDecision) -> set[tuple[str, str]]:
+    return {(member.source_dataset, member.tag_id) for member in decision.members}
 
 
 def _integrate(roots: RoundRoots, state: RoundState) -> tuple[str, str]:

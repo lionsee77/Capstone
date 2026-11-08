@@ -17,6 +17,12 @@ verdict on screen is the API's.
 - **Enrichment rounds** (`/rounds`, `/rounds/{id}`) - one new source brought into
   the taxonomy: each stage's status, summary and error, updating while it runs, with
   buttons to run, resume or remove the round and the generated config. Reads `/rounds`.
+  Once a merge preview exists, a review panel lists each held tag with the reason, its
+  proposed placements and closest existing matches. A reviewer creates, reuses, excludes or
+  defers it, one at a time or across a selected page, or drafts the clear-cut ones first.
+  Decisions are saved at once, then applied together, because `merge-preview` rebuilds the
+  whole preview to check them (about 25 seconds for O*NET). Then "Generate enriched snapshot"
+  integrates and scores the round, and links to its before-and-after comparison.
 - **Tag lookup** (`/lookup`) - check whether a term already exists before proposing
   it. It reads `GET /lookup`, so it needs no run: the result names the snapshot it
   checked (the newest one under `integrations/`). Shown: a verdict, then exact and

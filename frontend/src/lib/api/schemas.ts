@@ -492,6 +492,83 @@ export const roundStateSchema = z.object({
 });
 export type RoundState = z.infer<typeof roundStateSchema>;
 
+const reviewSourceSchema = z.object({ source_dataset: z.string(), tag_id: z.string() });
+
+/** A saved decision as the queue returns it: what it did and why. `merge-preview` validates the rest. */
+const queueDecisionSchema = z.object({ action: z.string(), reason: z.string() });
+
+/** Mirrors `ReviewQueueTag`: one held tag and the evidence for deciding it. */
+export const reviewQueueTagSchema = z.object({
+  source: reviewSourceSchema,
+  tag: z.string(),
+  status: z.enum(["accepted", "excluded", "deferred", "pending"]),
+  reason: z.string(),
+  reason_codes: z.array(z.string()),
+  placements: z.array(z.object({
+    service: z.string(),
+    category: z.string(),
+    speciality: z.string(),
+    confidence: z.number().nullable(),
+    reason: z.string(),
+  })),
+  closest: z.array(z.object({
+    score: z.number(),
+    basis: z.string(),
+    name: z.string().nullable(),
+    level: z.string().nullable(),
+    tag_id: z.number().nullable(),
+  })),
+  duplicates: z.array(z.object({
+    source: reviewSourceSchema,
+    tag: z.string(),
+    reason: z.string(),
+    similarity: z.number().nullable(),
+  })),
+  decision: queueDecisionSchema.nullable(),
+});
+export type ReviewQueueTag = z.infer<typeof reviewQueueTagSchema>;
+
+/** Mirrors `ReviewQueueProposal`: a category or speciality that needs a decision before tags go under it. */
+export const reviewQueueProposalSchema = z.object({
+  proposal_id: z.string(),
+  level: z.enum(["category", "speciality"]),
+  name: z.string(),
+  path: z.array(z.string()),
+  status: z.enum(["new", "reuse", "review"]),
+  reason: z.string(),
+  blocks_creation: z.boolean(),
+  source_tags: z.number(),
+  matches: z.array(z.object({
+    id: z.union([z.number(), z.string()]).nullable(),
+    name: z.string(),
+    level: z.string(),
+    path: z.array(z.string()),
+    reusable: z.boolean(),
+    same_parent: z.boolean(),
+    match_types: z.array(z.string()),
+    lexical_score: z.number(),
+    semantic_score: z.number().nullable(),
+  })),
+  decision: queueDecisionSchema.nullable(),
+});
+export type ReviewQueueProposal = z.infer<typeof reviewQueueProposalSchema>;
+
+/** Mirrors `ReviewQueue` (`GET /rounds/{id}/review`). */
+export const reviewQueueSchema = z.object({
+  tags: z.array(reviewQueueTagSchema),
+  proposals: z.array(reviewQueueProposalSchema),
+  total: z.number(),
+  offset: z.number(),
+  limit: z.number(),
+  undecided: z.number(),
+  decided: z.number(),
+  proposals_undecided: z.number(),
+});
+export type ReviewQueue = z.infer<typeof reviewQueueSchema>;
+
+/** `POST /rounds/{id}/bulk-decide`: the round, and how the draft sorted its tags. */
+export const bulkDraftResultSchema = z.object({ round: roundStateSchema, counts: z.record(z.string(), z.number()) });
+
 /** `GET /rounds/{id}/config`: the generated round config, as text. */
 export const roundConfigTextSchema = z.object({ config: z.string() });
 

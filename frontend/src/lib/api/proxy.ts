@@ -41,6 +41,9 @@ const CONCEPT_LEVEL = /^(services|categories|specialities|tags)$/;
 // concept can carry a temporary id like "skillsfuture:501" or "new:category:<hash>".
 const CONCEPT_ID = /^[\w:.-]{1,200}$/;
 const ROUND_ID = /^[a-z0-9][a-z0-9_-]{0,63}$/;
+const ROUND_ACTIONS = new Set(["run", "apply", "integrate", "decisions", "bulk-decide"]);
+// Actions that only say "go": they carry no body to check.
+const BARE_ROUND_ACTIONS = new Set(["run", "apply", "integrate"]);
 // An uploaded file's own name; the API checks its type, and it is forwarded percent-encoded as one path segment.
 const ROUND_FILE = /^(?!\.)[^/\\\x00-\x1f\x7f]{1,200}$/;
 const LOOKUP_TERM_MAX = 200;
@@ -71,6 +74,26 @@ function requireRunAndDataset(searchParams: URLSearchParams): { run_id: string; 
   return { run_id: runId, dataset };
 }
 
+/** The queue's own parameters, or null if one is malformed: the API would refuse it, so don't forward it. */
+function reviewUrl(path: string, searchParams: URLSearchParams): string | null {
+  const forwarded = new URLSearchParams();
+  const state = searchParams.get("state");
+  if (state !== null) {
+    if (!["undecided", "decided", "all"].includes(state)) return null;
+    forwarded.set("state", state);
+  }
+  for (const key of ["offset", "limit"]) {
+    const value = searchParams.get(key);
+    if (value !== null) {
+      if (!LIMIT.test(value)) return null;
+      forwarded.set(key, value);
+    }
+  }
+  const q = searchParams.get("q");
+  if (q) forwarded.set("q", q);
+  return forwarded.size > 0 ? `${path}?${forwarded}` : path;
+}
+
 /**
  * `/rounds` routes. Reads are always forwarded; anything that changes a round needs the same switch as
  * creating a run, since it can start stages that write files and, if the server allows it, spend LLM credits.
@@ -89,6 +112,7 @@ function resolveRound(
     if (id === undefined || id === "options") url = action === undefined ? `${root}${id ? "/options" : ""}` : null;
     else if (action === undefined) url = `${root}/${id}`;
     else if (action === "config" && !encoded) url = `${root}/${id}/config`;
+    else if (action === "review" && !encoded) url = reviewUrl(`${root}/${id}/review`, searchParams);
     else if (action === "files" && !encoded) url = `${root}/${id}/files`;
     else if (action === "files" && encoded) {
       const sheet = searchParams.get("sheet");
@@ -96,7 +120,9 @@ function resolveRound(
       url = `${root}/${id}/files/${encodeURIComponent(encoded)}${query}`;
     }
   } else if (id !== undefined && id !== "options") {
-    if (method === "POST" && action === "run") url = `${root}/${id}/run`;
+    if (method === "POST" && action !== undefined && ROUND_ACTIONS.has(action) && !encoded) {
+      url = `${root}/${id}/${action}`;
+    }
     else if (method === "PUT" && action === "config" && !encoded) url = `${root}/${id}/config`;
     else if ((method === "PUT" || method === "DELETE") && action === "files" && encoded) {
       url = `${root}/${id}/files/${encodeURIComponent(encoded)}`;
@@ -289,6 +315,6 @@ export function decideProxyRequest(
   const allowed = resolveUpstream(method, segments, searchParams, env);
   if (!allowed.ok || method === "GET") return allowed;
   const isUpload = method === "PUT" && segments[2] === "files";
-  const isBare = method === "DELETE" || (segments[0] === "rounds" && segments[2] === "run");
+  const isBare = method === "DELETE" || (segments[0] === "rounds" && BARE_ROUND_ACTIONS.has(segments[2]));
   return checkWriteRequest(headers, isUpload ? "binary" : isBare ? "none" : "json") ?? allowed;
 }

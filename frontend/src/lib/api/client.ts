@@ -8,12 +8,16 @@
  */
 import type { z } from "zod";
 
+import type { DecisionInput } from "@/lib/review";
+
 import {
+  bulkDraftResultSchema,
   type ConceptLevel,
   createRunResponseSchema,
   metricCatalogueSchema,
   type PipelineConfig,
   proposalReviewReportSchema,
+  reviewQueueSchema,
   roundConfigTextSchema,
   roundOptionsSchema,
   roundStateSchema,
@@ -77,6 +81,15 @@ export type TaxonomySource = { runId: string; dataset: string };
 /** One side of a comparison: a stored run, and which of its taxonomies (dataset name) when it scored several. */
 export type RunSubject = { runId: string; subject?: string | null };
 
+export type ReviewQuery = { state: "undecided" | "decided" | "all"; q?: string; offset: number; limit: number };
+
+export type DecisionSubmission = {
+  reviewer: string;
+  decisions: DecisionInput[];
+  clear_tags?: { source_dataset: string; tag_id: string }[];
+  clear_proposals?: string[];
+};
+
 /** A request whose success has no body (204), so there is nothing to validate. */
 async function requestNoContent(path: string, init: RequestInit): Promise<void> {
   const response = await fetch(`${API_BASE}${path}`, init);
@@ -95,6 +108,21 @@ export const api = {
   getRoundConfigText: (roundId: string) => request(`${roundPath(roundId)}/config`, roundConfigTextSchema),
   runRound: (roundId: string) => request(`${roundPath(roundId)}/run`, roundStateSchema, { method: "POST" }),
   deleteRound: (roundId: string) => requestNoContent(roundPath(roundId), { method: "DELETE" }),
+  getReview: (roundId: string, options: ReviewQuery) => {
+    const params = new URLSearchParams({
+      state: options.state, offset: String(options.offset), limit: String(options.limit),
+    });
+    if (options.q) params.set("q", options.q);
+    return request(`${roundPath(roundId)}/review?${params}`, reviewQueueSchema);
+  },
+  saveDecisions: (roundId: string, body: DecisionSubmission) => request(
+    `${roundPath(roundId)}/decisions`, roundStateSchema, { method: "POST", body: JSON.stringify(body) },
+  ),
+  draftDecisions: (roundId: string, body: { reviewer: string; create_below: number; reuse_above: number }) => request(
+    `${roundPath(roundId)}/bulk-decide`, bulkDraftResultSchema, { method: "POST", body: JSON.stringify(body) },
+  ),
+  applyDecisions: (roundId: string) => request(`${roundPath(roundId)}/apply`, roundStateSchema, { method: "POST" }),
+  integrateRound: (roundId: string) => request(`${roundPath(roundId)}/integrate`, roundStateSchema, { method: "POST" }),
   // Fetch saved screening evidence through the same validated boundary as other dashboard data.
   listProposals: (mergeRun: string, options: { level?: "category" | "speciality"; offset?: number; limit?: number } = {}) => {
     const params = new URLSearchParams({ merge_run: mergeRun });

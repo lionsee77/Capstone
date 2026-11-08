@@ -10,6 +10,7 @@ import yaml
 
 from taxonomy_pipeline.app import rounds
 from taxonomy_pipeline.config import load_config
+from taxonomy_pipeline.enrichment.models import PlacementPath, ReviewDecision, SourceTagRef
 from taxonomy_pipeline.models import RoundSettings
 from taxonomy_pipeline.taxonomy.flat_import import SourceMapping
 from tests.conftest import FIXTURES
@@ -552,3 +553,265 @@ def test_listing_shows_newest_first_and_skips_unreadable_state(roots: rounds.Rou
     (roots.rounds / "broken" / "round.json").write_text("{", "utf-8")
 
     assert [state.round_id for state in rounds.list_rounds(roots)] == ["newer", "older"]
+
+
+AMBIGUOUS_CSV = (
+    "Sector,Role,Skill,Desc\n"
+    "Marketing,Brand Strategy,Underwater Welding,\n"
+    "Marketing,Brand Strategy,advisory services,Close to the existing tag 'advisory'\n"
+    "Marketing,Brand Strategy,tax advisory plan,\n"
+)
+
+
+@pytest.fixture
+def in_review(roots: rounds.RoundRoots, isolated_db: Path) -> str:
+    """A round whose merge preview is holding tags for a person."""
+    rounds.create_round(roots, "held", "base")
+    rounds.add_file(roots, "held", "flat.csv", AMBIGUOUS_CSV.encode())
+    rounds.configure_round(roots, "held", _mapping(), RoundSettings())
+    state = _run(roots, "held")
+    assert state.status == "review", [(stage.id, stage.status, stage.error) for stage in state.stages]
+    return "held"
+
+
+def _create(item: object, reason: str = "Reviewed") -> ReviewDecision:
+    place = item.placements[0]
+    return ReviewDecision(
+        members=[item.source], action="create", reason=reason,
+        approved_paths=[PlacementPath(service=place.service, category=place.category, speciality=place.speciality)],
+    )
+
+
+def _decide_all(roots: rounds.RoundRoots, round_id: str) -> None:
+    queue = rounds.get_review(roots, round_id, limit=200)
+    rounds.save_decisions(roots, round_id, "Pat", [_create(item) for item in queue.tags])
+    _, stages = rounds.start_apply(roots, round_id)
+    rounds.run_stages(roots, round_id, stages)
+
+
+def test_the_queue_lists_held_tags_with_their_reason_placements_and_matches(
+    roots: rounds.RoundRoots, in_review: str,
+) -> None:
+    queue = rounds.get_review(roots, in_review)
+
+    assert queue.total == queue.undecided == rounds.get_round(roots, in_review).pending_sources
+    item = next(tag for tag in queue.tags if tag.tag == "advisory services")
+    assert item.status == "pending"
+    assert item.reason
+    assert "producer_flagged" in item.reason_codes
+    assert item.placements[0].service == "Industry"
+    assert item.closest
+    assert item.decision is None
+
+
+def test_the_queue_offers_a_baseline_tag_to_reuse(roots: rounds.RoundRoots, in_review: str) -> None:
+    item = next(tag for tag in rounds.get_review(roots, in_review).tags if tag.tag == "advisory services")
+
+    assert {(match.name, match.tag_id) for match in item.closest if match.level == "tags"} == {("advisory", 103)}
+
+
+def test_the_queue_pages_filters_and_searches(roots: rounds.RoundRoots, in_review: str) -> None:
+    total = rounds.get_review(roots, in_review).total
+
+    page = rounds.get_review(roots, in_review, limit=1, offset=1)
+    assert (len(page.tags), page.total, page.offset) == (1, total, 1)
+    assert [tag.tag for tag in rounds.get_review(roots, in_review, query="ADVISORY SER").tags] == ["advisory services"]
+    assert rounds.get_review(roots, in_review, state="decided").total == 0
+    with pytest.raises(ValueError):
+        rounds.get_review(roots, in_review, state="other")
+    with pytest.raises(ValueError):
+        rounds.get_review(roots, in_review, limit=201)
+
+
+def test_a_round_without_a_preview_has_no_queue(roots: rounds.RoundRoots) -> None:
+    rounds.create_round(roots, "r1", "base")
+
+    with pytest.raises(rounds.RoundConflict, match="no review queue"):
+        rounds.get_review(roots, "r1")
+
+
+def test_a_saved_decision_moves_the_tag_and_needs_applying(roots: rounds.RoundRoots, in_review: str) -> None:
+    before = rounds.get_review(roots, in_review)
+    item = before.tags[0]
+
+    state = rounds.save_decisions(roots, in_review, " Pat ", [_create(item, "Clearly new")])
+
+    assert (state.reviewer, state.decisions_applied, state.status) == ("Pat", False, "review")
+    after = rounds.get_review(roots, in_review, state="decided")
+    assert [tag.tag for tag in after.tags] == [item.tag]
+    assert after.tags[0].decision.reason == "Clearly new"
+    assert (after.decided, after.undecided) == (1, before.undecided - 1)
+
+
+def test_a_new_decision_replaces_the_old_and_clearing_takes_it_back(
+    roots: rounds.RoundRoots, in_review: str,
+) -> None:
+    item = rounds.get_review(roots, in_review).tags[0]
+    rounds.save_decisions(roots, in_review, "Pat", [_create(item, "First")])
+
+    later = ReviewDecision(members=[item.source], action="defer", reason="Later")
+    rounds.save_decisions(roots, in_review, "Pat", [later])
+    [saved] = rounds.get_review(roots, in_review, state="decided").tags
+    assert saved.decision.action == "defer"
+
+    rounds.save_decisions(roots, in_review, "Pat", [], clear_tags=[item.source])
+    assert rounds.get_review(roots, in_review, state="decided").total == 0
+
+
+@pytest.mark.parametrize("reviewer", ["", "   "])
+def test_a_decision_needs_a_named_reviewer(roots: rounds.RoundRoots, in_review: str, reviewer: str) -> None:
+    item = rounds.get_review(roots, in_review).tags[0]
+
+    with pytest.raises(ValueError, match="reviewer"):
+        rounds.save_decisions(roots, in_review, reviewer, [_create(item)])
+
+
+def test_a_decision_on_something_outside_the_queue_is_refused(roots: rounds.RoundRoots, in_review: str) -> None:
+    stranger = SourceTagRef(source_dataset="demo", tag_id="999999")
+
+    with pytest.raises(ValueError, match="isn't in this round"):
+        rounds.save_decisions(roots, in_review, "Pat", [ReviewDecision(members=[stranger], action="defer", reason="x")])
+    with pytest.raises(ValueError, match="isn't in this round"):
+        rounds.save_decisions(roots, in_review, "Pat", [ReviewDecision(proposal_id="nope", action="defer", reason="x")])
+
+
+def test_a_path_the_tag_was_not_offered_is_refused(roots: rounds.RoundRoots, in_review: str) -> None:
+    item = rounds.get_review(roots, in_review).tags[0]
+    invented = PlacementPath(service="Others", category="Made Up", speciality="Nowhere")
+
+    with pytest.raises(ValueError, match="proposed placements"):
+        rounds.save_decisions(roots, in_review, "Pat", [ReviewDecision(
+            members=[item.source], action="create", reason="x", approved_paths=[invented],
+        )])
+
+
+def test_applying_runs_the_decisions_through_merge_preview_and_empties_the_queue(
+    roots: rounds.RoundRoots, in_review: str,
+) -> None:
+    _decide_all(roots, in_review)
+
+    state = rounds.get_round(roots, in_review)
+    assert (state.pending_sources, state.decisions_applied, state.status) == (0, True, "ready_to_integrate")
+    assert state.merge_counts["added_tags"] >= 2
+    assert rounds.get_review(roots, in_review).undecided == 0
+    resolution = json.loads((roots.merge_runs / in_review / "resolution.json").read_text("utf-8"))
+    assert resolution["counts"]["pending_sources"] == 0
+    change_log = (roots.merge_runs / in_review / "change_log.jsonl").read_text("utf-8")
+    assert '"actor":"Pat"' in change_log.replace(" ", "")
+
+
+def test_a_decision_merge_preview_refuses_fails_the_stage_and_keeps_the_work(
+    roots: rounds.RoundRoots, in_review: str,
+) -> None:
+    item = rounds.get_review(roots, in_review).tags[0]
+    place = item.placements[0]
+    rounds.save_decisions(roots, in_review, "Pat", [ReviewDecision(
+        members=[item.source], action="reuse", existing_tag_id=424242, reason="Wrong target",
+        approved_paths=[PlacementPath(service=place.service, category=place.category, speciality=place.speciality)],
+    )])
+
+    _, stages = rounds.start_apply(roots, in_review)
+    rounds.run_stages(roots, in_review, stages)
+
+    state = rounds.get_round(roots, in_review)
+    assert state.status == "failed"
+    assert "424242" in next(stage for stage in state.stages if stage.id == "merge").error
+    assert rounds.get_review(roots, in_review, state="decided").total == 1
+    rounds.save_decisions(roots, in_review, "Pat", [_create(item)])
+    _, stages = rounds.start_apply(roots, in_review)
+    rounds.run_stages(roots, in_review, stages)
+    assert rounds.get_round(roots, in_review).status != "failed"
+
+
+def test_changing_the_source_during_review_discards_the_decisions_made_on_it(
+    roots: rounds.RoundRoots, in_review: str,
+) -> None:
+    rounds.save_decisions(roots, in_review, "Pat", [_create(rounds.get_review(roots, in_review).tags[0])])
+
+    rounds.add_file(roots, in_review, "flat.csv", AMBIGUOUS_CSV.replace("Underwater", "Overwater").encode())
+
+    assert rounds.get_round(roots, in_review).status == "setup"
+    assert not (roots.rounds / in_review / "decisions.json").exists()
+    with pytest.raises(rounds.RoundConflict, match="no review queue"):
+        rounds.get_review(roots, in_review)
+
+
+def test_uploading_the_same_source_during_review_keeps_the_decisions(roots: rounds.RoundRoots, in_review: str) -> None:
+    rounds.save_decisions(roots, in_review, "Pat", [_create(rounds.get_review(roots, in_review).tags[0])])
+
+    rounds.add_file(roots, in_review, "flat.csv", AMBIGUOUS_CSV.encode())
+
+    assert rounds.get_review(roots, in_review, state="decided").total == 1
+
+
+def test_integrating_is_refused_while_anything_is_held_or_unapplied(roots: rounds.RoundRoots, in_review: str) -> None:
+    with pytest.raises(rounds.RoundConflict, match="need a decision"):
+        rounds.start_integrate(roots, in_review)
+
+    item = rounds.get_review(roots, in_review).tags[0]
+    rounds.save_decisions(roots, in_review, "Pat", [_create(item)])
+
+    with pytest.raises(rounds.RoundConflict, match="apply your saved decisions"):
+        rounds.start_integrate(roots, in_review)
+
+
+def test_integrating_writes_a_snapshot_scores_it_and_chains_into_the_next_round(
+    roots: rounds.RoundRoots, in_review: str,
+) -> None:
+    _decide_all(roots, in_review)
+
+    _, stages = rounds.start_integrate(roots, in_review)
+    assert stages == ["integrate", "score_enriched"]
+    rounds.run_stages(roots, in_review, stages)
+
+    state = rounds.get_round(roots, in_review)
+    assert state.status == "complete", [(stage.id, stage.error) for stage in state.stages]
+    assert state.enriched_run_id and state.enriched_run_id != state.score_run_id
+    snapshot = roots.integrations / in_review
+    assert (snapshot / "additions.sql").is_file()
+    assert "advisory services" in (snapshot / "additions.sql").read_text("utf-8")
+    assert in_review in rounds.round_options(roots).snapshots
+    rounds.create_round(roots, "next", in_review)
+
+    with pytest.raises(rounds.RoundConflict, match="already complete"):
+        rounds.start_integrate(roots, in_review)
+    with pytest.raises(rounds.RoundConflict, match="already integrated"):
+        rounds.save_decisions(roots, in_review, "Pat", [])
+
+
+def test_deferred_tags_stay_out_of_the_snapshot_without_holding_it_up(roots: rounds.RoundRoots, in_review: str) -> None:
+    queue = rounds.get_review(roots, in_review, limit=200)
+    rounds.save_decisions(roots, in_review, "Pat", [
+        ReviewDecision(members=[item.source], action="defer", reason="Later")
+        if item.tag == "advisory services" else _create(item)
+        for item in queue.tags
+    ])
+    _, stages = rounds.start_apply(roots, in_review)
+    rounds.run_stages(roots, in_review, stages)
+    _, stages = rounds.start_integrate(roots, in_review)
+    rounds.run_stages(roots, in_review, stages)
+
+    assert rounds.get_round(roots, in_review).status == "complete"
+    assert "advisory services" not in (roots.integrations / in_review / "additions.sql").read_text("utf-8")
+
+
+def test_drafting_saves_clear_cut_decisions_for_a_person_to_change(roots: rounds.RoundRoots, in_review: str) -> None:
+    state, counts = rounds.draft_decisions(roots, in_review, "Pat", create_below=0.99, reuse_above=None)
+
+    assert counts["create"] >= 1
+    assert (state.decisions_applied, state.reviewer) == (False, "Pat")
+    drafted = rounds.get_review(roots, in_review, state="decided").tags
+    assert drafted[0].decision.reason.startswith("Bulk:")
+
+
+def test_drafting_refuses_to_run_over_unapplied_decisions(roots: rounds.RoundRoots, in_review: str) -> None:
+    item = rounds.get_review(roots, in_review).tags[0]
+    rounds.save_decisions(roots, in_review, "Pat", [_create(item)])
+
+    with pytest.raises(rounds.RoundConflict, match="apply your saved"):
+        rounds.draft_decisions(roots, in_review, "Pat", create_below=0.5, reuse_above=None)
+
+
+def test_drafting_needs_a_threshold(roots: rounds.RoundRoots, in_review: str) -> None:
+    with pytest.raises(ValueError, match="create_below"):
+        rounds.draft_decisions(roots, in_review, "Pat", create_below=None, reuse_above=None)
