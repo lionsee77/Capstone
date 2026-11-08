@@ -25,6 +25,7 @@ import {
   buildMapping,
   buildSettings,
   draftFromMapping,
+  draftKey,
   draftFromSettings,
   droppedFiles,
   type FilterDraft,
@@ -226,7 +227,8 @@ function ConfigureRound({ round, files, options }: { round: RoundState; files: R
   const configure = useConfigureRound(round.round_id);
   const run = useRunRound(round.round_id);
 
-  const readable = files.filter((file) => !file.error);
+  // A workbook with a bad first sheet can still have a good one, so it stays choosable; a CSV that can't be read can't.
+  const readable = files.filter((file) => !file.error || file.sheets.length > 0);
   const source = mapping.source || "";
   const { data: chosen } = useRoundFile(round.round_id, source || null, mapping.sheet || null);
   const fallback = useMemo(() => files.find((file) => file.name === source), [files, source]);
@@ -234,6 +236,10 @@ function ConfigureRound({ round, files, options }: { round: RoundState; files: R
   const problems = mappingProblems(mapping);
   const update = (patch: Partial<MappingDraft>) => setMapping((current) => ({ ...current, ...patch }));
   const saved = round.status === "ready" && !configure.isPending;
+  // What's on screen must be what would run: change anything after importing and it has to be imported again.
+  const currentKey = draftKey(mapping, settings);
+  const [importedKey, setImportedKey] = useState(() => draftKey(draftFromMapping(round.mapping), draftFromSettings(round.settings)));
+  const upToDate = saved && currentKey === importedKey;
 
   function chooseSource(name: string) {
     update({
@@ -269,7 +275,12 @@ function ConfigureRound({ round, files, options }: { round: RoundState; files: R
           </Field>
         </div>
 
-        {table && (
+        {table?.error && (
+          <Notice title="This file or sheet can't be read" tone="error">
+            {table.error}
+          </Notice>
+        )}
+        {table && !table.error && (
           <div className="flex flex-col gap-4">
             <LevelFields label="Category" hint="The broad group each row belongs to." value={mapping.category} onChange={(category) => update({ category })} table={table} files={readable} />
             <LevelFields label="Speciality" hint="The role or area under a category." value={mapping.speciality} onChange={(speciality) => update({ speciality })} table={table} files={readable} />
@@ -326,9 +337,12 @@ function ConfigureRound({ round, files, options }: { round: RoundState; files: R
         )}
         <div>
           <Button
-            variant={saved ? "outline" : "default"}
+            variant={upToDate ? "outline" : "default"}
             disabled={problems.length > 0 || configure.isPending}
-            onClick={() => configure.mutate({ mapping: buildMapping(mapping), settings: buildSettings(settings) })}
+            onClick={() => configure.mutate(
+              { mapping: buildMapping(mapping), settings: buildSettings(settings) },
+              { onSuccess: () => setImportedKey(currentKey) },
+            )}
           >
             {configure.isPending ? "Importing…" : saved ? "Import again with these settings" : "Import the source"}
           </Button>
@@ -338,7 +352,12 @@ function ConfigureRound({ round, files, options }: { round: RoundState; files: R
             {configure.error.message}
           </Notice>
         )}
-        {saved && (
+        {saved && !upToDate && (
+          <Notice title="These settings aren't imported yet">
+            The last import used different settings. Import again before running, so the round runs what is shown here.
+          </Notice>
+        )}
+        {upToDate && (
           <Notice title="Imported">
             <p>
               {round.import_counts.categories ?? 0} categories, {round.import_counts.specialities ?? 0} specialities and{" "}
@@ -351,7 +370,7 @@ function ConfigureRound({ round, files, options }: { round: RoundState; files: R
             )}
           </Notice>
         )}
-        {saved && (
+        {upToDate && (
           <div>
             <Button
               disabled={run.isPending}
@@ -443,7 +462,7 @@ function Filters({ filters, table, onChange }: { filters: FilterDraft[]; table: 
           <Input
             aria-label={`Values for filter ${index + 1}`}
             className="max-w-56"
-            placeholder={sampleText(table, filter.column) || "Value, or several with commas"}
+            placeholder={sampleText(table, filter.column) || 'Value, several with commas, "a, b" for one with a comma'}
             value={filter.values}
             onChange={(e) => change(index, { values: e.target.value })}
           />

@@ -85,8 +85,15 @@ export function mappingProblems(draft: MappingDraft): string[] {
   return [...new Set(problems)];
 }
 
+/** Comma-separated values, where a value holding a comma is written in double quotes. */
 function filterValues(values: string): string[] {
-  return values.split(",").map((value) => value.trim()).filter(Boolean);
+  return (values.match(/"[^"]*"|[^,]+/g) ?? [])
+    .map((value) => value.trim().replace(/^"(.*)"$/, "$1").trim())
+    .filter(Boolean);
+}
+
+function filterText(values: string | string[]): string {
+  return (Array.isArray(values) ? values : [values]).map((value) => (value.includes(",") ? `"${value}"` : value)).join(", ");
 }
 
 function levelSpec(spec: LevelDraft): string | { column: string; prefix: number; labels: string } {
@@ -142,7 +149,7 @@ export function draftFromMapping(saved: Record<string, unknown> | null): Mapping
     serviceId: saved.service_id === undefined || saved.service_id === null ? "" : String(saved.service_id),
     serviceColumn,
     filters: Object.entries(filters).map(([column, values]) => ({
-      column, values: Array.isArray(values) ? values.join(", ") : values,
+      column, values: filterText(values),
     })),
     tablePrefix: typeof saved.table_prefix === "string" ? saved.table_prefix : "",
   };
@@ -187,6 +194,11 @@ export function draftFromSettings(saved: RoundSettings): SettingsDraft {
   };
 }
 
+/** Identifies what the form holds, to tell whether it's what was last imported. */
+export function draftKey(mapping: MappingDraft, settings: SettingsDraft): string {
+  return JSON.stringify([buildMapping(mapping), buildSettings(settings)]);
+}
+
 /** Everything in a dropped folder, however deep, as flat files. The browser hands entries over in batches. */
 type DroppedEntry = {
   isFile: boolean;
@@ -199,7 +211,8 @@ export async function filesFromEntries(entries: DroppedEntry[]): Promise<File[]>
   const files: File[] = [];
   for (const entry of entries) {
     if (entry.isFile && entry.file) {
-      const read = entry.file;
+      // Bound, because a browser's entry methods throw unless called on the entry itself.
+      const read = entry.file.bind(entry);
       files.push(await new Promise<File>((resolve, reject) => read(resolve, reject)));
     } else if (entry.isDirectory && entry.createReader) {
       const reader = entry.createReader();

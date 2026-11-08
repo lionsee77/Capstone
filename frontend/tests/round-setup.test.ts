@@ -5,6 +5,7 @@ import {
   buildSettings,
   draftFromMapping,
   draftFromSettings,
+  draftKey,
   emptyMapping,
   emptySettings,
   filesFromEntries,
@@ -109,6 +110,20 @@ describe("buildMapping", () => {
     expect(mapping.filters).toEqual({ Kind: ["A", "B"] });
   });
 
+  it("keeps a value holding a comma whole when it is quoted", () => {
+    const mapping = buildMapping({ ...onet(), filters: [{ column: "Field", values: '"Business, Management", Law' }] });
+    expect(mapping.filters).toEqual({ Field: ["Business, Management", "Law"] });
+    const single = buildMapping({ ...onet(), filters: [{ column: "Field", values: '"Business, Management"' }] });
+    expect(single.filters).toEqual({ Field: "Business, Management" });
+  });
+
+  it("writes such a value back with its quotes, so it survives coming back to the form", () => {
+    for (const values of ['"Business, Management", Law', '"Business, Management"']) {
+      const draft = { ...onet(), filters: [{ column: "Field", values }] };
+      expect(buildMapping(draftFromMapping(buildMapping(draft)))).toEqual(buildMapping(draft));
+    }
+  });
+
   it("leaves out what wasn't filled in", () => {
     const mapping = buildMapping({ ...onet(), description: "", tablePrefix: " ", sheet: "" });
     expect(mapping).not.toHaveProperty("table_prefix");
@@ -133,11 +148,33 @@ describe("settings", () => {
   });
 });
 
+describe("draftKey", () => {
+  it("is the same for a saved round read back as for what was imported", () => {
+    const settings = { ...emptySettings(), threshold: "75" };
+    const saved = draftKey(draftFromMapping(buildMapping(onet())), draftFromSettings(buildSettings(settings)));
+    expect(saved).toBe(draftKey(onet(), settings));
+  });
+
+  it("changes when a setting or the mapping does, so an old config can't run by mistake", () => {
+    const imported = draftKey(onet(), emptySettings());
+    expect(draftKey(onet(), { ...emptySettings(), judge: true })).not.toBe(imported);
+    expect(draftKey({ ...onet(), serviceId: "3" }, emptySettings())).not.toBe(imported);
+  });
+});
+
 describe("filesFromEntries", () => {
   const file = (name: string) => new File(["x"], name);
-  const fileEntry = (name: string) => ({
-    isFile: true, isDirectory: false, file: (done: (value: File) => void) => done(file(name)),
-  });
+  /** Like a browser's entry, whose `file` method throws unless it's called on the entry itself. */
+  class FileEntry {
+    isFile = true;
+    isDirectory = false;
+    constructor(private readonly filename: string) {}
+    file(done: (value: File) => void) {
+      if (!(this instanceof FileEntry)) throw new TypeError("Illegal invocation");
+      done(file(this.filename));
+    }
+  }
+  const fileEntry = (name: string) => new FileEntry(name);
   const folder = (batches: ReturnType<typeof fileEntry>[][]) => ({
     isFile: false,
     isDirectory: true,
