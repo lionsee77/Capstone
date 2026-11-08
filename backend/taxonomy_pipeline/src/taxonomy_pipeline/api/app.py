@@ -1,6 +1,6 @@
 """FastAPI app: a thin HTTP layer over the `app/` use cases (`app.scoring` for metrics and runs,
 `app.comparison` for comparing two runs, `app.browse` for taxonomy search, `app.enrichment` for proposals,
-`app.lineage` for the enrichment lineage, `app.lookup` for the tag lookup).
+`app.lineage` for the enrichment lineage, `app.lookup` for the tag lookup, `app.synonyms` for synonyms).
 
 A run is a batch job, not a request/response - `POST /runs` validates the
 config, schedules the work as a background task, and returns immediately
@@ -33,6 +33,7 @@ from .lineage import router as lineage_router
 from .lookup import router as lookup_router
 from .proposals import router as proposals_router
 from .security import disallowed_paths, require_token
+from .synonyms import router as synonyms_router
 
 app = FastAPI(
     title="Taxonomy Validation Pipeline",
@@ -44,6 +45,7 @@ app.include_router(proposals_router)
 app.include_router(changes_router)
 app.include_router(lineage_router)
 app.include_router(lookup_router)
+app.include_router(synonyms_router)
 
 
 def _require_absolute_dataset_paths(config: PipelineConfig) -> None:
