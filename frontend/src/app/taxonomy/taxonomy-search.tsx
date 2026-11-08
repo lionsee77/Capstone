@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 
 import { Notice } from "@/components/layout/page-header";
 import { LevelTag } from "@/components/level-tag";
@@ -15,22 +15,11 @@ import type { TaxonomySource } from "@/lib/api/client";
 import { hasOlderRuns, RUNS_PAGE_SIZE, useLoadOlderRuns, useRuns, useRunSummary, useTaxonomySearch } from "@/lib/api/queries";
 import { type ConceptLevel, isTaxonomyDataset } from "@/lib/api/schemas";
 import { formatDateTime, shortRunId } from "@/lib/format";
+import { useDebouncedValue } from "@/lib/use-debounced-value";
 
 const LEVELS: ConceptLevel[] = ["services", "categories", "specialities", "tags"];
 const ALL_LEVELS = "all" as const;
 const SEARCH_DEBOUNCE_MS = 300;
-
-/** Delays reacting to a fast-changing value (typing) until it's been still
- * for `delayMs` - avoids firing a new search, and a new backend dataset
- * reload, on every keystroke. */
-function useDebouncedValue<T>(value: T, delayMs: number): T {
-  const [debounced, setDebounced] = useState(value);
-  useEffect(() => {
-    const timer = setTimeout(() => setDebounced(value), delayMs);
-    return () => clearTimeout(timer);
-  }, [value, delayMs]);
-  return debounced;
-}
 
 /** Picks a finished run and a dataset within it - the (run_id, dataset) pair
  * every /taxonomy endpoint needs, since nothing keeps a dataset loaded

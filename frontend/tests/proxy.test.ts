@@ -40,6 +40,21 @@ describe("pipeline proxy allowlist", () => {
 
   const runAndDataset = "run_id=3f2a9c0e&dataset=original";
 
+  it("forwards a tag lookup with only the parameters the dashboard sends", () => {
+    expect(resolve("GET", "lookup", "q=Tax+%26+Audit&level=tags&semantic=true&snapshot=other&limit=5")).toEqual({
+      ok: true,
+      url: "http://pipeline:8000/lookup?q=Tax+%26+Audit&level=tags&semantic=true",
+    });
+  });
+
+  it("refuses a tag lookup with a missing term or malformed parameters", () => {
+    for (const query of ["", "q=", `q=${"x".repeat(201)}`, "q=tax&level=industries", "q=tax&semantic=yes"]) {
+      expect(resolve("GET", "lookup", query)).toMatchObject({ ok: false, status: 404 });
+    }
+    expect(resolve("GET", "lookup/extra", "q=tax")).toMatchObject({ ok: false, status: 404 });
+    expect(resolve("POST", "lookup", "q=tax")).toMatchObject({ ok: false, status: 404 });
+  });
+
   it("forwards a taxonomy search with the identity it requires", () => {
     expect(resolve("GET", "taxonomy/search", runAndDataset)).toEqual({
       ok: true,

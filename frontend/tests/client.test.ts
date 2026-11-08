@@ -90,6 +90,17 @@ describe("api client", () => {
     );
   });
 
+  it("builds a tag lookup request, encoding the term and omitting unset options", async () => {
+    const body = { query: "Tax & Audit", snapshot: "r1", exists: false, exact: [], near: [] };
+    const plain = mockFetch(200, body);
+    await api.lookupTerm("Tax & Audit");
+    expect(plain).toHaveBeenCalledWith("/api/pipeline/lookup?q=Tax+%26+Audit", expect.anything());
+
+    const filtered = mockFetch(200, body);
+    await api.lookupTerm("tax", { level: "tags", semantic: true });
+    expect(filtered).toHaveBeenCalledWith("/api/pipeline/lookup?q=tax&level=tags&semantic=true", expect.anything());
+  });
+
   it("encodes a temporary proposal id when fetching concept detail", async () => {
     const fetchMock = mockFetch(200, {
       id: "skillsfuture:501", name: "x", level: "categories", dataset: "skillsfuture", paths: [], children: [], tags: [],
