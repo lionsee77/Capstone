@@ -342,8 +342,8 @@ def build_parser() -> argparse.ArgumentParser:
     _add_dataset_args(case_b)
     case_b.add_argument("--report", default="report.json", help=report_help)
     case_b.add_argument("--provider", help="source provider adding each tag's context (default: tag_context)")
-    case_b.add_argument("--context", "--unique", dest="context",
-                        help="required tag-context JSON written by the source generator/importer")
+    case_b.add_argument("--context", "--unique", dest="context", required=True,
+                        help="JSON from the SkillsFuture generator or import-source (required)")
     case_b.add_argument("--output", default="case_b_output.json", help="JSON output; a CSV is written next to it")
     case_b.add_argument("--checkpoint", help="checkpoint file for resuming after a failed run")
     case_b.add_argument("--batch-size", type=int, default=5)

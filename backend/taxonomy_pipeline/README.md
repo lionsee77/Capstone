@@ -61,6 +61,7 @@ taxonomy_pipeline/
 │   ├── providers/                    # what is specific to one external source
 │   │   ├── base.py                   #   SourceProvider ABC: per-tag context and display name for Case B
 │   │   ├── registry.py               #   PROVIDERS by name; `case-b --provider`
+│   │   ├── models.py                 #   validated context snapshot and content hash
 │   │   └── tag_context.py            #   any `import-source` source: context from its <name>_tag_context.json
 │   ├── enrichment/                   # Case A/B producers and the merge stages (see "Classification workflow")
 │   │   ├── models.py                 #   ClassificationOutput contract + every stage's report model
@@ -322,6 +323,14 @@ OPENAI_API_KEY=your-openai-api-key
 OPENAI_MODEL=gpt-4o-mini
 ```
 
+`--context` is required and checked before loading datasets. Its `source` must
+equal `--incoming`; both supported generators write that metadata. Any context
+title supplied for an incoming tag must match its taxonomy title (ignoring
+case and whitespace), otherwise the run stops before API calls. Missing context
+coverage warns and falls back to tag names. Description-only legacy context
+also warns when titles cannot be checked; it cannot establish ID/title alignment.
+The provider reads one snapshot so validation, prompt data and hashing agree.
+
 Options: `--batch-size` (default 5), `--model`, `--debug-response` (also
 shows the endpoint, model and each raw response; Case B logs its progress to
 the `taxonomy_pipeline.enrichment.case_b` logger, which the CLI prints),
@@ -337,6 +346,10 @@ to reclassify those tags. Each record also carries an `action`:
 `assign_existing`, `propose_new_speciality` or `propose_new_category`.
 The checkpoint also records `context_schema_version`; checkpoints made before
 the corrected skill-context mapping are rejected instead of reusing old proposals.
+It additionally records the exact context file's SHA-256, provider and source
+display name. Editing the context (including metadata) rejects an old checkpoint
+before model initialization. Older checkpoints lacking these fields must be
+restarted with a new checkpoint path or deliberately removed after inspection.
 
 Each batch makes at most three API attempts, with SDK retries disabled on the
 Case B client built by the pipeline. Injected clients keep their own settings;

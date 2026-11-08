@@ -27,6 +27,5 @@ def test_a_provider_without_extra_data_needs_only_a_name_and_its_context_loader(
 
     provider = Plain()
     contexts = provider.load_tag_context(None)
-    assert provider.default_context_path() is None
     assert provider.context_for(contexts, "1") == {"note": "known"}
     assert provider.context_for(contexts, "2") == {}

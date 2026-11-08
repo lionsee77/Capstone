@@ -42,6 +42,12 @@ This reads the workbooks and writes `skillsfuture/skillsfuture_taxonomy.sql`
 and `skillsfuture/skillsfuture_tag_context.json` together. The JSON includes
 each generated tag ID's skill ID, title, description and type, including
 skills without mapped roles. Use files from the same generation run.
+Both files are staged in their destination directories before either is
+replaced. Handled replacement failures roll back to the previous pair; if
+rollback fails, recovery backups are retained and reported. This does not
+provide a two-file atomic transaction across a process or machine crash.
+The generated JSON is gitignored: a fresh clone must run the generator before
+Case B or a golden-run recording. The tracked SQL alone is not sufficient.
 The generator remains standalone and needs only the dependencies above.
 A pipeline regression test checks that the generated tag IDs and titles
 match the JSON read by Case B's generic context provider.

@@ -9,11 +9,13 @@ tag_context --context <file>` for either source.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 from typing import Any, ClassVar
 
-from .base import SourceProvider
+from .base import SourceProvider, require_context
+from .models import TagContext
 
 
 class TagContextProvider(SourceProvider):
@@ -23,22 +25,32 @@ class TagContextProvider(SourceProvider):
     display_name: ClassVar[str] = "incoming source"
 
     def load_tag_context(self, path: str | Path | None) -> dict[str, dict[str, Any]]:
-        return {str(tag_id): dict(context) for tag_id, context in _read(path)["tags"].items()}
+        return _read(path).tags
 
     def source_name(self, path: str | Path | None) -> str:
-        return str(_read(path).get("display_name") or self.display_name)
+        return _read(path).display_name
+
+    def load_context(self, path: str | Path | None, incoming: str) -> TagContext:
+        """Read once so source checks, prompt metadata and checkpoint hash describe the same bytes."""
+        context = _read(path)
+        if context.source != incoming:
+            raise ValueError(f"Context source {context.source!r} does not match incoming dataset {incoming!r}")
+        return context
 
 
-def _read(path: str | Path | None) -> dict[str, Any]:
-    if path is None:
-        raise ValueError("the tag_context provider needs --context: the <name>_tag_context.json import-source wrote")
+def _read(path: str | Path | None) -> TagContext:
+    path = require_context(path)
     if Path(path).suffix.lower() in {".xlsx", ".xlsm"}:
         raise ValueError(
             "--context requires generated tag-context JSON, not a workbook; run the source generator first"
         )
-    data = json.loads(Path(path).read_text(encoding="utf-8"))
+    raw = path.read_bytes()
+    data = json.loads(raw)
     if not isinstance(data, dict) or not isinstance(data.get("tags"), dict):
         raise ValueError(f"{path} is not an import-source tag-context file (expected a 'tags' object)")
     if any(not isinstance(context, dict) for context in data["tags"].values()):
         raise ValueError(f"{path}: each tag context must be an object")
-    return data
+    return TagContext(
+        source=data.get("source", ""), display_name=data.get("display_name") or data.get("source", ""),
+        tags=data["tags"], sha256=hashlib.sha256(raw).hexdigest(),
+    )

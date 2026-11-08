@@ -18,7 +18,9 @@ def _context_file(tmp_path: Path, payload: dict[str, Any]) -> Path:
 
 
 def test_reads_each_tags_context_and_the_sources_display_name(tmp_path: Path) -> None:
-    path = _context_file(tmp_path, {"display_name": "ESCO", "tags": {"3001": {"description": "Query databases"}}})
+    path = _context_file(tmp_path, {
+        "source": "esco", "display_name": "ESCO", "tags": {"3001": {"description": "Query databases"}},
+    })
     provider = get_provider("tag_context")
 
     contexts = provider.load_tag_context(path)
@@ -53,3 +55,19 @@ def test_preserves_rich_context_without_source_specific_parsing(tmp_path: Path) 
 def test_workbook_path_explains_that_generated_json_is_required(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="not a workbook"):
         TagContextProvider().load_tag_context(tmp_path / "skills.xlsx")
+
+
+def test_rejects_another_sources_context(tmp_path: Path) -> None:
+    path = _context_file(tmp_path, {"source": "onet", "tags": {"3001": {"description": "Software"}}})
+    with pytest.raises(ValueError, match="does not match incoming"):
+        TagContextProvider().load_context(path, "skillsfuture")
+
+
+def test_context_hash_identifies_the_exact_bytes_read(tmp_path: Path) -> None:
+    import hashlib
+
+    path = _context_file(tmp_path, {"source": "skillsfuture", "display_name": "SkillsFuture", "tags": {}})
+    snapshot = TagContextProvider().load_context(path, "skillsfuture")
+    assert snapshot.sha256 == hashlib.sha256(path.read_bytes()).hexdigest()
+    assert snapshot.source == "skillsfuture"
+    assert snapshot.display_name == "SkillsFuture"
