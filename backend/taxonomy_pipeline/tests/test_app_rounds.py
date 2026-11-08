@@ -723,6 +723,27 @@ def test_a_decision_merge_preview_refuses_fails_the_stage_and_keeps_the_work(
     assert rounds.get_round(roots, in_review).status != "failed"
 
 
+def test_changing_the_source_during_review_discards_the_decisions_made_on_it(
+    roots: rounds.RoundRoots, in_review: str,
+) -> None:
+    rounds.save_decisions(roots, in_review, "Pat", [_create(rounds.get_review(roots, in_review).tags[0])])
+
+    rounds.add_file(roots, in_review, "flat.csv", AMBIGUOUS_CSV.replace("Underwater", "Overwater").encode())
+
+    assert rounds.get_round(roots, in_review).status == "setup"
+    assert not (roots.rounds / in_review / "decisions.json").exists()
+    with pytest.raises(rounds.RoundConflict, match="no review queue"):
+        rounds.get_review(roots, in_review)
+
+
+def test_uploading_the_same_source_during_review_keeps_the_decisions(roots: rounds.RoundRoots, in_review: str) -> None:
+    rounds.save_decisions(roots, in_review, "Pat", [_create(rounds.get_review(roots, in_review).tags[0])])
+
+    rounds.add_file(roots, in_review, "flat.csv", AMBIGUOUS_CSV.encode())
+
+    assert rounds.get_review(roots, in_review, state="decided").total == 1
+
+
 def test_integrating_is_refused_while_anything_is_held_or_unapplied(roots: rounds.RoundRoots, in_review: str) -> None:
     with pytest.raises(rounds.RoundConflict, match="need a decision"):
         rounds.start_integrate(roots, in_review)
