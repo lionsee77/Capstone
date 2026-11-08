@@ -7,6 +7,7 @@ import { LevelTag } from "@/components/level-tag";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { NativeSelect } from "@/components/ui/native-select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useApplyDecisions, useDraftDecisions, useIntegrateRound, useReviewQueue, useSaveDecisions } from "@/lib/api/queries";
 import type { ReviewQueueProposal, ReviewQueueTag, RoundState } from "@/lib/api/schemas";
@@ -27,7 +28,6 @@ const FILTERS = [
   { id: "decided", label: "Decided" },
   { id: "all", label: "All" },
 ] as const;
-const SELECT_CLASS = "h-8 w-full rounded-lg border border-input bg-transparent px-2 text-sm disabled:opacity-50";
 
 export function ReviewPanel({ round }: { round: RoundState }) {
   const [reviewer, setReviewer] = useState(round.reviewer ?? "");
@@ -128,7 +128,7 @@ export function ReviewPanel({ round }: { round: RoundState }) {
 
           {queue.tags.length > 0 && (
             <div className="flex flex-wrap items-center gap-2 rounded-md border border-border bg-muted/50 p-3">
-              <label className="flex items-center gap-2 text-sm">
+              <label className="flex shrink-0 items-center gap-2 text-sm whitespace-nowrap">
                 <input
                   type="checkbox"
                   checked={selectedTags.length === queue.tags.length}
@@ -333,9 +333,8 @@ function TagCard({
           {tag.placements.length > 0 && (
             <div className="flex flex-col gap-1">
               <Label htmlFor={`place-${tag.source.tag_id}`}>Place it under ({tag.placements.length} proposed)</Label>
-              <select
+              <NativeSelect
                 id={`place-${tag.source.tag_id}`}
-                className={SELECT_CLASS}
                 value={placement}
                 onChange={(e) => setPlacement(Number(e.target.value))}
               >
@@ -344,15 +343,14 @@ function TagCard({
                     {placementLabel(place)}{place.confidence === null ? "" : ` (${place.confidence.toFixed(2)})`}
                   </option>
                 ))}
-              </select>
+              </NativeSelect>
             </div>
           )}
           {candidates.length > 0 && (
             <div className="flex flex-col gap-1">
               <Label htmlFor={`reuse-${tag.source.tag_id}`}>Or map it to an existing tag</Label>
-              <select
+              <NativeSelect
                 id={`reuse-${tag.source.tag_id}`}
-                className={SELECT_CLASS}
                 value={reuseTagId}
                 onChange={(e) => setReuseTagId(Number(e.target.value))}
               >
@@ -361,7 +359,7 @@ function TagCard({
                     {candidate.name} ({candidate.score.toFixed(2)})
                   </option>
                 ))}
-              </select>
+              </NativeSelect>
             </div>
           )}
           <Input aria-label={`Reason for ${tag.tag}`} placeholder="Reason (optional)" value={reason} onChange={(e) => setReason(e.target.value)} />
@@ -408,9 +406,8 @@ function ProposalCard({
           {reusable.length > 0 && (
             <div className="flex flex-col gap-1">
               <Label htmlFor={`concept-${proposal.proposal_id}`}>Existing {proposal.level} it may be</Label>
-              <select
+              <NativeSelect
                 id={`concept-${proposal.proposal_id}`}
-                className={SELECT_CLASS}
                 value={String(conceptId)}
                 onChange={(e) => setConceptId(reusable.find((match) => String(match.id) === e.target.value)?.id ?? undefined)}
               >
@@ -419,7 +416,7 @@ function ProposalCard({
                     {match.path.join(" › ")}{match.same_parent ? "" : " (different parent)"}
                   </option>
                 ))}
-              </select>
+              </NativeSelect>
             </div>
           )}
           <Input aria-label={`Reason for ${proposal.name}`} placeholder="Reason (optional)" value={reason} onChange={(e) => setReason(e.target.value)} />

@@ -244,8 +244,16 @@ def _describe(path: Path, sheet: str | None) -> RoundFile:
         described.sheets = sheet_names(path)
         described.columns, described.row_count, described.samples = inspect_table(path, sheet)
     except (OSError, ValueError, KeyError, zipfile.BadZipFile) as exc:
-        described.error = str(exc)
+        described.error = _read_error(path.name, exc)
     return described
+
+
+def _read_error(name: str, exc: Exception) -> str:
+    """Why a file can't be read, in the words of someone who has to fix it."""
+    if isinstance(exc, UnicodeDecodeError):
+        return (f"can't read a text file as UTF-8 ({name}, or the labels file it uses). Check it's the right file, "
+                "and save a spreadsheet export as \"CSV UTF-8\".")
+    return f"can't read {name}: {exc}"
 
 
 def configure_round(
@@ -294,8 +302,9 @@ def configure_round(
                 mapping_path.unlink(missing_ok=True)
             else:
                 mapping_path.write_bytes(previous_mapping)
-            if isinstance(exc, zipfile.BadZipFile | KeyError):  # a corrupt workbook, or a sheet it doesn't have
-                raise ValueError(f"can't read {mapping.source}: {exc}") from exc
+            # A corrupt workbook, a sheet it doesn't have, or a text file that isn't UTF-8.
+            if isinstance(exc, zipfile.BadZipFile | KeyError | UnicodeDecodeError):
+                raise ValueError(_read_error(mapping.source, exc)) from exc
             raise
         _discard_progress(roots, round_id)
         for path in staging.iterdir():
@@ -311,6 +320,7 @@ def configure_round(
 
     state = _reset_stages(state)
     state.source_name, state.settings = imported.name, settings
+    state.mapping = mapping.model_dump(mode="json", exclude_none=True)
     state.import_counts, state.warnings = imported.counts, imported.warnings
     stage = _stage(state, "import")
     stage.status, stage.finished_at = "done", utcnow()

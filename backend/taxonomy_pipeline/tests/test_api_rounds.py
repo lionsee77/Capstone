@@ -37,9 +37,11 @@ def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, isolated_db: Path) -
     template = tmp_path / "template.yaml"
     template.write_text(yaml.safe_dump({
         "datasets": [{"name": "original", "paths": ["o.sql"]}, {"name": "incoming", "paths": ["i.sql"]}],
-        "metrics": [{"id": "saturation", "params": {
-            "baseline": "original", "incoming": ["incoming"], "threshold": 90,
-        }}],
+        "metrics": [
+            {"id": "integrity", "params": {"dataset": "original"}},
+            {"id": "depth", "params": {"dataset": "original"}},
+            {"id": "saturation", "params": {"baseline": "original", "incoming": ["incoming"], "threshold": 90}},
+        ],
     }), "utf-8")
     monkeypatch.setenv("TAXONOMY_ROUNDS_ROOT", str(tmp_path / "rounds"))
     monkeypatch.setenv("TAXONOMY_INTEGRATIONS_ROOT", str(tmp_path / "integrations"))

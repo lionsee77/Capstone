@@ -479,6 +479,7 @@ export const roundStateSchema = z.object({
   created_at: z.string(),
   source_name: z.string().nullable(),
   settings: roundSettingsSchema,
+  mapping: z.record(z.string(), z.unknown()).nullable(),
   stages: z.array(roundStageSchema),
   warnings: z.array(z.string()),
   import_counts: z.record(z.string(), z.number()),

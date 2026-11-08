@@ -193,6 +193,13 @@ def test_configuring_imports_the_source_and_writes_a_config_that_loads(
     assert "round_baseline" in rounds.round_config_text(roots, configured)
 
 
+def test_the_saved_mapping_comes_back_for_the_form(roots: rounds.RoundRoots, configured: str) -> None:
+    mapping = rounds.get_round(roots, configured).mapping
+
+    assert mapping["source"] == "flat.csv"
+    assert mapping["columns"]["tag"] == "Skill"
+
+
 def test_a_failed_mapping_keeps_the_last_good_import(roots: rounds.RoundRoots, configured: str) -> None:
     bad = _mapping(columns={"category": "Sector", "speciality": "Role", "tag": "Nope"})
 
@@ -616,6 +623,24 @@ def test_integrating_writes_a_snapshot_scores_it_and_chains_into_the_next_round(
         rounds.start_integrate(roots, in_review)
     with pytest.raises(rounds.RoundConflict, match="already integrated"):
         rounds.save_decisions(roots, in_review, "Pat", [])
+
+
+def test_a_labels_file_that_is_not_text_gets_a_readable_error(roots: rounds.RoundRoots, configured: str) -> None:
+    rounds.add_file(roots, configured, "labels.csv", b"\xff\xfe\x98 not utf-8")
+    mapping = _mapping(columns={
+        "category": {"column": "Sector", "prefix": 2, "labels": "labels.csv"}, "speciality": "Role", "tag": "Skill",
+    })
+
+    with pytest.raises(ValueError, match="CSV UTF-8"):
+        rounds.configure_round(roots, configured, mapping, RoundSettings())
+
+
+def test_a_table_that_is_not_utf8_says_how_to_fix_it_when_listed(roots: rounds.RoundRoots) -> None:
+    rounds.create_round(roots, "r1", "base")
+
+    uploaded = rounds.add_file(roots, "r1", "excel-export.csv", "Caf\u00e9,Tag\n".encode("latin-1"))
+
+    assert "CSV UTF-8" in uploaded.error
 
 
 def test_deferred_tags_stay_out_of_the_snapshot_without_holding_it_up(roots: rounds.RoundRoots, in_review: str) -> None:

@@ -14,6 +14,11 @@ verdict on screen is the API's.
 
 ## Pages
 
+- **New enrichment round** (`/sources/new`) - start a round on a chosen snapshot, drop its
+  file or folder, map its columns and set its options, then import and run it. Columns come
+  from the uploaded file, with sample values, so nothing is typed from memory. Importing shows
+  counts and warnings, and shows any mapping error from the API in place. LLM steps can only be
+  ticked when the server allows them, and ticking one says it will spend credits.
 - **Enrichment rounds** (`/rounds`, `/rounds/{id}`) - one new source brought into
   the taxonomy: each stage's status, summary and error, updating while it runs, with
   buttons to run, resume or remove the round and the generated config. Reads `/rounds`.
@@ -233,9 +238,8 @@ CI runs all four. See the `frontend` job in `.github/workflows/ci.yml`.
   from a snapshot. So it's a live view of those files, not of that run: an
   edit to a dataset file changes results for the same run immediately,
   with no new run needed - the run is only how you pick which files.
-- **New data source flow:** the store, schema, and `useCreateRun` mutation are
-  ready, but the form isn't built yet. Dataset paths must be absolute
-  *server-side* paths, so uploading a file from the browser would need a new
-  upload endpoint.
+- **Source shapes:** a round imports one flat table per source. Files from a dropped folder
+  are stored flat under their own names, so a later file with the same name replaces an earlier one.
+- **`source-draft-store`** was written for an earlier plan and isn't used by the new-round form.
 - **Run reports** render each metric's `details` as raw JSON for now. Saturation
   curves and breadth coverage still need proper charts.

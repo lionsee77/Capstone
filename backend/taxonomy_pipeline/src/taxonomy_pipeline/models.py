@@ -361,6 +361,8 @@ class RoundState(BaseModel):
     created_at: datetime
     source_name: str | None = None
     settings: RoundSettings = Field(default_factory=RoundSettings)
+    # The saved mapping, so the form can show it again. The file names in it are this round's own uploads.
+    mapping: dict[str, Any] | None = None
     stages: list[RoundStage] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
     import_counts: dict[str, int] = Field(default_factory=dict)
