@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import type { ReviewQueueProposal, ReviewQueueTag, RoundState } from "@/lib/api/schemas";
 import {
-  bulkTagDecisions, hasReviewQueue, placementLabel, proposalDecision, reuseCandidates, roundCompareHref, tagDecision,
+  bulkTagDecisions, clampOffset, hasReviewQueue, placementLabel, proposalDecision, reusableMatches, reuseCandidates, roundCompareHref, tagDecision,
 } from "@/lib/review";
 
 const place = (category: string) => ({ service: "Function", category, speciality: "Analytics", confidence: 0.6, reason: "Fits" });
@@ -86,6 +86,37 @@ describe("proposalDecision", () => {
     expect(proposalDecision(proposal(), "reuse", { conceptId: 99 })).toBeNull();
     const broken = proposal({ matches: [{ ...proposal().matches[0], reusable: false }] });
     expect(proposalDecision(broken, "reuse", { conceptId: 5 })).toBeNull();
+  });
+});
+
+describe("reusableMatches", () => {
+  const candidate = (overrides: object) => ({ ...proposal().matches[0], ...overrides });
+
+  it("offers only what the API would accept: same level, under its own parent", () => {
+    const usable = candidate({ id: 1 });
+    const offered = reusableMatches(proposal({ matches: [
+      usable, candidate({ id: 2, same_parent: false }), candidate({ id: 3, level: "category" }),
+      candidate({ id: 4, reusable: false }), candidate({ id: null }),
+    ] }));
+    expect(offered).toEqual([usable]);
+  });
+
+  it("refuses a decision on a match it wouldn't offer", () => {
+    const elsewhere = proposal({ matches: [candidate({ id: 2, same_parent: false })] });
+    expect(proposalDecision(elsewhere, "reuse", { conceptId: 2 })).toBeNull();
+  });
+});
+
+describe("clampOffset", () => {
+  it("keeps a page that still has tags", () => {
+    expect(clampOffset(25, 50, 25)).toBe(25);
+    expect(clampOffset(0, 0, 25)).toBe(0);
+  });
+
+  it("moves back to the last page with tags once a later one empties", () => {
+    expect(clampOffset(25, 25, 25)).toBe(0);
+    expect(clampOffset(50, 30, 25)).toBe(25);
+    expect(clampOffset(25, 0, 25)).toBe(0);
   });
 });
 

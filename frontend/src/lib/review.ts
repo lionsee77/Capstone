@@ -58,6 +58,14 @@ export function bulkTagDecisions(tags: ReviewQueueTag[], action: Exclude<TagActi
   return tags.flatMap((tag) => tagDecision(tag, action, { reason }) ?? []);
 }
 
+/**
+ * What a proposal can actually become: the same level, under its own parent. The API refuses anything else.
+ * A child can become eligible once its parent is reused; the queue is rebuilt then, so it is offered at that point.
+ */
+export function reusableMatches(proposal: ReviewQueueProposal): ReviewQueueProposal["matches"] {
+  return proposal.matches.filter((match) => match.reusable && match.same_parent && match.id !== null && match.level === proposal.level);
+}
+
 /** A hierarchy proposal's decision; a tag's fields aren't allowed on one, so it is built separately. */
 export function proposalDecision(
   proposal: ReviewQueueProposal, action: ProposalAction, options: { conceptId?: number | string; reason?: string } = {},
@@ -65,7 +73,7 @@ export function proposalDecision(
   const written = options.reason?.trim();
   const base = { proposal_id: proposal.proposal_id, action };
   if (action === "reuse") {
-    const target = proposal.matches.find((match) => match.id === options.conceptId && match.reusable);
+    const target = reusableMatches(proposal).find((match) => match.id === options.conceptId);
     if (!target || target.id === null) return null;
     return { ...base, existing_concept_id: target.id, reason: written || `Reviewed: same as existing '${target.name}'` };
   }
@@ -85,6 +93,12 @@ export function roundCompareHref(round: RoundState): string | null {
     after: round.enriched_run_id, after_subject: "enriched",
   });
   return `/compare?${params}`;
+}
+
+/** The offset to show after the queue shrinks: the last page that still has tags, rather than an empty one. */
+export function clampOffset(offset: number, total: number, pageSize: number): number {
+  if (offset < total) return offset;
+  return total === 0 ? 0 : Math.floor((total - 1) / pageSize) * pageSize;
 }
 
 /** Whether the round has been through a merge preview, so a review queue can exist. */
