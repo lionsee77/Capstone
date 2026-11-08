@@ -1,6 +1,6 @@
 """FastAPI app: a thin HTTP layer over the `app/` use cases (`app.scoring` for metrics and runs,
 `app.comparison` for comparing two runs, `app.browse` for taxonomy search, `app.enrichment` for proposals,
-`app.lineage` for the enrichment lineage).
+`app.lineage` for the enrichment lineage, `app.rounds` for running a whole enrichment round).
 
 A run is a batch job, not a request/response - `POST /runs` validates the
 config, schedules the work as a background task, and returns immediately
@@ -31,6 +31,7 @@ from ..models import (
 from .changes import router as changes_router
 from .lineage import router as lineage_router
 from .proposals import router as proposals_router
+from .rounds import router as rounds_router
 from .security import disallowed_paths, require_token
 
 app = FastAPI(
@@ -42,6 +43,7 @@ app = FastAPI(
 app.include_router(proposals_router)
 app.include_router(changes_router)
 app.include_router(lineage_router)
+app.include_router(rounds_router)
 
 
 def _require_absolute_dataset_paths(config: PipelineConfig) -> None:

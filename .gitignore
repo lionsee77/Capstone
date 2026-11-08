@@ -97,6 +97,7 @@ case_b_output.csv
 .case_b_output.checkpoint.json
 merge_runs/
 integrations/
+backend/taxonomy_pipeline/rounds/
 backend/taxonomy_pipeline/experiments/results/*.json
 backend/taxonomy_pipeline/experiments/results/*.csv
 backend/taxonomy_pipeline/experiments/results/*.checkpoint.json
