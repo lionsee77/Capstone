@@ -10,6 +10,8 @@ export const MAX_UPLOAD_BYTES = 50 * 1024 * 1024;
 
 const ROUND_ID = /^[a-z0-9][a-z0-9_-]{0,63}$/;
 const SOURCE_NAME = /^[a-z][a-z0-9_]*$/;
+// Names the finished snapshot in the round's comparison; mirrors `RESERVED_SOURCE_NAME` in `app/rounds.py`.
+const RESERVED_SOURCE_NAME = "enriched";
 
 /** Why a file won't be uploaded, or null if it will. Folders bring along plenty that isn't a table. */
 export function uploadProblem(file: { name: string; size: number }): string | null {
@@ -27,7 +29,7 @@ export function roundIdProblem(roundId: string): string | null {
 /** A source name from a file's name: `Software Skills.xlsx` -> `software_skills`, valid or empty. */
 export function suggestSourceName(filename: string): string {
   const stem = filename.replace(/\.[^.]+$/, "").toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^[^a-z]+|_+$/g, "");
-  return SOURCE_NAME.test(stem) ? stem : "";
+  return SOURCE_NAME.test(stem) && stem !== RESERVED_SOURCE_NAME ? stem : "";
 }
 
 /** One level of the hierarchy: a column as it stands, or a code's first characters named by a labels file. */
@@ -66,6 +68,9 @@ export function mappingProblems(draft: MappingDraft): string[] {
   const problems: string[] = [];
   if (!SOURCE_NAME.test(draft.name)) {
     problems.push("Source name must be lowercase letters, digits or _, starting with a letter.");
+  }
+  if (draft.name === RESERVED_SOURCE_NAME) {
+    problems.push(`A source can't be named "${RESERVED_SOURCE_NAME}": the finished snapshot uses that name.`);
   }
   if (!draft.displayName.trim()) problems.push("Give the source a display name.");
   if (!draft.source) problems.push("Choose the file to import.");

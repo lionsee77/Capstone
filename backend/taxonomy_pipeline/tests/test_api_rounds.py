@@ -153,6 +153,16 @@ def test_a_bad_mapping_is_422_with_the_reason(client: TestClient) -> None:
     assert "Nope" in response.json()["detail"]
 
 
+def test_a_source_named_enriched_is_422_with_the_reason(client: TestClient) -> None:
+    _created(client)
+    client.put("/rounds/r1/files/flat.csv", content=CSV)
+
+    response = client.put("/rounds/r1/config", json={"mapping": {**MAPPING, "name": "enriched"}})
+
+    assert response.status_code == 422
+    assert "finished snapshot" in response.json()["detail"]
+
+
 def test_settings_turning_on_the_judge_are_refused_when_the_server_forbids_it(
     client: TestClient, monkeypatch: pytest.MonkeyPatch,
 ) -> None:

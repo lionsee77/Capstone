@@ -60,6 +60,9 @@ from .sources import DEFAULT_TEMPLATE, ROUND_BASELINE, import_source
 
 ROUND_ID = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
 RESERVED_ROUND_IDS = {"options"}
+# What `integrate` calls the finished snapshot, unless a source already has the name. The round's comparison asks
+# for the snapshot by this name, so a source using it would be compared in the snapshot's place.
+RESERVED_SOURCE_NAME = "enriched"
 UPLOAD_SUFFIXES = {".csv", ".tsv", ".xlsx", ".xlsm"}
 MAX_UPLOAD_BYTES = 50 * 1024 * 1024
 MAX_FILES = 20
@@ -324,6 +327,8 @@ def _configure(
     roots: RoundRoots, state: RoundState, mapping: SourceMapping, settings: RoundSettings,
 ) -> RoundState:
     _check_llm(settings)
+    if mapping.name == RESERVED_SOURCE_NAME:
+        raise ValueError(f"a source can't be named {RESERVED_SOURCE_NAME!r}: the finished snapshot uses that name")
     round_id = state.round_id
     directory = roots.directory(round_id)
     source = directory / SOURCE_DIR

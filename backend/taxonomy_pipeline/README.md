@@ -1748,6 +1748,7 @@ a hand-run round.
   `labels` must name files uploaded to this round. A mapping that fails (422 with the
   reason) leaves the last good import in place. Saving a new one discards later progress,
   including decisions, because they described the old source.
+- A source can't be named `enriched`, because that names the finished snapshot in the round's comparison.
 - **`settings`** has `judge`, `case_b` and saturation's `threshold`, `semantic_threshold`,
   `add_candidate_lexical_threshold` and `add_candidate_semantic_threshold`. Unset values keep the
   template's (`configs/original_vs_skillsfuture.yaml`). Nothing else can be set, so a

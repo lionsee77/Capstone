@@ -54,6 +54,7 @@ describe("names", () => {
     expect(suggestSourceName("Software Skills.xlsx")).toBe("software_skills");
     expect(suggestSourceName("2024 Skills.csv")).toBe("skills");
     expect(suggestSourceName("123.csv")).toBe("");
+    expect(suggestSourceName("Enriched.csv")).toBe("");
   });
 });
 
@@ -67,6 +68,11 @@ describe("mappingProblems", () => {
     expect(problems).toContain("Choose the file to import.");
     expect(problems).toContain("Tag: choose a column.");
     expect(problems).toContain("Choose the service its categories go under.");
+  });
+
+  it("refuses the finished snapshot's name, but not one merely containing it", () => {
+    expect(mappingProblems({ ...onet(), name: "enriched" })[0]).toContain("finished snapshot");
+    expect(mappingProblems({ ...onet(), name: "enriched_skills" })).toEqual([]);
   });
 
   it("requires a labels file and a whole prefix length for a derived level", () => {

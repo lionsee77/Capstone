@@ -217,6 +217,20 @@ def test_a_failed_mapping_keeps_the_last_good_import(roots: rounds.RoundRoots, c
     load_config(roots.rounds / configured / "config.yaml")
 
 
+def test_a_source_cannot_take_the_finished_snapshots_name(roots: rounds.RoundRoots, configured: str) -> None:
+    with pytest.raises(ValueError, match="finished snapshot"):
+        rounds.configure_round(roots, configured, _mapping(name="enriched"), RoundSettings())
+
+    assert rounds.get_round(roots, configured).source_name == "demo"
+    assert not (roots.rounds / configured / "enriched_taxonomy.sql").exists()
+
+
+def test_a_source_name_merely_containing_enriched_is_fine(roots: rounds.RoundRoots, configured: str) -> None:
+    state = rounds.configure_round(roots, configured, _mapping(name="enriched_skills"), RoundSettings())
+
+    assert state.source_name == "enriched_skills"
+
+
 def test_a_mapping_can_only_name_files_in_this_round(roots: rounds.RoundRoots, configured: str, tmp_path: Path) -> None:
     (tmp_path / "secret.csv").write_text("Skill\nx\n", "utf-8")
 
