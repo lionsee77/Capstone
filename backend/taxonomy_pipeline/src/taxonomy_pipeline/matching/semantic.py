@@ -37,7 +37,8 @@ class SemanticMatcher:
                 "semantic matching requires the optional dependency; install with "
                 '`pip install -e ".[dev,semantic]"`'
             ) from exc
-        self.model = SentenceTransformer(model_name, revision=revision)
+        with embeddings.MODEL_LOCK:
+            self.model = SentenceTransformer(model_name, revision=revision)
         self._cache: dict[str, np.ndarray] = {}
 
     def similarity(self, queries: list[str], choices: list[str]) -> np.ndarray:
@@ -45,7 +46,9 @@ class SemanticMatcher:
         encoded once per run, since the same parent names recur constantly."""
         missing = [name for name in dict.fromkeys(queries + choices) if name not in self._cache]
         if missing:
-            for name, vector in zip(missing, self.model.encode(missing, normalize_embeddings=True), strict=True):
+            with embeddings.MODEL_LOCK:
+                vectors = self.model.encode(missing, normalize_embeddings=True)
+            for name, vector in zip(missing, vectors, strict=True):
                 self._cache[name] = np.asarray(vector)
         if not queries or not choices:
             return np.zeros((len(queries), len(choices)))
