@@ -18,7 +18,7 @@ from ..config import PipelineConfig
 from ..matching.names import normalize
 from ..models import ConceptLevel, TaxonomyConceptDetail, TaxonomyConceptRef, TaxonomyConceptSummary, TaxonomyPath
 from ..taxonomy import load_dataset
-from ..taxonomy.base import TaxonomyDataset
+from ..taxonomy.base import Hierarchy, TaxonomyDataset
 
 LEVELS: tuple[ConceptLevel, ...] = ("services", "categories", "specialities", "tags")
 DEFAULT_SEARCH_LIMIT = 50
@@ -97,15 +97,23 @@ def search(
     return results
 
 
-def _tag_paths(dataset: TaxonomyDataset, tag_id: Any) -> list[TaxonomyPath]:
-    """Every (service, category, speciality) chain this tag is linked to -
-    one per speciality, since a tag can sit under several. A dangling link (no
-    such speciality) carries no real path to show - same rows integrity.py
-    counts as dangling_links rather than treating as a real relationship."""
-    return [
-        TaxonomyPath(service=_ref(path.service), category=_ref(path.category), speciality=_ref(path.speciality))
-        for path in dataset.hierarchy().tag_paths(tag_id)
-    ]
+def concept_paths(hierarchy: Hierarchy, level: ConceptLevel, row: dict[str, Any]) -> list[TaxonomyPath]:
+    """Where a concept sits: one chain up to its service, or for a tag every (service, category,
+    speciality) chain it's linked to - one per speciality, since a tag can sit under several. A
+    dangling link (no such speciality) carries no real path to show - same rows integrity.py counts
+    as dangling_links rather than treating as a real relationship. The caller passes the hierarchy
+    because `dataset.hierarchy()` is rebuilt on each call."""
+    if level == "tags":
+        return [
+            TaxonomyPath(service=_ref(path.service), category=_ref(path.category), speciality=_ref(path.speciality))
+            for path in hierarchy.tag_paths(row.get("id"))
+        ]
+    if level == "services":
+        return [TaxonomyPath(service=_ref(row))]
+    if level == "categories":
+        return [TaxonomyPath(service=_ref(hierarchy.service_of(row)), category=_ref(row))]
+    category = hierarchy.category_of(row)
+    return [TaxonomyPath(service=_ref(hierarchy.service_of(category)), category=_ref(category), speciality=_ref(row))]
 
 
 def detail(dataset: TaxonomyDataset, level: ConceptLevel, concept_id: str) -> TaxonomyConceptDetail:
@@ -114,25 +122,19 @@ def detail(dataset: TaxonomyDataset, level: ConceptLevel, concept_id: str) -> Ta
     if row is None:
         raise NotFound(f"no {level} with id {concept_id!r} in dataset {dataset.name!r}")
     name = str(row.get("name"))
+    hierarchy = dataset.hierarchy()
+    paths = concept_paths(hierarchy, level, row)
 
     if level == "tags":
-        return TaxonomyConceptDetail(
-            id=row.get("id"), name=name, level=level, dataset=dataset.name,
-            paths=_tag_paths(dataset, row.get("id")),
-        )
+        return TaxonomyConceptDetail(id=row.get("id"), name=name, level=level, dataset=dataset.name, paths=paths)
 
-    hierarchy = dataset.hierarchy()
     if level == "services":
-        path = TaxonomyPath(service=_ref(row))
         children = [_ref(c) for c in dataset.categories if c.get("service_id") == row.get("id")]
         tags: list[TaxonomyConceptRef] = []
     elif level == "categories":
-        path = TaxonomyPath(service=_ref(hierarchy.service_of(row)), category=_ref(row))
         children = [_ref(s) for s in dataset.specialities if s.get("category_id") == row.get("id")]
         tags = []
     else:  # specialities
-        category = hierarchy.category_of(row)
-        path = TaxonomyPath(service=_ref(hierarchy.service_of(category)), category=_ref(category), speciality=_ref(row))
         speciality_id = row.get("id")
         tag_ids = {link.get("tag_id") for link in dataset.speciality_tags if link.get("speciality_id") == speciality_id}
         children = []
@@ -140,5 +142,5 @@ def detail(dataset: TaxonomyDataset, level: ConceptLevel, concept_id: str) -> Ta
 
     return TaxonomyConceptDetail(
         id=row.get("id"), name=name, level=level, dataset=dataset.name,
-        paths=[path], children=[c for c in children if c is not None], tags=[t for t in tags if t is not None],
+        paths=paths, children=[c for c in children if c is not None], tags=[t for t in tags if t is not None],
     )

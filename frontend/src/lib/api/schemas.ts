@@ -595,6 +595,26 @@ export const roundOptionsSchema = z.object({
 });
 export type RoundOptions = z.infer<typeof roundOptionsSchema>;
 
+/** Mirrors `LookupMatch`: an existing concept a looked-up term matched. Scores are uncalibrated review evidence. */
+export const lookupMatchSchema = taxonomyConceptSummarySchema.extend({
+  match_type: z.enum(["exact", "variant", "lexical", "semantic"]),
+  lexical_score: z.number(),
+  semantic_score: z.number().nullable(),
+  active: z.boolean(),
+  paths: z.array(taxonomyPathSchema),
+});
+export type LookupMatch = z.infer<typeof lookupMatchSchema>;
+
+/** Mirrors `TagLookupResult` (`GET /lookup`): whether a term exists, and which snapshot answered. */
+export const tagLookupResultSchema = z.object({
+  query: z.string(),
+  snapshot: z.string(),
+  exists: z.boolean(),
+  exact: z.array(lookupMatchSchema),
+  near: z.array(lookupMatchSchema),
+});
+export type TagLookupResult = z.infer<typeof tagLookupResultSchema>;
+
 /** Mirrors models.py's SourceImport: what `import-source` wrote (#117 will return it from the API). */
 export const sourceImportSchema = z.object({
   name: z.string(),

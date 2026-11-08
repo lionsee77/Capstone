@@ -12,6 +12,7 @@ import {
   reviewDecisionEventSchema,
   runComparisonSchema,
   runReportSchema,
+  tagLookupResultSchema,
   taxonomyConceptDetailSchema,
   taxonomyConceptSummarySchema,
 } from "@/lib/api/schemas";
@@ -281,5 +282,23 @@ describe("lineage schema", () => {
     const bad = structuredClone(lineage) as { stages: { added?: unknown }[] };
     delete bad.stages[1].added;
     expect(taxonomyLineageSchema.safeParse(bad).success).toBe(false);
+  });
+});
+
+describe("tagLookupResultSchema", () => {
+  const match = {
+    id: 10, name: "Tax Advisory", level: "specialities", match_type: "exact",
+    lexical_score: 100, semantic_score: null, active: true,
+    paths: [{ service: { id: 1, name: "Industry" }, category: null, speciality: { id: 10, name: "Tax Advisory" } }],
+  };
+  const result = { query: "tax advisory", snapshot: "onet-1031", exists: true, exact: [match], near: [] };
+
+  it("accepts the shape GET /lookup returns", () => {
+    expect(tagLookupResultSchema.parse(result)).toEqual(result);
+  });
+
+  it("rejects a match type the API doesn't define", () => {
+    const drifted = { ...result, exact: [{ ...match, match_type: "fuzzy" }] };
+    expect(tagLookupResultSchema.safeParse(drifted).success).toBe(false);
   });
 });
