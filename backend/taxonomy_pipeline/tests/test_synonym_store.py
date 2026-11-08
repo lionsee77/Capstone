@@ -146,3 +146,49 @@ def test_a_database_from_another_schema_version_is_refused(isolated_db: Path) ->
         connection.execute("UPDATE taxonomy_synonym_schema SET version = 99")
     with pytest.raises(SynonymError, match="schema version 99"):
         _add("ECMAScript")
+
+
+def test_the_same_term_can_be_global_and_scoped_for_one_concept(isolated_db: Path) -> None:
+    _add()
+    scoped = add_synonym(_request(scope_level="categories", scope_id="1"), canonical_name="JavaScript",
+                         snapshot_id="sha256:snapshot")
+    assert scoped.scope == ("categories", "1")
+    with pytest.raises(DuplicateSynonym):
+        add_synonym(_request(scope_level="categories", scope_id="1"), canonical_name="JavaScript",
+                    snapshot_id="sha256:snapshot")
+    assert [s.scope for s in list_synonyms(SynonymQuery()).synonyms] == [None, ("categories", "1")]
+
+
+def test_a_refusing_check_sees_the_approved_synonyms_and_stores_nothing(isolated_db: Path) -> None:
+    first = _add("JS")
+    seen = []
+
+    def refuse(approved):
+        seen.extend(approved)
+        raise SynonymError("refused by check")
+
+    with pytest.raises(SynonymError, match="refused by check"):
+        add_synonym(_request("ECMAScript"), canonical_name="JavaScript", snapshot_id="s", check=refuse)
+    assert seen == [first]
+    assert list_synonyms(SynonymQuery()).total == 1
+
+
+def test_a_version_1_table_is_migrated_and_its_synonyms_become_global(isolated_db: Path) -> None:
+    with closing(sqlite3.connect(isolated_db)) as connection, connection:
+        connection.execute("""CREATE TABLE taxonomy_synonyms (synonym_id TEXT PRIMARY KEY, term TEXT NOT NULL,
+            normalized_term TEXT NOT NULL, dataset TEXT NOT NULL, concept_level TEXT NOT NULL,
+            concept_id TEXT NOT NULL, concept_name TEXT NOT NULL, snapshot_id TEXT NOT NULL, status TEXT NOT NULL,
+            source TEXT NOT NULL, reason TEXT NOT NULL, actor TEXT NOT NULL, created_at TEXT NOT NULL,
+            removed_at TEXT, removed_by TEXT, removal_reason TEXT)""")
+        connection.execute("""CREATE UNIQUE INDEX synonym_approved_mapping ON taxonomy_synonyms(dataset,
+            concept_level, concept_id, normalized_term) WHERE status = 'approved'""")
+        connection.execute("CREATE TABLE taxonomy_synonym_schema (singleton INTEGER PRIMARY KEY, version INTEGER)")
+        connection.execute("INSERT INTO taxonomy_synonym_schema VALUES (1, 1)")
+        connection.execute("""INSERT INTO taxonomy_synonyms VALUES ('old', 'JS', 'js', 'original', 'tags', '100',
+            'JavaScript', 's', 'approved', 'manual', 'From #59', 'reviewer', '2026-11-01T00:00:00+00:00',
+            NULL, NULL, NULL)""")
+    add_synonym(_request(scope_level="categories", scope_id="1"), canonical_name="JavaScript", snapshot_id="s")
+    listed = list_synonyms(SynonymQuery()).synonyms
+    assert [(s.synonym_id, s.scope) for s in listed] == [("old", None), (listed[1].synonym_id, ("categories", "1"))]
+    with closing(sqlite3.connect(isolated_db)) as connection:
+        assert connection.execute("SELECT version FROM taxonomy_synonym_schema").fetchone() == (2,)

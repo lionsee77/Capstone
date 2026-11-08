@@ -11,6 +11,7 @@ from pydantic import BaseModel, ConfigDict, ValidationError
 from ..app import synonyms as use_cases
 from ..audit.models import Text
 from ..synonyms import (
+    ConflictingSynonym,
     DuplicateSynonym,
     Synonym,
     SynonymCreate,
@@ -60,13 +61,14 @@ def get_synonyms(
 @router.post("/synonyms", status_code=201)
 def post_synonym(request: SynonymAddRequest) -> Synonym:
     """Approve a synonym for one existing concept: 404 for an unknown run, dataset or concept,
-    409 if it is already a synonym of that concept, 422 for a refused term."""
+    409 if it is already a synonym of that concept or the term already means another concept
+    where it would apply, 422 for a refused term or a scope the concept isn't in."""
     create = SynonymCreate.model_validate(request.model_dump(exclude={"run_id"}))
     try:
         return use_cases.add_synonym(create, run_id=request.run_id)
     except UnknownConcept as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
-    except DuplicateSynonym as exc:
+    except (DuplicateSynonym, ConflictingSynonym) as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except SynonymError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc

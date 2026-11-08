@@ -7,7 +7,17 @@ resolve through synonyms (#60), the approved mappings are passed down to it as d
 """
 from __future__ import annotations
 
-from .models import Synonym, SynonymCreate, SynonymLevel, SynonymList, SynonymQuery
+from .models import (
+    Resolution,
+    ResolvedConcept,
+    ScopeLevel,
+    Synonym,
+    SynonymCreate,
+    SynonymLevel,
+    SynonymList,
+    SynonymQuery,
+)
+from .resolver import ConflictingSynonym, InvalidScope, SynonymIndex
 from .store import (
     DuplicateSynonym,
     SynonymError,
@@ -20,7 +30,7 @@ from .store import (
 )
 
 __all__ = [
-    "DuplicateSynonym", "Synonym", "SynonymCreate", "SynonymError", "SynonymLevel", "SynonymList",
-    "SynonymNotFound", "SynonymQuery", "UnknownConcept", "add_synonym", "concept_name", "list_synonyms",
-    "remove_synonym",
+    "ConflictingSynonym", "DuplicateSynonym", "InvalidScope", "Resolution", "ResolvedConcept", "ScopeLevel",
+    "Synonym", "SynonymCreate", "SynonymError", "SynonymIndex", "SynonymLevel", "SynonymList", "SynonymNotFound",
+    "SynonymQuery", "UnknownConcept", "add_synonym", "concept_name", "list_synonyms", "remove_synonym",
 ]

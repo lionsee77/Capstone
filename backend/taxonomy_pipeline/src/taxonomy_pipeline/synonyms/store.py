@@ -3,16 +3,21 @@
 Each add or remove commits together with its audit event (`synonym_add` /
 `synonym_remove`), so the table and its history can't disagree. Rows are never
 deleted: removing a synonym marks it `removed`, which keeps who added it and why.
-A partial unique index allows one approved mapping per normalised term and
-concept; a removed mapping can be added again as a new row.
+A partial unique index allows one approved mapping per normalised term, concept and
+scope; a removed mapping can be added again as a new row. The caller's conflict
+check (`SynonymIndex.check_new`) runs inside the write transaction against the
+approved synonyms read under the writer lock, so two concurrent adds can't both pass.
 
 Nothing here writes to taxonomy files or the client's database. The schema is
-versioned in `taxonomy_synonym_schema` (as the audit log versions its own), so
-scoping (#61) can migrate it.
+versioned in `taxonomy_synonym_schema` (as the audit log versions its own):
+version 2 added the scope columns (#61), and a version 1 table is migrated in place.
+A global synonym stores its scope as empty strings, because SQLite treats NULLs as
+distinct in a unique index and would let duplicate global mappings through.
 """
 from __future__ import annotations
 
 import sqlite3
+from collections.abc import Callable
 from contextlib import closing
 from pathlib import Path
 from typing import Any
@@ -25,10 +30,12 @@ from ..matching.names import normalize
 from ..taxonomy.base import TaxonomyDataset
 from .models import AUDIT_LEVELS, Synonym, SynonymCreate, SynonymLevel, SynonymList, SynonymQuery
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 SCHEMA = (
     """CREATE TABLE IF NOT EXISTS taxonomy_synonyms (
         synonym_id TEXT PRIMARY KEY,
+        scope_level TEXT NOT NULL DEFAULT '',
+        scope_id TEXT NOT NULL DEFAULT '',
         term TEXT NOT NULL,
         normalized_term TEXT NOT NULL,
         dataset TEXT NOT NULL,
@@ -45,13 +52,14 @@ SCHEMA = (
         removed_by TEXT,
         removal_reason TEXT
     )""",
-    """CREATE UNIQUE INDEX IF NOT EXISTS synonym_approved_mapping
-        ON taxonomy_synonyms(dataset, concept_level, concept_id, normalized_term) WHERE status = 'approved'""",
     "CREATE INDEX IF NOT EXISTS synonym_term ON taxonomy_synonyms(dataset, normalized_term)",
-    """CREATE TABLE IF NOT EXISTS taxonomy_synonym_schema (
-        singleton INTEGER PRIMARY KEY CHECK (singleton = 1), version INTEGER NOT NULL
-    )""",
 )
+UNIQUE_MAPPING = """CREATE UNIQUE INDEX IF NOT EXISTS synonym_approved_mapping
+    ON taxonomy_synonyms(dataset, concept_level, concept_id, normalized_term, scope_level, scope_id)
+    WHERE status = 'approved'"""
+VERSION_TABLE = """CREATE TABLE IF NOT EXISTS taxonomy_synonym_schema (
+    singleton INTEGER PRIMARY KEY CHECK (singleton = 1), version INTEGER NOT NULL
+)"""
 COLUMNS = tuple(Synonym.model_fields)
 
 
@@ -80,13 +88,15 @@ def concept_name(taxonomy: TaxonomyDataset, level: SynonymLevel, concept_id: str
 
 
 def add_synonym(
-    request: SynonymCreate, *, canonical_name: str, snapshot_id: str, db_path: Path | str | None = None,
+    request: SynonymCreate, *, canonical_name: str, snapshot_id: str,
+    check: Callable[[list[Synonym]], None] | None = None, db_path: Path | str | None = None,
 ) -> Synonym:
     """Store one approved synonym and its `synonym_add` audit event in one transaction.
 
     `canonical_name` and `snapshot_id` come from the taxonomy the caller checked the
     concept against (`concept_name`). A term equal to that name, or one that is
-    already an approved synonym of the concept, is refused.
+    already an approved synonym of the concept in the same scope, is refused. `check`
+    gets the dataset's approved synonyms, read under the writer lock, and raises to refuse.
     """
     normalized = normalize(request.term)
     if not normalized:
@@ -97,18 +107,21 @@ def add_synonym(
         synonym_id=str(uuid4()), term=request.term, normalized_term=normalized, dataset=request.dataset,
         concept_level=request.concept_level, concept_id=request.concept_id, concept_name=canonical_name,
         snapshot_id=snapshot_id, status="approved", source=request.source, reason=request.reason,
-        actor=request.actor, created_at=utc_now(),
+        actor=request.actor, created_at=utc_now(), scope_level=request.scope_level, scope_id=request.scope_id,
     )
     with _writer(db_path) as connection:
         existing = connection.execute(
             "SELECT synonym_id FROM taxonomy_synonyms WHERE status = 'approved' AND dataset = ? "
-            "AND concept_level = ? AND concept_id = ? AND normalized_term = ?",
-            (synonym.dataset, synonym.concept_level, synonym.concept_id, normalized),
+            "AND concept_level = ? AND concept_id = ? AND normalized_term = ? AND scope_level = ? AND scope_id = ?",
+            (synonym.dataset, synonym.concept_level, synonym.concept_id, normalized,
+             synonym.scope_level or "", synonym.scope_id or ""),
         ).fetchone()
         if existing:
             raise DuplicateSynonym(
                 f"{request.term!r} is already an approved synonym of {canonical_name!r} (synonym {existing[0]})"
             )
+        if check is not None:
+            check(_approved(connection, synonym.dataset))
         connection.execute(
             f"INSERT INTO taxonomy_synonyms ({', '.join(COLUMNS)}) VALUES ({', '.join('?' * len(COLUMNS))})",
             _row(synonym),
@@ -205,14 +218,31 @@ class _writer:
 
 
 def _ensure_schema(connection: sqlite3.Connection) -> None:
-    """Create the tables inside the caller's write transaction, or refuse a schema from another version."""
-    for statement in SCHEMA:
-        connection.execute(statement)
+    """Create or migrate the tables inside the caller's write transaction; refuse an unknown version."""
+    connection.execute(VERSION_TABLE)
     row = connection.execute("SELECT version FROM taxonomy_synonym_schema WHERE singleton = 1").fetchone()
-    if row is None:
+    version = row[0] if row else None
+    if version == SCHEMA_VERSION:
+        return
+    if version is None:
+        for statement in (*SCHEMA, UNIQUE_MAPPING):
+            connection.execute(statement)
         connection.execute("INSERT INTO taxonomy_synonym_schema (singleton, version) VALUES (1, ?)", (SCHEMA_VERSION,))
-    elif row[0] != SCHEMA_VERSION:
-        raise SynonymError(f"Unsupported synonym schema version {row[0]}; expected {SCHEMA_VERSION}")
+    elif version == 1:  # #59's table: add the scope columns and widen the unique mapping to include them
+        connection.execute("ALTER TABLE taxonomy_synonyms ADD COLUMN scope_level TEXT NOT NULL DEFAULT ''")
+        connection.execute("ALTER TABLE taxonomy_synonyms ADD COLUMN scope_id TEXT NOT NULL DEFAULT ''")
+        connection.execute("DROP INDEX IF EXISTS synonym_approved_mapping")
+        connection.execute(UNIQUE_MAPPING)
+        connection.execute("UPDATE taxonomy_synonym_schema SET version = ? WHERE singleton = 1", (SCHEMA_VERSION,))
+    else:
+        raise SynonymError(f"Unsupported synonym schema version {version}; expected {SCHEMA_VERSION}")
+
+
+def _approved(connection: sqlite3.Connection, dataset: str) -> list[Synonym]:
+    rows = connection.execute(
+        f"SELECT {', '.join(COLUMNS)} FROM taxonomy_synonyms WHERE status = 'approved' AND dataset = ?", (dataset,),
+    )
+    return [_synonym(row) for row in rows]
 
 
 def _event(synonym: Synonym, action: str, *, before: Synonym | None = None, after: Synonym) -> ChangeEvent:
@@ -236,8 +266,11 @@ def _time(value: Any) -> str | None:
 
 def _row(synonym: Synonym) -> tuple[Any, ...]:
     data = synonym.model_dump()
+    data["scope_level"], data["scope_id"] = data["scope_level"] or "", data["scope_id"] or ""
     return tuple(_time(data[c]) if c in ("created_at", "removed_at") else data[c] for c in COLUMNS)
 
 
 def _synonym(row: tuple[Any, ...]) -> Synonym:
-    return Synonym.model_validate(dict(zip(COLUMNS, row, strict=True)))
+    data = dict(zip(COLUMNS, row, strict=True))
+    data["scope_level"], data["scope_id"] = data["scope_level"] or None, data["scope_id"] or None
+    return Synonym.model_validate(data)

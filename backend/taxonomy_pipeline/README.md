@@ -51,7 +51,8 @@ taxonomy_pipeline/
 │   │   ├── judge.py                  #   optional LLM judge (OpenAI Decisions API) for saturation's ambiguous concepts
 │   │   └── engine.py                 #   the comparison engine saturation and Case A share
 │   ├── synonyms/                     # PB07: other names for existing concepts, stored beside the taxonomy
-│   │   ├── models.py                 #   SynonymCreate, Synonym, SynonymQuery, SynonymList contracts
+│   │   ├── models.py                 #   SynonymCreate, Synonym, SynonymQuery, SynonymList, Resolution contracts
+│   │   ├── resolver.py               #   SynonymIndex: what a term means (scopes, ambiguity) and check_new (#61)
 │   │   └── store.py                  #   SQLite table + audit event per change; concept_name check
 │   ├── quality/                      # pluggable quality checks that score one taxonomy
 │   │   ├── base.py                   #   Metric ABC (run; measures for comparisons)
@@ -1868,7 +1869,9 @@ curl -H "Authorization: Bearer $TAXONOMY_API_TOKEN" -H "Content-Type: applicatio
 `synonym-add` finds the concept through `--config` (default `configs/baseline_v1.yaml`)
 and `--dataset` (default `original`). `POST /synonyms` takes a past run's `run_id`
 instead, the way `/taxonomy` finds a dataset, because the API doesn't read callers'
-config files. Levels are `categories`, `specialities` and `tags`.
+config files. Levels are `categories`, `specialities` and `tags`. Add
+`--scope-level`/`--scope-id` (or `scope_level`/`scope_id` in the body) for a scoped
+synonym, below.
 
 Rules:
 
@@ -1876,9 +1879,11 @@ Rules:
   canonical `concept_name`, so a synonym is always distinguishable from the real name.
 - **No duplicates.** A term is compared after `normalize` (case, spacing, trailing
   punctuation), so "JS", "js" and " JS. " are the same synonym. Adding one that is
-  already approved for that concept is refused (409 over HTTP); so is a term equal to the
-  concept's own name (422). The same term on two *different* concepts is allowed for
-  now: deciding when that is ambiguous is #61.
+  already approved for that concept in the same scope is refused (409 over HTTP); so is
+  a term equal to the concept's own name (422).
+- **A global synonym can't have two meanings** (#61). It is refused (409) when the term
+  is already another concept's name, or another concept's global synonym. A word that
+  means different things in different branches must be scoped instead.
 - **The concept must exist.** An unknown dataset, run or concept ID is refused (404)
   before anything is written.
 - **Removing keeps history.** `synonym-remove` marks the row `removed` with who and why;
@@ -1890,8 +1895,39 @@ Rules:
   the concept was checked against. Read them with `taxonomy-pipeline changes
   --action synonym_add`.
 
-What isn't built yet: lookups and scoring don't use synonyms (#60); scoped synonyms and
-ambiguity checks (#61); suggested synonyms from external sources (ESCO, O*NET, spelling
+#### Scopes and ambiguity (#61)
+
+A synonym is **global**, or **scoped** to one category or speciality the concept sits
+in: "pitch" can mean the tag *Sales Pitch* only inside the *Sales* category, while
+elsewhere it still means the tag *Pitch*.
+
+```bash
+# illustrative IDs: tag 100 "Sales Pitch" sits under category 1 "Sales"
+taxonomy-pipeline synonym-add --level tags --concept-id 100 --term Pitch \
+    --scope-level categories --scope-id 1 --reason "Sales jargon" --actor david
+```
+
+The scope must be a branch the concept sits in: for a tag, a speciality it is linked
+to or that speciality's category; for a speciality, its category. A category can't be
+scoped. Two concepts can't share a synonym in the same scope (409).
+
+`SynonymIndex.resolve(term, level=..., within=...)` (`synonyms/resolver.py`) says what a
+term means for a lookup made inside branch `within`. Candidates come in tiers, most
+specific first, and the first tier with any candidate decides:
+
+1. synonyms scoped to the lookup's branch (a speciality's scope before its category's);
+2. concept names;
+3. global synonyms.
+
+The result is `resolved` (one concept), `ambiguous` (several in the deciding tier, all
+listed, none chosen: two rows sharing a name are ambiguous too) or `unknown`. Each match
+says whether it came `via` the concept's name or a synonym, and which synonym. Removed
+synonyms never resolve. Lookups start using this in #60.
+
+The table's schema is now version 2 (scope columns). A version 1 table from #59 is
+migrated on the next write, and its synonyms become global.
+
+What isn't built yet: lookups and scoring don't use synonyms (#60); suggested synonyms from external sources (ESCO, O*NET, spelling
 variants), which will arrive as `proposed` rows a reviewer approves or rejects. The
 `synonyms` context sits between `quality` and `matching`, so when #60 lands, the approved
 mappings are passed into matching as data rather than matching importing this context.

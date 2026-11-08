@@ -51,6 +51,9 @@ def test_adds_lists_and_removes_a_synonym(run_id: str) -> None:
     ({"term": "gst"}, 422),
     ({"term": "   "}, 422),
     ({"concept_level": "services"}, 422),
+    ({"concept_id": "103", "term": "tax"}, 409),  # already the name of tag 100: needs a scope
+    ({"scope_level": "categories", "scope_id": "3"}, 422),  # gst sits in category 1, not 3
+    ({"scope_level": "categories"}, 422),
 ])
 def test_refused_requests_return_client_errors(run_id: str, changes: dict, status: int) -> None:
     with TestClient(app) as client:
