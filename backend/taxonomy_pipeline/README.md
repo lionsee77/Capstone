@@ -1751,6 +1751,10 @@ a hand-run round.
   without a parent are left out of the round, with a warning. Judge verdicts are cached
   in `judge_cache_<source>.json` beside `rounds/`, so rerunning a source reuses them.
   `POST /runs` still refuses judge settings.
+- **Changing files:** replacing or removing a file the imported mapping reads, with different
+  contents, sends the round back to `setup` and discards what was built from it, including saved
+  decisions. Import it again to continue; the saved mapping stays. Uploading the same bytes again, or a
+  file the mapping doesn't use, changes nothing.
 - **Resuming:** `POST /rounds/{id}/run` skips finished stages, so a retry never repeats a
   paid step. A stage still marked running after a server restart reads back as failed.
 - **Removing:** only rounds made through `/rounds` can be removed, and not one that is

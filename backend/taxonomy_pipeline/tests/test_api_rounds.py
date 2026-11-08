@@ -1,6 +1,7 @@
 """`/rounds` as a thin adapter: its roots, statuses and upload limits."""
 from __future__ import annotations
 
+import asyncio
 import json
 from pathlib import Path
 
@@ -84,6 +85,26 @@ def test_uploading_stores_the_raw_bytes_and_reports_the_columns(client: TestClie
     assert response.json()["columns"] == ["Sector", "Role", "Skill"]
     assert client.get("/rounds/r1/files").json()[0]["name"] == "flat.csv"
     assert client.get("/rounds/r1/files/flat.csv").json()["row_count"] == 1
+
+
+def test_saving_and_reading_an_upload_stays_off_the_event_loop(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _created(client)
+    real = rounds.add_file
+    loops = []
+
+    def recording(*args: object) -> object:
+        try:
+            loops.append(asyncio.get_running_loop())
+        except RuntimeError:
+            loops.append(None)
+        return real(*args)
+
+    monkeypatch.setattr(rounds, "add_file", recording)
+
+    assert client.put("/rounds/r1/files/flat.csv", content=CSV).status_code == 201
+    assert loops == [None]
 
 
 def test_an_upload_past_the_limit_is_413(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:

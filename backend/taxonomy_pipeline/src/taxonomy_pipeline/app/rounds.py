@@ -215,14 +215,19 @@ def add_file(roots: RoundRoots, round_id: str, filename: str, content: bytes) ->
         raise ValueError(f"{filename}: unsupported file type; use {', '.join(sorted(UPLOAD_SUFFIXES))}")
     if len(content) > MAX_UPLOAD_BYTES:
         raise ValueError(f"{filename} is larger than the {MAX_UPLOAD_BYTES // (1024 * 1024)} MB limit")
-    with _reserved(roots, round_id):
+    with _reserved(roots, round_id) as state:
         source = roots.directory(round_id) / SOURCE_DIR
-        if not (source / filename).exists() and sum(1 for _ in _uploads(source)) >= MAX_FILES:
+        target = source / filename
+        if not target.exists() and sum(1 for _ in _uploads(source)) >= MAX_FILES:
             raise ValueError(f"a round can hold at most {MAX_FILES} files")
+        # Dropping the same folder again changes nothing, so it mustn't cost a reviewer their decisions.
+        changed = target.exists() and target.read_bytes() != content
         partial = source / f".{filename}.part"
         partial.write_bytes(content)
-        partial.replace(source / filename)
-        return _describe(source / filename, None)
+        partial.replace(target)
+        if changed:
+            _mark_import_out_of_date(roots, state, filename)
+        return _describe(target, None)
 
 
 def list_files(roots: RoundRoots, round_id: str) -> list[RoundFile]:
@@ -240,11 +245,36 @@ def describe_file(roots: RoundRoots, round_id: str, filename: str, sheet: str | 
 
 
 def remove_file(roots: RoundRoots, round_id: str, filename: str) -> None:
-    with _reserved(roots, round_id):
+    with _reserved(roots, round_id) as state:
         matches = [path for path in _uploads(roots.directory(round_id) / SOURCE_DIR) if path.name == filename]
         if not matches:
             raise RoundNotFound(f"no uploaded file named {filename!r}")
         matches[0].unlink()
+        _mark_import_out_of_date(roots, state, filename)
+
+
+def _mark_import_out_of_date(roots: RoundRoots, state: RoundState, filename: str) -> None:
+    """A file the import read has changed, so everything built from it is stale: start again from the import.
+
+    The stages would otherwise skip as finished and carry on from the old dump. The saved mapping stays on
+    disk, ready to import again. Files the mapping doesn't use change nothing.
+    """
+    if _stage(state, "import").status != "done" or filename not in _mapped_files(roots, state.round_id):
+        return
+    _discard_progress(roots, state.round_id)
+    state = _reset_stages(state)
+    state.import_counts = {}
+    state.warnings = [f"{filename} changed after it was imported. Import the source again before running this round."]
+    _save(roots, state)
+
+
+def _mapped_files(roots: RoundRoots, round_id: str) -> set[str]:
+    """The uploaded files the round's saved mapping reads: its table and any labels files."""
+    path = roots.directory(round_id) / SOURCE_DIR / "mapping.yaml"
+    if not path.is_file():
+        return set()
+    mapping = SourceMapping.model_validate(yaml.safe_load(path.read_text(encoding="utf-8")))
+    return {mapping.source, *(spec.labels for spec in mapping.columns.specs().values() if not isinstance(spec, str))}
 
 
 def _uploads(source: Path) -> list[Path]:
