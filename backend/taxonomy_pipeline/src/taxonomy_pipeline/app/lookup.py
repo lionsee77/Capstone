@@ -115,7 +115,8 @@ def _load(item: IntegrationRound) -> _Snapshot:
     current = _loaded
     if current is not None and current.fingerprint == item.snapshot:
         return current
-    loaded = load_dataset(DatasetConfig(name=item.name, paths=[str(path) for path in item.files]))
+    paths = [str(path) for path in item.files]
+    loaded = load_dataset(DatasetConfig(name=item.name, paths=paths, table_map=item.table_map))
     if not isinstance(loaded, TaxonomyDataset):  # `DatasetConfig` defaults to a SQL dump; this narrows the type
         raise TypeError(f"snapshot {item.name!r} did not load as a taxonomy")
     rows: list[tuple[ConceptLevel, dict[str, Any]]] = [

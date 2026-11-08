@@ -26,6 +26,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+import yaml
+
 logger = logging.getLogger(__name__)
 
 # A taxonomy's files by content: the sorted SHA-256 digests of every file it loads from.
@@ -73,6 +75,8 @@ class IntegrationRound:
     added: dict[str, int] = field(default_factory=dict)
     # The files that load this round's snapshot, in load order: its baseline, then its additions.
     files: list[Path] = field(default_factory=list)
+    # Concept -> table, when the snapshot's dumps use other table names (`enriched.yaml`'s `table_map`).
+    table_map: dict[str, str] = field(default_factory=dict)
 
 
 def read_rounds(integrations_root: Path, merge_root: Path | None = None) -> list[IntegrationRound]:
@@ -93,7 +97,7 @@ def read_rounds(integrations_root: Path, merge_root: Path | None = None) -> list
             continue
         try:
             rounds.append(_read_round(directory, json.loads(manifest_path.read_text(encoding="utf-8")), merge_root))
-        except (OSError, ValueError, KeyError, TypeError) as exc:
+        except (OSError, ValueError, KeyError, TypeError, AttributeError, IndexError, yaml.YAMLError) as exc:
             logger.warning("Skipping integration %s: %s", directory.name, exc)
     return rounds
 
@@ -115,7 +119,16 @@ def _read_round(directory: Path, manifest: dict[str, Any], merge_root: Path | No
         sources=_sources(manifest.get("merge_run") or {}, merge_root) if merge_root else [],
         added={table: int(count) for table, count in (manifest.get("counts") or {}).items()},
         files=snapshot_files,
+        table_map=_table_map(directory / "enriched.yaml"),
     )
+
+
+def _table_map(config_path: Path) -> dict[str, str]:
+    """The snapshot's table names. `integrate` copies a dump's tables as they are and records the mapping
+    only here, in the config's first dataset (the snapshot itself; later ones are what it's scored with)."""
+    if not config_path.is_file():
+        return {}
+    return dict(yaml.safe_load(config_path.read_text(encoding="utf-8"))["datasets"][0].get("table_map") or {})
 
 
 def _sources(provenance: dict[str, Any], merge_root: Path) -> list[str]:

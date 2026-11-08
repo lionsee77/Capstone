@@ -203,3 +203,24 @@ def test_a_changed_snapshot_is_picked_up_without_a_restart(round_with: Callable[
 def test_invalid_input_is_rejected_before_anything_loads(term: str, options: dict, tmp_path: Path) -> None:
     with pytest.raises(ValueError):
         lookup.lookup_term(term, tmp_path / "missing", **options)
+
+
+def test_a_snapshot_built_on_renamed_tables_is_still_searched(
+    integration_round: Callable[..., Path], tmp_path: Path,
+) -> None:
+    """`integrate` keeps the dump's table names and records the mapping only in `enriched.yaml`."""
+    directory = integration_round(
+        "renamed",
+        {"mini.sql": "INSERT INTO `sf_tags` (`id`, `name`) VALUES (100, 'Payroll');\n"},
+        "INSERT INTO `sf_tags` (`id`, `name`) VALUES (200, 'Invoicing');\n",
+    )
+    (directory / "enriched.yaml").write_text(
+        "datasets:\n- name: enriched\n  type: sql_dump\n  paths: [baseline/mini.sql, additions.sql]\n"
+        "  table_map:\n    tags: sf_tags\n"
+        "- name: other\n  paths: [elsewhere.sql]\n  table_map:\n    tags: wrong_table\n",
+        encoding="utf-8",
+    )
+    root = tmp_path / "integrations"
+
+    assert lookup.lookup_term("payroll", root).exists
+    assert lookup.lookup_term("invoicing", root).exists
