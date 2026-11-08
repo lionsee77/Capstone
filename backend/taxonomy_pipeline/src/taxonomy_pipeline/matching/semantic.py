@@ -51,6 +51,13 @@ class SemanticMatcher:
             return np.zeros((len(queries), len(choices)))
         return np.stack([self._cache[q] for q in queries]) @ np.stack([self._cache[c] for c in choices]).T
 
+    def retain(self, names: list[str]) -> None:
+        """Forget every embedding except `names`'. A batch run needs no such thing; a long-running
+        service does, or each distinct query it is ever asked stays in memory."""
+        keep = set(names)
+        for name in [name for name in self._cache if name not in keep]:
+            del self._cache[name]
+
     def best_matches(self, queries: list[str], choices: list[str]) -> list[tuple[str | None, float | None]]:
         if not queries or not choices:
             return [(None, None) for _ in queries]

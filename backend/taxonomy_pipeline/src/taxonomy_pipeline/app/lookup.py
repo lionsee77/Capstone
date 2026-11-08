@@ -22,7 +22,7 @@ from typing import Any
 from ..config import DatasetConfig
 from ..enrichment.lineage import FileFingerprint, IntegrationRound, read_rounds
 from ..matching.lookup import DEFAULT_MIN_SCORE, NameIndex, NameMatch
-from ..matching.semantic import SemanticMatcher, SimilarityMatcher
+from ..matching.semantic import SemanticMatcher
 from ..models import ConceptLevel, LookupMatch, TagLookupResult
 from ..taxonomy import load_dataset
 from ..taxonomy.base import Hierarchy, TaxonomyDataset
@@ -74,7 +74,9 @@ def lookup_term(
     loaded = _load(chosen)
     if semantic:
         with _SEMANTIC_LOCK:
-            matches = loaded.index.match(term, min_score=min_score, matcher=_semantic_matcher())
+            matcher = _semantic_matcher()
+            matches = loaded.index.match(term, min_score=min_score, matcher=matcher)
+            matcher.retain(loaded.index.names)  # past searches and older snapshots shouldn't pile up in memory
     else:
         matches = loaded.index.match(term, min_score=min_score)
     if level:
@@ -128,12 +130,12 @@ def _load(item: IntegrationRound) -> _Snapshot:
 
 
 @lru_cache(maxsize=1)
-def _load_matcher() -> SimilarityMatcher:
+def _load_matcher() -> SemanticMatcher:
     return SemanticMatcher(SEMANTIC_MODEL)
 
 
-def _semantic_matcher() -> SimilarityMatcher:
-    """The shared model, loaded on first use; it also remembers each name's embedding between lookups."""
+def _semantic_matcher() -> SemanticMatcher:
+    """The shared model, loaded on first use; it also keeps the current snapshot's name embeddings."""
     try:
         return _load_matcher()
     except (ValueError, OSError) as exc:  # the optional dependency is missing, or the model can't be fetched

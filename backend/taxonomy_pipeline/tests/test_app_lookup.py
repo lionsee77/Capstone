@@ -11,6 +11,7 @@ import numpy as np
 import pytest
 
 from taxonomy_pipeline.app import lookup
+from taxonomy_pipeline.matching.semantic import SemanticMatcher
 from tests.conftest import FIXTURES
 
 ADDED_TAG = "INSERT INTO `tags` (`id`, `name`, `status`) VALUES (200, '{name}', '{status}');\n"
@@ -112,6 +113,9 @@ def test_meaning_matching_uses_the_shared_matcher_only_when_asked(
         def similarity(self, queries: list[str], choices: list[str]) -> np.ndarray:
             return np.array([[0.9 if choice == "Marketing" else 0.0 for choice in choices]])
 
+        def retain(self, names: list[str]) -> None:
+            pass
+
     monkeypatch.setattr(lookup, "_semantic_matcher", Matcher)
     root = round_with("r1")
 
@@ -140,6 +144,9 @@ def test_concurrent_meaning_matches_load_and_run_the_model_one_at_a_time(
         def similarity(self, queries: list[str], choices: list[str]) -> np.ndarray:
             in_model()
             return np.zeros((len(queries), len(choices)))
+
+        def retain(self, names: list[str]) -> None:
+            pass
 
     def load() -> Matcher:
         in_model()
@@ -224,3 +231,26 @@ def test_a_snapshot_built_on_renamed_tables_is_still_searched(
 
     assert lookup.lookup_term("payroll", root).exists
     assert lookup.lookup_term("invoicing", root).exists
+
+
+def test_only_the_current_snapshots_name_embeddings_are_kept_between_lookups(
+    round_with: Callable[..., Path], monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class Model:
+        def encode(self, names: list[str], normalize_embeddings: bool) -> list[np.ndarray]:
+            return [np.ones(2) for _ in names]
+
+    matcher = SemanticMatcher.__new__(SemanticMatcher)
+    matcher.model, matcher._cache = Model(), {}
+    monkeypatch.setattr(lookup, "_load_matcher", lambda: matcher)
+    round_with("older", "Payroll", created_at="2026-10-01T00:00:00+00:00")
+    root = round_with("newer", "Bookkeeping", created_at="2026-11-01T00:00:00+00:00")
+
+    lookup.lookup_term("first search", root, semantic=True, snapshot="older")
+    assert "first search" not in matcher._cache
+    assert "Payroll" in matcher._cache
+
+    lookup.lookup_term("second search", root, semantic=True)
+    assert "second search" not in matcher._cache
+    assert "Payroll" not in matcher._cache
+    assert "Bookkeeping" in matcher._cache
