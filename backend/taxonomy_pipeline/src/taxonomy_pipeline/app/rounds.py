@@ -27,6 +27,8 @@ import re
 import shutil
 import threading
 import zipfile
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -54,6 +56,7 @@ from .scoring import load_taxonomies, run_config, write_report
 from .sources import DEFAULT_TEMPLATE, ROUND_BASELINE, import_source
 
 ROUND_ID = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
+RESERVED_ROUND_IDS = {"options"}
 UPLOAD_SUFFIXES = {".csv", ".tsv", ".xlsx", ".xlsm"}
 MAX_UPLOAD_BYTES = 50 * 1024 * 1024
 MAX_FILES = 20
@@ -129,6 +132,8 @@ def create_round(roots: RoundRoots, round_id: str, baseline_snapshot: str) -> Ro
     """An empty round building on `baseline_snapshot`. Its ID also names its merge run and snapshot."""
     if not ROUND_ID.fullmatch(round_id):
         raise ValueError("round name must be lowercase letters, digits, '-' or '_', starting with a letter or digit")
+    if round_id in RESERVED_ROUND_IDS:
+        raise ValueError(f"{round_id!r} can't name a round: it is a route under /rounds")
     if not (roots.integrations / baseline_snapshot / "enriched.yaml").is_file() or not ROUND_ID.fullmatch(
         baseline_snapshot,
     ):
@@ -167,12 +172,30 @@ def get_round(roots: RoundRoots, round_id: str) -> RoundState:
     state = RoundState.model_validate_json(path.read_text(encoding="utf-8"))
     with _lock:
         interrupted = round_id not in _active
-    if interrupted:
-        for stage in state.stages:
-            if stage.status == "running":  # nothing in this process is running it: the server restarted mid-stage
-                stage.status, stage.error = "failed", "Interrupted when the server stopped; run the round again"
-                stage.finished_at = utcnow()
+    return _without_interrupted(state) if interrupted else state
+
+
+def _without_interrupted(state: RoundState) -> RoundState:
+    """A stage marked running that nothing in this process is running: the server restarted mid-stage."""
+    for stage in state.stages:
+        if stage.status == "running":
+            stage.status, stage.error = "failed", "Interrupted when the server stopped; run the round again"
+            stage.finished_at = utcnow()
     return state
+
+
+@contextmanager
+def _reserved(roots: RoundRoots, round_id: str) -> Iterator[RoundState]:
+    """Hold the round for a change that takes a while, so a run or removal can't start partway through it."""
+    with _lock:
+        state = _claimable(roots, round_id)
+        _require_editable(state)
+        _active.add(round_id)
+    try:
+        yield state
+    finally:
+        with _lock:
+            _active.discard(round_id)
 
 
 def round_config_text(roots: RoundRoots, round_id: str) -> str:
@@ -186,21 +209,20 @@ def round_config_text(roots: RoundRoots, round_id: str) -> str:
 
 def add_file(roots: RoundRoots, round_id: str, filename: str, content: bytes) -> RoundFile:
     """Save an uploaded source table or labels file into the round, flat, under its own name."""
-    state = get_round(roots, round_id)
-    _require_editable(state)
     if not filename or filename != Path(filename).name or filename.startswith("."):
         raise ValueError("file name must be a plain name, without folders")
     if Path(filename).suffix.lower() not in UPLOAD_SUFFIXES:
         raise ValueError(f"{filename}: unsupported file type; use {', '.join(sorted(UPLOAD_SUFFIXES))}")
     if len(content) > MAX_UPLOAD_BYTES:
         raise ValueError(f"{filename} is larger than the {MAX_UPLOAD_BYTES // (1024 * 1024)} MB limit")
-    source = roots.directory(round_id) / SOURCE_DIR
-    if not (source / filename).exists() and sum(1 for _ in _uploads(source)) >= MAX_FILES:
-        raise ValueError(f"a round can hold at most {MAX_FILES} files")
-    partial = source / f".{filename}.part"
-    partial.write_bytes(content)
-    partial.replace(source / filename)
-    return _describe(source / filename, None)
+    with _reserved(roots, round_id):
+        source = roots.directory(round_id) / SOURCE_DIR
+        if not (source / filename).exists() and sum(1 for _ in _uploads(source)) >= MAX_FILES:
+            raise ValueError(f"a round can hold at most {MAX_FILES} files")
+        partial = source / f".{filename}.part"
+        partial.write_bytes(content)
+        partial.replace(source / filename)
+        return _describe(source / filename, None)
 
 
 def list_files(roots: RoundRoots, round_id: str) -> list[RoundFile]:
@@ -218,12 +240,11 @@ def describe_file(roots: RoundRoots, round_id: str, filename: str, sheet: str | 
 
 
 def remove_file(roots: RoundRoots, round_id: str, filename: str) -> None:
-    state = get_round(roots, round_id)
-    _require_editable(state)
-    matches = [path for path in _uploads(roots.directory(round_id) / SOURCE_DIR) if path.name == filename]
-    if not matches:
-        raise RoundNotFound(f"no uploaded file named {filename!r}")
-    matches[0].unlink()
+    with _reserved(roots, round_id):
+        matches = [path for path in _uploads(roots.directory(round_id) / SOURCE_DIR) if path.name == filename]
+        if not matches:
+            raise RoundNotFound(f"no uploaded file named {filename!r}")
+        matches[0].unlink()
 
 
 def _uploads(source: Path) -> list[Path]:
@@ -252,9 +273,15 @@ def configure_round(
     (a missing column, a bad labels file, no usable rows) raise `ValueError` and change nothing
     the round had: the previous mapping's outputs stay until a new import succeeds.
     """
-    state = get_round(roots, round_id)
-    _require_editable(state)
+    with _reserved(roots, round_id) as state:
+        return _configure(roots, state, mapping, settings)
+
+
+def _configure(
+    roots: RoundRoots, state: RoundState, mapping: SourceMapping, settings: RoundSettings,
+) -> RoundState:
     _check_llm(settings)
+    round_id = state.round_id
     directory = roots.directory(round_id)
     source = directory / SOURCE_DIR
     uploaded = {path.name for path in _uploads(source)}
@@ -369,6 +396,7 @@ def start_round(roots: RoundRoots, round_id: str) -> tuple[RoundState, list[Roun
         if _stage(state, "import").status != "done":
             raise RoundConflict("save this round's mapping before running it")
         _check_llm(state.settings)
+        _check_judge_cache(roots, state)
         stages = [stage for stage in PIPELINE_STAGES if _stage(state, stage).status not in FINISHED]
         if not stages:
             raise RoundConflict("this round has already run; review its tags or integrate it")
@@ -380,8 +408,8 @@ def _claimable(roots: RoundRoots, round_id: str) -> RoundState:
     if not path.is_file():
         raise RoundNotFound(f"no round named {round_id!r}")
     if round_id in _active:
-        raise RoundConflict("this round is already running")
-    return RoundState.model_validate_json(path.read_text(encoding="utf-8"))
+        raise RoundConflict("this round is already running or being changed")
+    return _without_interrupted(RoundState.model_validate_json(path.read_text(encoding="utf-8")))
 
 
 def _claim(roots: RoundRoots, state: RoundState, stages: list[RoundStageId]) -> RoundState:
@@ -566,6 +594,18 @@ def _check_llm(settings: RoundSettings) -> None:
         raise ValueError("LLM steps are off on this server; set TAXONOMY_ALLOW_LLM=true in backend/.env to allow them")
     if not key_configured:
         raise ValueError(f"LLM steps need a real OPENAI_API_KEY in {env.ENV_FILE}")
+
+
+def _check_judge_cache(roots: RoundRoots, state: RoundState) -> None:
+    """Rounds of one source share a judge cache, and a judge rewrites the whole file: two at once lose paid answers."""
+    if not state.settings.judge:
+        return
+    for other in list_rounds_unlocked(roots):
+        if (
+            other.round_id != state.round_id and other.round_id in _active and other.settings.judge
+            and other.source_name == state.source_name
+        ):
+            raise RoundConflict(f"round {other.round_id!r} is using this source's judge cache; wait for it to finish")
 
 
 def _require_editable(state: RoundState) -> None:
