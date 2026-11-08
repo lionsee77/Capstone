@@ -1,4 +1,4 @@
-import type { MetricResult, RunStatus } from "@/lib/api/schemas";
+import type { MetricResult, RoundStageStatus, RunStatus } from "@/lib/api/schemas";
 import { cn } from "@/lib/utils";
 
 const MUTED = { dot: "bg-muted-foreground", text: "text-muted-foreground" };
@@ -8,13 +8,14 @@ const FAILED = { dot: "bg-destructive", text: "text-destructive" };
 // Run statuses and metric result statuses share one look.
 const TONES = {
   queued: MUTED,
+  pending: MUTED,
   running: { dot: "bg-info animate-pulse", text: "text-info" },
   done: SUCCESS,
   failed: FAILED,
   ok: SUCCESS,
   skipped: MUTED,
   error: FAILED,
-} as const satisfies Record<RunStatus | MetricResult["status"], { dot: string; text: string }>;
+} as const satisfies Record<RunStatus | MetricResult["status"] | RoundStageStatus, { dot: string; text: string }>;
 
 /** A run's or metric result's status as a coloured dot and a small-caps label. */
 export function StatusDot({ status, className }: { status: keyof typeof TONES; className?: string }) {

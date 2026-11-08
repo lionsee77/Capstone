@@ -14,6 +14,9 @@ import {
   metricCatalogueSchema,
   type PipelineConfig,
   proposalReviewReportSchema,
+  roundConfigTextSchema,
+  roundOptionsSchema,
+  roundStateSchema,
   runComparisonSchema,
   runReportSchema,
   runSummarySchema,
@@ -73,7 +76,24 @@ export type TaxonomySource = { runId: string; dataset: string };
 /** One side of a comparison: a stored run, and which of its taxonomies (dataset name) when it scored several. */
 export type RunSubject = { runId: string; subject?: string | null };
 
+/** A request whose success has no body (204), so there is nothing to validate. */
+async function requestNoContent(path: string, init: RequestInit): Promise<void> {
+  const response = await fetch(`${API_BASE}${path}`, init);
+  if (!response.ok) {
+    const body: unknown = await response.json().catch(() => null);
+    throw new ApiError(response.status, body && typeof body === "object" && "detail" in body ? body.detail : body);
+  }
+}
+
+const roundPath = (roundId: string) => `/rounds/${encodeURIComponent(roundId)}`;
+
 export const api = {
+  getRoundOptions: () => request("/rounds/options", roundOptionsSchema),
+  listRounds: () => request("/rounds", roundStateSchema.array()),
+  getRound: (roundId: string) => request(roundPath(roundId), roundStateSchema),
+  getRoundConfigText: (roundId: string) => request(`${roundPath(roundId)}/config`, roundConfigTextSchema),
+  runRound: (roundId: string) => request(`${roundPath(roundId)}/run`, roundStateSchema, { method: "POST" }),
+  deleteRound: (roundId: string) => requestNoContent(roundPath(roundId), { method: "DELETE" }),
   // Fetch saved screening evidence through the same validated boundary as other dashboard data.
   listProposals: (mergeRun: string, options: { level?: "category" | "speciality"; offset?: number; limit?: number } = {}) => {
     const params = new URLSearchParams({ merge_run: mergeRun });

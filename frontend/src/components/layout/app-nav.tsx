@@ -1,6 +1,6 @@
 "use client";
 
-import { FilePlus2, GitCompare, History, LayoutList, Network, TrendingUp } from "lucide-react";
+import { FilePlus2, GitCompare, History, Layers, LayoutList, Network, TrendingUp } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
@@ -12,7 +12,8 @@ const NAV_ITEMS = [
   { href: "/improvement", label: "Improvement", icon: TrendingUp },
   { href: "/compare", label: "Compare runs", icon: GitCompare },
   { href: "/runs", label: "Validation runs", icon: History },
-  { href: "/sources/new", label: "New data source", icon: FilePlus2 },
+  { href: "/rounds", label: "Enrichment rounds", icon: Layers },
+  { href: "/sources/new", label: "New round", icon: FilePlus2 },
 ] as const;
 
 export function AppNav() {

@@ -14,6 +14,9 @@ verdict on screen is the API's.
 
 ## Pages
 
+- **Enrichment rounds** (`/rounds`, `/rounds/{id}`) - one new source brought into
+  the taxonomy: each stage's status, summary and error, updating while it runs, with
+  buttons to run, resume or remove the round and the generated config. Reads `/rounds`.
 - **Improvement** (`/improvement`) - how the taxonomy grew round by round
   (Baseline 1 -> 2 -> 3 ...). It reads `GET /lineage` for the chain of
   enrichment rounds and the best run that scored them (most stages, then judge
@@ -87,6 +90,9 @@ The browser calls `/api/pipeline/*`. A route handler
 dashboard uses to `TAXONOMY_API_URL`. Requests stay same-origin, so the FastAPI
 app needs no CORS config.
 
+`bun dev` and `bun start` listen on `127.0.0.1` only. The dashboard has no login, and
+it can start rounds that spend LLM credits, so don't open it to the network without one.
+
 ## Security
 
 The pipeline API requires a token, and `POST /runs` only reads dataset files
@@ -101,10 +107,10 @@ since the dashboard itself has no login yet:
   being open to everyone.
 - The proxy forwards only `GET /metrics`, `GET /runs`, `GET /runs/{id}`
   (with `details=false` only), `GET /runs/{id}/compare/{id}` (with
-  `before_subject`/`after_subject` only), `GET /lineage`,
+  `before_subject`/`after_subject` only), `GET /lineage`, the read routes of `/rounds`,
   `GET /taxonomy/search`, `GET /taxonomy/{level}/{id}`,
   `GET /proposals`, `GET /proposals/{id}` and, when
-  `PIPELINE_ALLOW_RUN_CREATION=true`, `POST /runs`. The allowlist lives in
+  `PIPELINE_ALLOW_RUN_CREATION=true`, `POST /runs` and the routes that change a round. The allowlist lives in
   `src/lib/api/proxy.ts`. Add a route there, with a test, when the dashboard
   starts using a new endpoint. The two `/taxonomy` routes also require a
   valid `run_id` and `dataset` query param - a request missing either is
