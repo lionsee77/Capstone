@@ -40,6 +40,25 @@ const CONCEPT_LEVEL = /^(services|categories|specialities|tags)$/;
 // Concept ids are usually a plain integer, but a proposed-but-not-yet-integrated
 // concept can carry a temporary id like "skillsfuture:501" or "new:category:<hash>".
 const CONCEPT_ID = /^[\w:.-]{1,200}$/;
+const LOOKUP_TERM_MAX = 200;
+
+/** The query `GET /lookup` may forward, or null if any of it is malformed. Unknown parameters are dropped. */
+function lookupQuery(searchParams: URLSearchParams): URLSearchParams | null {
+  const q = searchParams.get("q");
+  if (!q || q.length > LOOKUP_TERM_MAX) return null;
+  const forwarded = new URLSearchParams({ q });
+  const level = searchParams.get("level");
+  if (level) {
+    if (!CONCEPT_LEVEL.test(level)) return null;
+    forwarded.set("level", level);
+  }
+  const semantic = searchParams.get("semantic");
+  if (semantic) {
+    if (semantic !== "true") return null;
+    forwarded.set("semantic", semantic);
+  }
+  return forwarded;
+}
 
 /** `run_id` + `dataset`, required by both /taxonomy endpoints; null if either is missing or malformed. */
 function requireRunAndDataset(searchParams: URLSearchParams): { run_id: string; dataset: string } | null {
@@ -97,6 +116,10 @@ export function resolveUpstream(
     // `details=false` is the only query forwarded: it trims a report the dashboard only summarises.
     const light = searchParams.get("details") === "false";
     return { ok: true, url: light ? `${base}/runs/${a}?details=false` : `${base}/runs/${a}` };
+  }
+  if (method === "GET" && resource === "lookup" && a === undefined) {
+    const forwarded = lookupQuery(searchParams);
+    return forwarded ? { ok: true, url: `${base}/lookup?${forwarded}` } : notFound;
   }
   if (method === "GET" && resource === "lineage" && a === undefined) {
     return { ok: true, url: `${base}/lineage` };

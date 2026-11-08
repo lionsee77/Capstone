@@ -655,3 +655,23 @@ def test_import_source_fails_cleanly_for_a_missing_column(tmp_path: Path, capsys
     }), encoding="utf-8")
     assert main(["import-source", "--mapping", str(tmp_path / "mapping.yaml")]) == 1
     assert "[FAILED] import-source:" in capsys.readouterr().err
+
+
+def test_lookup_prints_the_same_result_as_the_api_and_exits_zero_either_way(
+    tmp_path: Path, integration_round, capsys,
+) -> None:
+    baseline = (FIXTURES / "mini_original.sql").read_text(encoding="utf-8")
+    integration_round("r1", {"mini.sql": baseline}, "INSERT INTO `tags` (`id`, `name`) VALUES (200, 'Payroll');\n")
+    root = str(tmp_path / "integrations")
+
+    assert main(["lookup", "PAYROLL", "--integrations-root", root]) == 0
+    found = json.loads(capsys.readouterr().out)
+    assert (found["snapshot"], found["exists"], found["exact"][0]["id"]) == ("r1", True, 200)
+
+    assert main(["lookup", "Underwater Welding", "--integrations-root", root, "--level", "tags"]) == 0
+    assert json.loads(capsys.readouterr().out)["exists"] is False
+
+
+def test_lookup_fails_clearly_when_there_is_nothing_to_check_against(tmp_path: Path, capsys) -> None:
+    assert main(["lookup", "tax", "--integrations-root", str(tmp_path / "none")]) == 1
+    assert "[FAILED] lookup" in capsys.readouterr().err

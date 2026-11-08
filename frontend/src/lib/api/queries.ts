@@ -4,6 +4,8 @@
  */
 import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 
+import { isLookupTerm } from "@/lib/lookup";
+
 import { api, type RunSubject, type TaxonomySource } from "./client";
 import { type ConceptLevel, isRunFinished, type PipelineConfig, type RunStatus } from "./schemas";
 
@@ -38,6 +40,8 @@ export const queryKeys = {
   health: ["health"] as const,
   taxonomySearch: (source: TaxonomySource | null, q: string, level: ConceptLevel | "") =>
     ["taxonomy", "search", source?.runId, source?.dataset, q, level] as const,
+  tagLookup: (term: string, level: ConceptLevel | "", semantic: boolean) =>
+    ["lookup", term, level, semantic] as const,
   taxonomyConcept: (source: TaxonomySource | null, level: ConceptLevel, conceptId: string) =>
     ["taxonomy", "concept", source?.runId, source?.dataset, level, conceptId] as const,
 };
@@ -145,6 +149,15 @@ export function useTaxonomySearch(source: TaxonomySource | null, q: string, leve
     queryKey: queryKeys.taxonomySearch(source, q, level),
     queryFn: () => api.searchTaxonomy(source as TaxonomySource, { q: q || undefined, level: level || undefined }),
     enabled: source !== null,
+  });
+}
+
+/** Does a term exist in the newest snapshot? Disabled until the term is one the API would accept. */
+export function useTagLookup(term: string, level: ConceptLevel | "", semantic: boolean) {
+  return useQuery({
+    queryKey: queryKeys.tagLookup(term, level, semantic),
+    queryFn: () => api.lookupTerm(term, { level: level || undefined, semantic }),
+    enabled: isLookupTerm(term),
   });
 }
 
