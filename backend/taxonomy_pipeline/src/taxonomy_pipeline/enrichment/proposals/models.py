@@ -7,7 +7,9 @@ from __future__ import annotations
 
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, computed_field
+from pydantic import BaseModel, ConfigDict, Field, SerializerFunctionWrapHandler, computed_field, model_serializer
+
+from ...taxonomy.synonym_set import SynonymMapping
 
 Level = Literal["category", "speciality"]
 Score = Annotated[float, Field(ge=0, le=1, allow_inf_nan=False)]
@@ -30,7 +32,7 @@ class ConceptMatch(BaseModel):
     """Scores explain a candidate; they do not establish semantic equivalence."""
 
     concept: ExistingConcept
-    match_types: list[Literal["normalized_name", "match_key", "lexical", "semantic"]]
+    match_types: list[Literal["normalized_name", "match_key", "synonym", "lexical", "semantic"]]
     lexical_score: Score
     semantic_score: CosineScore | None = None
     same_parent: bool
@@ -60,12 +62,26 @@ class ScreenedProposal(BaseModel):
 
 
 class ScreeningSettings(BaseModel):
-    """Explicit thresholds are persisted so saved reports can be replayed consistently."""
+    """Explicit thresholds are persisted so saved reports can be replayed consistently.
+
+    `synonyms` are the approved synonyms screening applied (`merge-preview --synonyms`,
+    #60), saved with the report for the same reason: a replay must not change because a
+    reviewer approved another synonym in the meantime. Empty means none were applied.
+    """
 
     model_config = ConfigDict(strict=True, extra="forbid")
 
     lexical_threshold: Score = 0.9
     semantic_threshold: Score = 0.7
+    synonyms: list[SynonymMapping] = Field(default_factory=list)
+
+    @model_serializer(mode="wrap")
+    def _omit_no_synonyms(self, handler: SerializerFunctionWrapHandler) -> dict:
+        """Leave `synonyms` out when none were applied, so runs without them save exactly what they did before."""
+        data = handler(self)
+        if not self.synonyms:
+            data.pop("synonyms", None)
+        return data
 
 
 class ProposalScreeningReport(BaseModel):

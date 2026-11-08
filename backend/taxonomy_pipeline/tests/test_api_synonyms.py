@@ -80,3 +80,26 @@ def test_synonym_routes_require_the_api_token(monkeypatch: pytest.MonkeyPatch, i
         assert client.get("/synonyms").status_code == 401
         assert client.post("/synonyms", json={}).status_code == 401
         assert client.get("/synonyms", headers={"Authorization": "Bearer test-secret"}).status_code == 200
+
+
+def test_resolve_says_what_a_term_means_in_a_runs_dataset(run_id: str) -> None:
+    with TestClient(app) as client:
+        assert client.post("/synonyms", json=_body(run_id)).status_code == 201
+        params = {"run_id": run_id, "dataset": "original", "term": "Goods and Services Tax"}
+        body = client.get("/synonyms/resolve", params=params).json()
+        assert body["status"] == "resolved"
+        assert (body["matches"][0]["concept_id"], body["matches"][0]["via"]) == ("101", "synonym")
+        unknown = client.get("/synonyms/resolve", params={**params, "term": "payroll"}).json()
+        assert unknown["status"] == "unknown"
+
+
+@pytest.mark.parametrize(("changes", "status"), [
+    ({"run_id": "missing"}, 404),
+    ({"within_level": "categories"}, 422),
+    ({"within_level": "categories", "within_id": "99"}, 404),
+    ({"term": "  "}, 422),
+])
+def test_resolve_rejects_bad_requests(run_id: str, changes: dict, status: int) -> None:
+    params = {"run_id": run_id, "dataset": "original", "term": "gst", **changes}
+    with TestClient(app) as client:
+        assert client.get("/synonyms/resolve", params=params).status_code == status

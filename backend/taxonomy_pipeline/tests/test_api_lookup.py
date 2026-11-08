@@ -11,6 +11,8 @@ from taxonomy_pipeline.api.app import app
 from taxonomy_pipeline.app import lookup
 from tests.conftest import FIXTURES
 
+# Lookups read approved synonyms; never let them see the developer's real database.
+pytestmark = pytest.mark.usefixtures("isolated_db")
 
 @pytest.fixture
 def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, integration_round: Callable[..., Path]) -> TestClient:
@@ -29,7 +31,7 @@ def test_returns_exact_and_near_matches_for_a_term_without_a_run_id(client: Test
     assert body["near"] == []
     assert body["exact"][0] == {
         "id": 10, "name": "Tax Advisory", "level": "specialities", "match_type": "exact",
-        "lexical_score": 100.0, "semantic_score": None, "active": True,
+        "lexical_score": 100.0, "semantic_score": None, "synonym": None, "active": True,
         "paths": [{
             "service": {"id": 1, "name": "Professional Services"},
             "category": {"id": 1, "name": "Accounting"},

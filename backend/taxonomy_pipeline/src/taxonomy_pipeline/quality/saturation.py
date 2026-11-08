@@ -52,6 +52,7 @@ from ..matching.judge import DecisionsJudge, JudgeError
 from ..matching.semantic import SemanticMatcher
 from ..models import Measure, MetricResult
 from ..taxonomy.base import LoadedDataset, TaxonomyDataset
+from ..taxonomy.synonym_set import SynonymMapping, SynonymSet
 from .base import Metric
 
 
@@ -208,6 +209,14 @@ class SaturationMetric(Metric):
                 "semantic_model_revision needs semantic_model: it pins that model's version"
             ))
 
+        synonyms: list[SynonymMapping] = []
+        if p.get("synonyms") is not None:
+            # Opt-in and read from a frozen `synonym_set` dataset, so the same config always scores the same (#60).
+            found = self.require_datasets(datasets, {"synonyms": p["synonyms"]}, {"synonyms": SynonymSet})
+            if isinstance(found, MetricResult):
+                return found
+            synonyms = found["synonyms"].synonyms
+
         baseline = resolved["baseline"]
         incoming = [resolved[f"incoming[{i}]"] for i in range(len(incoming_names))]
         for source in incoming:
@@ -243,7 +252,9 @@ class SaturationMetric(Metric):
             settings["judge"] = (judge, judge_cfg)
 
         try:
-            steps, curve, pool = self._compare_sources(baseline, incoming_names, incoming, settings, semantic_matcher)
+            steps, curve, pool, aliases = self._compare_sources(
+                baseline, incoming_names, incoming, settings, semantic_matcher, synonyms,
+            )
         except JudgeError as exc:
             return MetricResult(metric_id=self.id, status="error", summary=f"judge: {exc}")
         last = curve[-1]
@@ -288,6 +299,8 @@ class SaturationMetric(Metric):
                     settings["semantic_threshold_by_level"] if semantic_matcher else None
                 ),
                 **({"judge": judge_cfg} if judge_cfg else {}),
+                **({"synonyms": {"dataset": p["synonyms"], "global_synonyms_applied": aliases}}
+                   if p.get("synonyms") is not None else {}),
                 "curve": curve,
                 "steps": steps,
             },
@@ -297,11 +310,14 @@ class SaturationMetric(Metric):
     def _compare_sources(
         baseline: TaxonomyDataset, incoming_names: list[str], incoming: list[TaxonomyDataset],
         settings: dict[str, Any], semantic_matcher: SemanticMatcher | None,
-    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], KnownPool]:
-        """Compare each incoming source in order against everything known before it."""
+        synonyms: list[SynonymMapping] | None = None,
+    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], KnownPool, int]:
+        """Compare each incoming source in order against everything known before it; the baseline's
+        global synonyms (if any) count as names of its concepts. Also returns how many were applied."""
         judged = bool(settings.get("judge"))
         pool = KnownPool()
         pool.add(baseline.name, baseline)
+        aliases = pool.add_aliases(synonyms or [])
         steps, curve = [], []
         for number, (name, source) in enumerate(zip(incoming_names, incoming, strict=True), start=1):
             parents = SourceParents(source)
@@ -351,4 +367,4 @@ class SaturationMetric(Metric):
                     for key in ("asked", "judged_duplicate", "judged_new", "unsure", "failed")
                 }
 
-        return steps, curve, pool
+        return steps, curve, pool, aliases

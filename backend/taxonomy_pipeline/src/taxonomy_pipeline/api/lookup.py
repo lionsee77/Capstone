@@ -29,11 +29,14 @@ def lookup(
     semantic: bool = False,
     snapshot: str | None = Query(default=None, pattern=r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$"),
 ) -> TagLookupResult:
-    """Exact and near matches for `q` in the newest snapshot, or the one named by `snapshot`."""
+    """Exact and near matches for `q` in the newest snapshot, or the one named by `snapshot`; approved
+    synonyms of `TAXONOMY_SYNONYM_DATASET` (default `original`) count as exact matches."""
     root = Path(os.environ.get("TAXONOMY_INTEGRATIONS_ROOT") or DEFAULT_INTEGRATIONS_ROOT).resolve()
+    synonym_dataset = os.environ.get("TAXONOMY_SYNONYM_DATASET") or use_cases.DEFAULT_SYNONYM_DATASET
     try:
         return use_cases.lookup_term(
             q, root, snapshot=snapshot, level=level, limit=limit, min_score=min_score, semantic=semantic,
+            synonym_dataset=synonym_dataset,
         )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc

@@ -48,6 +48,8 @@ export function matchLabel(match: LookupMatch): string {
       return `Similar spelling (${match.lexical_score.toFixed(1)} / 100)`;
     case "semantic":
       return `Similar meaning (${(match.semantic_score ?? 0).toFixed(2)} / 1)`;
+    case "synonym":
+      return match.synonym ? `Approved synonym "${match.synonym}"` : "Approved synonym";
   }
 }
 

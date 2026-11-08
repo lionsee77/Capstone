@@ -13,6 +13,8 @@ from ..audit.models import Text
 from ..synonyms import (
     ConflictingSynonym,
     DuplicateSynonym,
+    Resolution,
+    ScopeLevel,
     Synonym,
     SynonymCreate,
     SynonymError,
@@ -56,6 +58,24 @@ def get_synonyms(
     except ValidationError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     return use_cases.list_synonyms(query)
+
+
+@router.get("/synonyms/resolve")
+def resolve_synonym(
+    run_id: str, dataset: str, term: str, level: SynonymLevel | None = None,
+    within_level: ScopeLevel | None = None, within_id: str | None = None,
+) -> Resolution:
+    """What `term` means in a past run's dataset: `resolved`, `ambiguous` or `unknown`, with each match
+    flagged `via` name or synonym. `within_level`/`within_id` name the branch the lookup is made in."""
+    if (within_level is None) != (within_id is None):
+        raise HTTPException(status_code=422, detail="give both within_level and within_id, or neither")
+    within = (within_level, within_id) if within_level and within_id else None
+    try:
+        return use_cases.resolve_term(term, dataset=dataset, run_id=run_id, level=level, within=within)
+    except UnknownConcept as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @router.post("/synonyms", status_code=201)

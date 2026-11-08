@@ -189,6 +189,23 @@ def list_synonyms(query: SynonymQuery, *, db_path: Path | str | None = None) -> 
     return result
 
 
+def approved_synonyms(dataset: str, *, db_path: Path | str | None = None) -> list[Synonym]:
+    """Every approved synonym of one dataset, oldest first, read without creating the database."""
+    path = Path(db_path or db.DEFAULT_DB_PATH).resolve()
+    if not path.exists():
+        return []
+    with closing(sqlite3.connect(path.as_uri() + "?mode=ro", uri=True)) as connection:
+        if not connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='taxonomy_synonyms'",
+        ).fetchone():
+            return []
+        rows = connection.execute(
+            f"SELECT {', '.join(COLUMNS)} FROM taxonomy_synonyms WHERE status = 'approved' AND dataset = ? "
+            "ORDER BY created_at, synonym_id", (dataset,),
+        )
+        return [_synonym(row) for row in rows]
+
+
 class _writer:
     """One `BEGIN IMMEDIATE` transaction with both schemas in place; commits on success, rolls back on error."""
 

@@ -12,6 +12,7 @@ import {
   reviewDecisionEventSchema,
   runComparisonSchema,
   runReportSchema,
+  screeningSettingsSchema,
   tagLookupResultSchema,
   taxonomyConceptDetailSchema,
   taxonomyConceptSummarySchema,
@@ -183,6 +184,8 @@ describe("pipelineConfigSchema", () => {
 
     expect(withPaths("ssic", ["/data/ssic.xlsx"]).success).toBe(true);
     expect(withPaths("ssoc", ["/data/a.xlsx", "/data/b.xlsx"]).success).toBe(false);
+    expect(withPaths("synonym_set", ["/data/synonyms_v1.json"]).success).toBe(true);
+    expect(withPaths("synonym_set", ["/data/a.json", "/data/b.json"]).success).toBe(false);
     // SQL dumps legitimately span several files.
     expect(withPaths("sql_dump", ["/data/a.sql", "/data/b.sql"]).success).toBe(true);
   });
@@ -300,5 +303,25 @@ describe("tagLookupResultSchema", () => {
   it("rejects a match type the API doesn't define", () => {
     const drifted = { ...result, exact: [{ ...match, match_type: "fuzzy" }] };
     expect(tagLookupResultSchema.safeParse(drifted).success).toBe(false);
+  });
+
+  it("accepts a synonym match naming the synonym it came through", () => {
+    const viaSynonym = { ...result, exact: [{ ...match, match_type: "synonym", synonym: "Tax consulting" }] };
+    expect(tagLookupResultSchema.parse(viaSynonym).exact[0].synonym).toBe("Tax consulting");
+  });
+});
+
+describe("screeningSettingsSchema", () => {
+  it("defaults synonyms for reports saved before screening applied them", () => {
+    expect(screeningSettingsSchema.parse({ lexical_threshold: 0.9, semantic_threshold: 0.7 }).synonyms).toEqual([]);
+  });
+
+  it("keeps the synonyms a screening applied, scoped or global", () => {
+    const synonym = {
+      synonym_id: "s1", term: "Dataviz", normalized_term: "dataviz", concept_level: "specialities",
+      concept_id: "93", concept_name: "Data visualization", scope_level: "categories", scope_id: "37",
+    };
+    const settings = screeningSettingsSchema.parse({ lexical_threshold: 0.9, semantic_threshold: 0.7, synonyms: [synonym] });
+    expect(settings.synonyms).toEqual([synonym]);
   });
 });

@@ -15,7 +15,9 @@ candidate is returned: the resolver never picks one. Two concepts sharing a name
 `check_new` enforces the rules that keep global synonyms unambiguous: a global
 synonym may not be another concept's name or another concept's global synonym, so a
 word with several meanings has to be scoped. The index is pure data, built per call
-from a taxonomy and the synonyms the caller loaded; it never reads storage itself.
+from a taxonomy and the synonyms the caller loaded (stored `Synonym` rows, of which
+only approved ones count, or `SynonymMapping`s from screening settings or an exported
+synonym set); it never reads storage itself.
 """
 from __future__ import annotations
 
@@ -25,6 +27,7 @@ from typing import Any
 
 from ..matching.names import normalize
 from ..taxonomy.base import TaxonomyDataset
+from ..taxonomy.synonym_set import SynonymMapping
 from .models import AUDIT_LEVELS, Resolution, ResolvedConcept, Synonym, SynonymCreate
 from .store import SynonymError
 
@@ -44,7 +47,7 @@ class InvalidScope(SynonymError):
 class SynonymIndex:
     """Concept names and approved synonyms of one taxonomy, folded once for lookups."""
 
-    def __init__(self, taxonomy: TaxonomyDataset, synonyms: Iterable[Synonym] = ()) -> None:
+    def __init__(self, taxonomy: TaxonomyDataset, synonyms: Iterable[Synonym | SynonymMapping] = ()) -> None:
         self.taxonomy = taxonomy
         self.hierarchy = taxonomy.hierarchy()
         self.names: dict[str, list[tuple[str, str, str]]] = defaultdict(list)
@@ -55,11 +58,13 @@ class SynonymIndex:
                 if isinstance(name, str) and normalize(name):
                     self.names[normalize(name)].append((level, str(row.get("id")), name))
                     self.concepts.setdefault((level, str(row.get("id"))), row)
-        self.global_synonyms: dict[str, list[Synonym]] = defaultdict(list)
-        self.scoped_synonyms: dict[str, list[Synonym]] = defaultdict(list)
+        self.global_synonyms: dict[str, list[SynonymMapping]] = defaultdict(list)
+        self.scoped_synonyms: dict[str, list[SynonymMapping]] = defaultdict(list)
         for synonym in synonyms:
-            if synonym.status != "approved":
-                continue
+            if isinstance(synonym, Synonym):
+                if synonym.status != "approved":
+                    continue
+                synonym = synonym.mapping()
             target = self.scoped_synonyms if synonym.scope else self.global_synonyms
             target[synonym.normalized_term].append(synonym)
 
@@ -137,7 +142,7 @@ class SynonymIndex:
                 )
 
 
-def _via_synonym(synonym: Synonym) -> ResolvedConcept:
+def _via_synonym(synonym: SynonymMapping) -> ResolvedConcept:
     return ResolvedConcept(
         concept_level=synonym.concept_level, concept_id=synonym.concept_id, concept_name=synonym.concept_name,
         via="synonym", synonym_id=synonym.synonym_id, synonym_term=synonym.term,

@@ -110,3 +110,54 @@ def test_cli_adds_a_scoped_synonym(isolated_db: Path, config: Path, capsys: pyte
                  "--term", "tax", "--reason", "Means advisory in Tax Advisory", "--scope-level", "specialities",
                  "--scope-id", "10"]) == 0
     assert "within specialities 10" in capsys.readouterr().out
+
+
+def test_resolves_a_term_through_names_and_approved_synonyms(isolated_db: Path, config: Path) -> None:
+    use_cases.add_synonym(_request(), config_path=config)  # "Goods and Services Tax" -> tag 101 gst
+    use_cases.add_synonym(_request(concept_id="103", term="Tax", scope_level="specialities", scope_id="10"),
+                          config_path=config)
+    hit = use_cases.resolve_term("goods and services tax", dataset="original", config_path=config)
+    assert hit.status == "resolved"
+    assert [(m.concept_id, m.via, m.synonym_term) for m in hit.matches] == [
+        ("101", "synonym", "Goods and Services Tax"),
+    ]
+    assert use_cases.resolve_term("tax", dataset="original", config_path=config).matches[0].concept_id == "100"
+    inside = use_cases.resolve_term("tax", dataset="original", config_path=config, within=("specialities", "10"))
+    assert [(m.concept_id, m.via) for m in inside.matches] == [("103", "synonym")]
+    assert use_cases.resolve_term("payroll", dataset="original", config_path=config).status == "unknown"
+
+
+def test_resolving_inside_an_unknown_branch_is_refused(isolated_db: Path, config: Path) -> None:
+    with pytest.raises(UnknownConcept, match="no specialities with ID 99"):
+        use_cases.resolve_term("tax", dataset="original", config_path=config, within=("specialities", "99"))
+
+
+def test_removed_synonyms_do_not_resolve(isolated_db: Path, config: Path) -> None:
+    synonym = use_cases.add_synonym(_request(), config_path=config)
+    use_cases.remove_synonym(synonym.synonym_id, reason="Wrong", actor="lead")
+    assert use_cases.resolve_term("goods and services tax", dataset="original", config_path=config).status == "unknown"
+
+
+def test_exports_approved_synonyms_to_a_new_synonym_set_file(isolated_db: Path, config: Path, tmp_path: Path) -> None:
+    from taxonomy_pipeline.taxonomy.synonym_set import SynonymSetSource
+
+    kept = use_cases.add_synonym(_request(), config_path=config)
+    removed = use_cases.add_synonym(_request(term="GST levy"), config_path=config)
+    use_cases.remove_synonym(removed.synonym_id, reason="Wrong", actor="lead")
+    path = tmp_path / "synonyms_v1.json"
+    exported = use_cases.export_synonyms("original", path)
+    assert [s.synonym_id for s in exported.synonyms] == [kept.synonym_id]
+    assert SynonymSetSource("synonyms_v1", path).load().synonyms == exported.synonyms
+    with pytest.raises(ValueError, match="already exists"):
+        use_cases.export_synonyms("original", path)
+
+
+def test_cli_resolves_and_exports(isolated_db: Path, config: Path, tmp_path: Path,
+                                  capsys: pytest.CaptureFixture[str]) -> None:
+    use_cases.add_synonym(_request(), config_path=config)
+    assert main(["synonym-resolve", "Goods and Services Tax", "--config", str(config)]) == 0
+    assert '"via": "synonym"' in capsys.readouterr().out
+    assert main(["synonyms", "--export", str(tmp_path / "s.json")]) == 1
+    assert "--export needs --dataset" in capsys.readouterr().err
+    assert main(["synonyms", "--export", str(tmp_path / "s.json"), "--dataset", "original"]) == 0
+    assert "wrote 1 approved synonyms" in capsys.readouterr().out
