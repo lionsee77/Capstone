@@ -20,6 +20,7 @@ import {
   runComparisonSchema,
   runReportSchema,
   runSummarySchema,
+  tagLookupResultSchema,
   taxonomyConceptDetailSchema,
   taxonomyConceptSummarySchema,
   taxonomyLineageSchema,
@@ -132,6 +133,12 @@ export const api = {
     if (options.level) params.set("level", options.level);
     if (options.limit) params.set("limit", String(options.limit));
     return request(`/taxonomy/search?${params}`, taxonomyConceptSummarySchema.array());
+  },
+  lookupTerm: (q: string, options: { level?: ConceptLevel; semantic?: boolean } = {}) => {
+    const params = new URLSearchParams({ q });
+    if (options.level) params.set("level", options.level);
+    if (options.semantic) params.set("semantic", "true");
+    return request(`/lookup?${params}`, tagLookupResultSchema);
   },
   getTaxonomyConcept: (source: TaxonomySource, level: ConceptLevel, conceptId: string) => {
     const params = new URLSearchParams({ run_id: source.runId, dataset: source.dataset });

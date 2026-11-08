@@ -43,6 +43,25 @@ const CONCEPT_ID = /^[\w:.-]{1,200}$/;
 const ROUND_ID = /^[a-z0-9][a-z0-9_-]{0,63}$/;
 // An uploaded file's own name; the API checks its type, and it is forwarded percent-encoded as one path segment.
 const ROUND_FILE = /^(?!\.)[^/\\\x00-\x1f\x7f]{1,200}$/;
+const LOOKUP_TERM_MAX = 200;
+
+/** The query `GET /lookup` may forward, or null if any of it is malformed. Unknown parameters are dropped. */
+function lookupQuery(searchParams: URLSearchParams): URLSearchParams | null {
+  const q = searchParams.get("q");
+  if (!q || q.length > LOOKUP_TERM_MAX) return null;
+  const forwarded = new URLSearchParams({ q });
+  const level = searchParams.get("level");
+  if (level) {
+    if (!CONCEPT_LEVEL.test(level)) return null;
+    forwarded.set("level", level);
+  }
+  const semantic = searchParams.get("semantic");
+  if (semantic) {
+    if (semantic !== "true") return null;
+    forwarded.set("semantic", semantic);
+  }
+  return forwarded;
+}
 
 /** `run_id` + `dataset`, required by both /taxonomy endpoints; null if either is missing or malformed. */
 function requireRunAndDataset(searchParams: URLSearchParams): { run_id: string; dataset: string } | null {
@@ -142,6 +161,10 @@ export function resolveUpstream(
     return { ok: true, url: light ? `${base}/runs/${a}?details=false` : `${base}/runs/${a}` };
   }
   if (resource === "rounds") return resolveRound(method, base, a, b, rest, searchParams, env) ?? notFound;
+  if (method === "GET" && resource === "lookup" && a === undefined) {
+    const forwarded = lookupQuery(searchParams);
+    return forwarded ? { ok: true, url: `${base}/lookup?${forwarded}` } : notFound;
+  }
   if (method === "GET" && resource === "lineage" && a === undefined) {
     return { ok: true, url: `${base}/lineage` };
   }

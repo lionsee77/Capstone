@@ -44,6 +44,7 @@ taxonomy_pipeline/
 │   │       └── ssoc.py               #     SSOC 2024 occupation classification: levels and code rule
 │   ├── matching/                     # anything that answers "is this the same concept?"
 │   │   ├── names.py                  #   normalize, match_key, collation_key (which stage uses which), lexical scores
+│   │   ├── lookup.py                 #   rank one term against concept names (exact, variant, near)
 │   │   ├── semantic.py               #   SimilarityMatcher protocol + the sentence-model SemanticMatcher
 │   │   ├── embeddings.py             #   pinned sentence-model loader (one revision pin for every matcher)
 │   │   ├── preprocessing.py          #   breadth's label normalisation profiles
@@ -98,6 +99,7 @@ taxonomy_pipeline/
 │   │   ├── enrichment.py             #   case_a, case_b, merge_preview, review_proposals, bulk_decide, integrate
 │   │   ├── rounds.py                 #   a whole enrichment round as tracked background stages (/rounds)
 │   │   ├── browse.py                 #   taxonomy search/detail over a past run's dataset (/taxonomy)
+│   │   ├── lookup.py                 #   lookup_term: does a term exist in the newest snapshot? (/lookup)
 │   │   └── sources.py                #   import_source: flat source -> dump, tag context, next round's config
 │   ├── config.py                     # YAML/JSON pipeline config (datasets + metrics + optional definitions pin)
 │   ├── models.py                     # shared run reports, comparability checks, API response shapes, import results
@@ -109,6 +111,7 @@ taxonomy_pipeline/
 │   │   ├── proposals.py              #   /proposals: which merge runs a request may read, over app.enrichment
 │   │   ├── rounds.py                 #   /rounds: which folders a round may use, over app.rounds
 │   │   ├── lineage.py                #   /lineage: which integrations and merge roots it reads, over app.lineage
+│   │   ├── lookup.py                 #   /lookup: which integrations root it reads, over app.lookup
 │   │   ├── changes.py                #   authenticated, read-only GET /changes over app.changes
 │   │   └── security.py               #   API token and allowed data directories
 │   └── cli.py                        # `taxonomy-pipeline run|check-comparable|compare|serve|import-source|case-a|case-b|merge-preview|review-proposals|bulk-decide|integrate`
@@ -1709,6 +1712,8 @@ the token, so use curl or the dashboard to call endpoints.
   it's linked to, since it can be linked to more than one; an orphan row
   (e.g. a speciality whose category doesn't resolve) gets a shorter path
   rather than an error, the same row `integrity` would report as an orphan.
+- `GET /lookup?q=&level=&limit=&min_score=&semantic=&snapshot=` - does a proposed
+  term already exist? See "Tag lookup" below. It needs no run ID.
 
 ### Run a round from the API
 
@@ -1811,6 +1816,70 @@ necessarily what that run saw: editing a dataset file changes what the same
 Every run (CLI or API) is persisted to `taxonomy_pipeline.sqlite3` next to
 this README, so a future dashboard has run history to list and diff without
 re-running anything.
+
+### Tag lookup
+
+Checks a proposed term against the taxonomy, so a consumer can see whether it exists
+before proposing it. The route and the command call the same use case (`app/lookup.py`):
+
+```bash
+curl -H "Authorization: Bearer $TAXONOMY_API_TOKEN" "http://localhost:8000/lookup?q=Tax%20Advisory"
+taxonomy-pipeline lookup "Tax Advisory"    # run from backend/taxonomy_pipeline, prints the same JSON
+```
+
+```json
+{
+  "query": "Tax Advisory", "snapshot": "onet-1031", "exists": true,
+  "exact": [{
+    "id": 10, "name": "Tax Advisory", "level": "specialities", "match_type": "exact",
+    "lexical_score": 100.0, "semantic_score": null, "active": true,
+    "paths": [{"service": {"id": 1, "name": "..."}, "category": {"id": 1, "name": "..."},
+               "speciality": {"id": 10, "name": "Tax Advisory"}}]
+  }],
+  "near": []
+}
+```
+
+`exists` means `exact` is non-empty. `match_type` says how a concept matched:
+
+| `match_type` | List | Rule |
+|---|---|---|
+| `exact` | `exact` | Same `normalize`: differs at most in case, spacing or trailing punctuation |
+| `variant` | `exact` | Same `match_key`: also `&`/`and`, `-isation`/`-ization` and a trailing plural |
+| `lexical` | `near` | RapidFuzz ratio on `match_key` of at least `min_score` |
+| `semantic` | `near` | Only with `semantic=true`: cosine of at least 0.7 |
+
+| Param | Default | Meaning |
+|---|---|---|
+| `q` | *(required)* | The term: up to 200 characters, with at least one letter or digit |
+| `level` | all | `services`, `categories`, `specialities` or `tags` |
+| `limit` | 20 | Most near matches, 1-100. Every exact match is always returned |
+| `min_score` | 85 | Spelling closeness for a near match, 0-100; the default is integrity's fuzzy threshold |
+| `semantic` | `false` | Also find names that mean the same. The first such request loads the model and embeds every name (about 11 seconds on a laptop); later ones take milliseconds |
+| `snapshot` | newest | Check this round under `integrations/` instead |
+
+The CLI takes the same options as `--level`, `--limit`, `--min-score`, `--semantic` and
+`--snapshot`, plus `--integrations-root` (default `integrations`, relative to the working
+directory). The API reads `TAXONOMY_INTEGRATIONS_ROOT` instead. Errors: 422 for invalid
+parameters, 404 for an unknown snapshot, 409 when no snapshot exists yet and 503 when
+meaning matching can't load its model.
+
+Worth knowing when reading a result:
+
+- **Which taxonomy:** the round with the newest `created_at` answers, because there is no
+  promotion step yet (#49). The result's `snapshot` names it. A newer experimental round
+  becomes the default, so name a snapshot if that matters. Snapshots are local data (not in
+  git), so a server needs one copied to it; lookup reads these files, not MySQL.
+- **Scores aren't calibrated (#47):** treat a near match as "look at this". `lexical`
+  compares spelling, so "Project Managment" also finds "Product Management" (85.7).
+  `semantic` can be wrong too: "Bookkeeping" finds "housekeeping" (0.74).
+- **A part of a longer name isn't a near match:** "data analysis" doesn't find "Data
+  Analysis and Interpretation", and broader or narrower relationships are #56's scope.
+  `GET /taxonomy/search` does substring search over a past run's dataset.
+- **Duplicate rows all come back:** a name held by several rows returns each one, and their
+  `paths` show where each sits.
+- **Retired rows count as existing:** a row with `status` 0 is returned with `active: false`.
+  Synonyms (#60) and deprecation replacements (#64) aren't applied.
 
 ## Plugging in a taxonomy dataset
 

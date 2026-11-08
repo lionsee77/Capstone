@@ -7,8 +7,8 @@ pipeline's FastAPI endpoints.
 
 The dashboard has no backend logic of its own. Everything it shows comes from
 the pipeline API (`GET /metrics`, `POST /runs`, `GET /runs`, `GET /runs/{id}`,
-`GET /runs/{before}/compare/{after}`, `GET /lineage`, `GET /taxonomy/search`,
-`GET /taxonomy/{level}/{id}`), so the CLI, the API, and this UI all agree on
+`GET /runs/{before}/compare/{after}`, `GET /lineage`, `GET /lookup`,
+`GET /taxonomy/search`, `GET /taxonomy/{level}/{id}`), so the CLI, the API, and this UI all agree on
 what a run is - and no metric is computed here: every value, change and
 verdict on screen is the API's.
 
@@ -17,6 +17,12 @@ verdict on screen is the API's.
 - **Enrichment rounds** (`/rounds`, `/rounds/{id}`) - one new source brought into
   the taxonomy: each stage's status, summary and error, updating while it runs, with
   buttons to run, resume or remove the round and the generated config. Reads `/rounds`.
+- **Tag lookup** (`/lookup`) - check whether a term already exists before proposing
+  it. It reads `GET /lookup`, so it needs no run: the result names the snapshot it
+  checked (the newest one under `integrations/`). Shown: a verdict, then exact and
+  close matches with level, how each matched, and where it sits. Matching by meaning
+  is opt-in, because the first such search loads a language model on the server.
+  Parents are plain text rather than links, since concept pages need a run ID.
 - **Improvement** (`/improvement`) - how the taxonomy grew round by round
   (Baseline 1 -> 2 -> 3 ...). It reads `GET /lineage` for the chain of
   enrichment rounds and the best run that scored them (most stages, then judge
@@ -108,6 +114,7 @@ since the dashboard itself has no login yet:
 - The proxy forwards only `GET /metrics`, `GET /runs`, `GET /runs/{id}`
   (with `details=false` only), `GET /runs/{id}/compare/{id}` (with
   `before_subject`/`after_subject` only), `GET /lineage`, the read routes of `/rounds`,
+  `GET /lookup` (with `q`, `level` and `semantic` only),
   `GET /taxonomy/search`, `GET /taxonomy/{level}/{id}`,
   `GET /proposals`, `GET /proposals/{id}` and, when
   `PIPELINE_ALLOW_RUN_CREATION=true`, `POST /runs` and the routes that change a round. The allowlist lives in

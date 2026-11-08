@@ -1,9 +1,10 @@
 """`taxonomy-pipeline run|check-comparable|compare|serve|import-source|case-a|case-b|merge-preview|
-review-proposals|bulk-decide|integrate`
+review-proposals|bulk-decide|integrate|lookup`
 
 A thin adapter over `app/`: each command parses its flags, calls the one use
 case behind it (`app.scoring` for `run` and `check-comparable`, `app.comparison` for `compare`,
-`app.sources` for `import-source`, `app.enrichment` for the classification commands) and turns the result into
+`app.sources` for `import-source`, `app.enrichment` for the classification commands, `app.lookup` for `lookup`)
+and turns the result into
 printed text and an exit code. `run` calls the same `run_pipeline` the FastAPI
 `/runs` route calls. Anything else a command does - loading, checks, writing
 outputs - belongs in its use case, not here.
@@ -18,10 +19,12 @@ from pathlib import Path
 
 from .app import comparison as comparisons
 from .app import enrichment as use_cases
+from .app import lookup as lookups
 from .app.changes import changes, sync_changes
 from .app.scoring import check_runs, result_labels, run_config, write_report
 from .app.sources import import_source
 from .audit.models import ChangeQuery
+from .matching.lookup import DEFAULT_MIN_SCORE
 
 
 def _cmd_run(args: argparse.Namespace) -> int:
@@ -280,6 +283,22 @@ def _cmd_sync_changes(args: argparse.Namespace) -> int:
     return 0
 
 
+# Print exact and near matches for a term through the same use case as GET /lookup.
+def _cmd_lookup(args: argparse.Namespace) -> int:
+    try:
+        result = lookups.lookup_term(
+            args.term, Path(args.integrations_root), snapshot=args.snapshot, level=args.level, limit=args.limit,
+            min_score=args.min_score, semantic=args.semantic,
+        )
+    except (
+        OSError, ValueError, lookups.NoSnapshots, lookups.SnapshotNotFound, lookups.SemanticUnavailable,
+    ) as exc:
+        print(f"[FAILED] lookup: {exc}", file=sys.stderr)
+        return 1
+    print(result.model_dump_json(indent=2))
+    return 0
+
+
 # Configure the CLI adapters and their shared use-case inputs.
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="taxonomy_pipeline")
@@ -405,6 +424,17 @@ def build_parser() -> argparse.ArgumentParser:
     sync = subparsers.add_parser("sync-changes", help="retry SQLite delivery of a saved audit_events.json file")
     sync.add_argument("--events", required=True)
     sync.set_defaults(func=_cmd_sync_changes)
+
+    # check whether a term already exists before proposing it
+    lookup = subparsers.add_parser("lookup", help="check a term against the newest integrated snapshot")
+    lookup.add_argument("term", help="the term to check")
+    lookup.add_argument("--snapshot", help="round to check instead of the newest (a folder under the root)")
+    lookup.add_argument("--integrations-root", default="integrations", help="where `integrate` wrote its rounds")
+    lookup.add_argument("--level", choices=["services", "categories", "specialities", "tags"])
+    lookup.add_argument("--limit", type=int, default=lookups.DEFAULT_LIMIT, help="most near matches to return")
+    lookup.add_argument("--min-score", type=float, default=DEFAULT_MIN_SCORE, help="spelling score for a near match")
+    lookup.add_argument("--semantic", action="store_true", help="also find names that mean the same (loads a model)")
+    lookup.set_defaults(func=_cmd_lookup)
 
     return parser
 

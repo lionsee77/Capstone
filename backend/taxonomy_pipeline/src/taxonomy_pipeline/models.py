@@ -306,6 +306,35 @@ class TaxonomyConceptDetail(BaseModel):
     tags: list[TaxonomyConceptRef] = Field(default_factory=list)
 
 
+class LookupMatch(TaxonomyConceptSummary):
+    """One existing concept a looked-up term matched, and how (`matching/lookup.py`).
+
+    `lexical_score` is a 0-100 spelling ratio and `semantic_score` a -1 to 1 cosine,
+    present only when meaning matching was requested. Both are uncalibrated review
+    evidence (#47). `active` is false for a retired row, which is still returned: the
+    term does exist, and proposing it again would duplicate that row.
+    """
+
+    match_type: Literal["exact", "variant", "lexical", "semantic"]
+    lexical_score: float
+    semantic_score: float | None = None
+    active: bool = True
+    paths: list[TaxonomyPath] = Field(default_factory=list)
+
+
+class TagLookupResult(BaseModel):
+    """`GET /lookup`: whether a proposed term already exists, and in which taxonomy version.
+
+    `exists` means `exact` is non-empty. `snapshot` names the integrated round checked.
+    """
+
+    query: str
+    snapshot: str
+    exists: bool
+    exact: list[LookupMatch] = Field(default_factory=list)
+    near: list[LookupMatch] = Field(default_factory=list)
+
+
 class SourceImport(BaseModel):
     """What `import-source` wrote (`app.sources.import_source`), plus anything to check before using it.
 
