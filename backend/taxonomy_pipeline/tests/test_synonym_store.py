@@ -173,7 +173,7 @@ def test_a_refusing_check_sees_the_approved_synonyms_and_stores_nothing(isolated
     assert list_synonyms(SynonymQuery()).total == 1
 
 
-def test_a_version_1_table_is_migrated_and_its_synonyms_become_global(isolated_db: Path) -> None:
+def test_a_version_1_table_is_migrated_to_the_current_version_and_its_synonyms_become_global(isolated_db: Path) -> None:
     with closing(sqlite3.connect(isolated_db)) as connection, connection:
         connection.execute("""CREATE TABLE taxonomy_synonyms (synonym_id TEXT PRIMARY KEY, term TEXT NOT NULL,
             normalized_term TEXT NOT NULL, dataset TEXT NOT NULL, concept_level TEXT NOT NULL,
@@ -191,4 +191,55 @@ def test_a_version_1_table_is_migrated_and_its_synonyms_become_global(isolated_d
     listed = list_synonyms(SynonymQuery()).synonyms
     assert [(s.synonym_id, s.scope) for s in listed] == [("old", None), (listed[1].synonym_id, ("categories", "1"))]
     with closing(sqlite3.connect(isolated_db)) as connection:
-        assert connection.execute("SELECT version FROM taxonomy_synonym_schema").fetchone() == (2,)
+        assert connection.execute("SELECT version FROM taxonomy_synonym_schema").fetchone() == (store.SCHEMA_VERSION,)
+
+
+def _propose(*terms: str):
+    from taxonomy_pipeline.synonyms import propose_synonyms
+
+    return propose_synonyms("original", [(_request(term), "JavaScript") for term in terms], snapshot_id="s")
+
+
+def test_suggestions_are_stored_as_proposed_without_resolving_or_auditing(isolated_db: Path) -> None:
+    proposed, skipped = _propose("JS", "javascript", "JS", "ECMAScript")
+    assert [s.term for s in proposed] == ["JS", "ECMAScript"] and all(s.status == "proposed" for s in proposed)
+    assert skipped == {"same_as_name": 1, "already_known": 1}
+    assert list_synonyms(SynonymQuery()).total == 0
+    assert list_synonyms(SynonymQuery(status="proposed")).total == 2
+    assert read_changes(ChangeQuery()).total == 0
+
+
+def test_approving_a_suggestion_makes_it_resolve_and_logs_it_as_an_addition(isolated_db: Path) -> None:
+    from taxonomy_pipeline.synonyms import review_synonym
+
+    [js] = _propose("JS")[0]
+    approved = review_synonym(js.synonym_id, approve=True, reason="Common abbreviation", actor="lead")
+    assert (approved.status, approved.reviewed_by, approved.review_reason) == (
+        "approved", "lead", "Common abbreviation")
+    assert list_synonyms(SynonymQuery()).synonyms == [approved]
+    [event] = read_changes(ChangeQuery()).changes
+    assert (event.action, event.actor, event.reason, event.before["status"]) == (
+        "synonym_add", "lead", "Common abbreviation", "proposed")
+
+
+def test_rejecting_a_suggestion_keeps_it_and_stops_it_being_proposed_again(isolated_db: Path) -> None:
+    from taxonomy_pipeline.synonyms import review_synonym
+
+    [js] = _propose("JS")[0]
+    rejected = review_synonym(js.synonym_id, approve=False, reason="Too vague", actor="lead")
+    assert rejected.status == "rejected"
+    [event] = read_changes(ChangeQuery()).changes
+    assert (event.action, event.scope, event.decision["action"]) == ("review_decision", "review", "reject")
+    assert _propose("JS") == ([], {"already_known": 1})
+    with pytest.raises(SynonymNotFound, match="no proposed synonym"):
+        review_synonym(js.synonym_id, approve=True, reason="Changed my mind", actor="lead")
+
+
+def test_approving_a_suggestion_already_added_by_hand_is_refused(isolated_db: Path) -> None:
+    from taxonomy_pipeline.synonyms import review_synonym
+
+    [js] = _propose("JS")[0]
+    _add("JS")
+    with pytest.raises(DuplicateSynonym):
+        review_synonym(js.synonym_id, approve=True, reason="Abbreviation", actor="lead")
+    assert list_synonyms(SynonymQuery(status="proposed")).total == 1

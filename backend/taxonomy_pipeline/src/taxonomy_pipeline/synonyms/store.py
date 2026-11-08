@@ -10,14 +10,21 @@ approved synonyms read under the writer lock, so two concurrent adds can't both 
 
 Nothing here writes to taxonomy files or the client's database. The schema is
 versioned in `taxonomy_synonym_schema` (as the audit log versions its own):
-version 2 added the scope columns (#61), and a version 1 table is migrated in place.
+version 2 added the scope columns (#61) and version 3 the reviewer columns for
+suggested synonyms; older tables are migrated in place.
+
+Suggestions from a source are stored `proposed` without an audit event, since
+nothing has changed yet. Approving one logs `synonym_add`, exactly like adding it by
+hand; rejecting one logs a `review_decision`. A suggestion already proposed,
+approved or rejected for the same concept is not proposed again.
 A global synonym stores its scope as empty strings, because SQLite treats NULLs as
 distinct in a unique index and would let duplicate global mappings through.
 """
 from __future__ import annotations
 
 import sqlite3
-from collections.abc import Callable
+from collections import Counter
+from collections.abc import Callable, Sequence
 from contextlib import closing
 from pathlib import Path
 from typing import Any
@@ -30,7 +37,7 @@ from ..matching.names import normalize
 from ..taxonomy.base import TaxonomyDataset
 from .models import AUDIT_LEVELS, Synonym, SynonymCreate, SynonymLevel, SynonymList, SynonymQuery
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 SCHEMA = (
     """CREATE TABLE IF NOT EXISTS taxonomy_synonyms (
         synonym_id TEXT PRIMARY KEY,
@@ -50,7 +57,10 @@ SCHEMA = (
         created_at TEXT NOT NULL,
         removed_at TEXT,
         removed_by TEXT,
-        removal_reason TEXT
+        removal_reason TEXT,
+        reviewed_at TEXT,
+        reviewed_by TEXT,
+        review_reason TEXT
     )""",
     "CREATE INDEX IF NOT EXISTS synonym_term ON taxonomy_synonyms(dataset, normalized_term)",
 )
@@ -76,7 +86,7 @@ class DuplicateSynonym(SynonymError):
 
 
 class SynonymNotFound(SynonymError):
-    """No approved synonym has that ID."""
+    """No synonym in the expected status has that ID."""
 
 
 def concept_name(taxonomy: TaxonomyDataset, level: SynonymLevel, concept_id: str) -> str:
@@ -155,6 +165,91 @@ def remove_synonym(
     return after
 
 
+def propose_synonyms(
+    dataset: str, suggestions: Sequence[tuple[SynonymCreate, str]], *, snapshot_id: str,
+    db_path: Path | str | None = None,
+) -> tuple[list[Synonym], Counter[str]]:
+    """Store suggestions as `proposed` synonyms; returns those stored and why the rest were skipped.
+
+    Each suggestion comes with its concept's canonical name. One equal to that name, or
+    already proposed, approved or rejected for that concept (globally), is skipped.
+    """
+    skipped: Counter[str] = Counter()
+    proposed: list[Synonym] = []
+    with _writer(db_path) as connection:
+        known = {
+            (level, concept_id, term) for level, concept_id, term in connection.execute(
+                "SELECT concept_level, concept_id, normalized_term FROM taxonomy_synonyms WHERE dataset = ? "
+                "AND scope_level = '' AND status IN ('proposed', 'approved', 'rejected')", (dataset,),
+            )
+        }
+        for request, canonical_name in suggestions:
+            normalized = normalize(request.term)
+            key = (request.concept_level, request.concept_id, normalized)
+            if not normalized or normalized == normalize(canonical_name):
+                skipped["same_as_name"] += 1
+                continue
+            if key in known:
+                skipped["already_known"] += 1
+                continue
+            known.add(key)
+            synonym = Synonym(
+                synonym_id=str(uuid4()), term=request.term, normalized_term=normalized, dataset=dataset,
+                concept_level=request.concept_level, concept_id=request.concept_id, concept_name=canonical_name,
+                snapshot_id=snapshot_id, status="proposed", source=request.source, reason=request.reason,
+                actor=request.actor, created_at=utc_now(),
+            )
+            connection.execute(
+                f"INSERT INTO taxonomy_synonyms ({', '.join(COLUMNS)}) VALUES ({', '.join('?' * len(COLUMNS))})",
+                _row(synonym),
+            )
+            proposed.append(synonym)
+    return proposed, skipped
+
+
+def review_synonym(
+    synonym_id: str, *, approve: bool, reason: str, actor: str = "unspecified",
+    check: Callable[[list[Synonym]], None] | None = None, db_path: Path | str | None = None,
+) -> Synonym:
+    """Approve or reject one proposed synonym, with its audit event, in one transaction.
+
+    Approving runs `check` (as `add_synonym` does) against the dataset's approved synonyms
+    and refuses a term already approved for that concept.
+    """
+    with _writer(db_path) as connection:
+        row = connection.execute(
+            f"SELECT {', '.join(COLUMNS)} FROM taxonomy_synonyms WHERE synonym_id = ? AND status = 'proposed'",
+            (synonym_id,),
+        ).fetchone()
+        if row is None:
+            raise SynonymNotFound(f"no proposed synonym with ID {synonym_id}")
+        before = _synonym(row)
+        if approve:
+            existing = connection.execute(
+                "SELECT synonym_id FROM taxonomy_synonyms WHERE status = 'approved' AND dataset = ? "
+                "AND concept_level = ? AND concept_id = ? AND normalized_term = ? AND scope_level = '' "
+                "AND scope_id = ''", (before.dataset, before.concept_level, before.concept_id, before.normalized_term),
+            ).fetchone()
+            if existing:
+                raise DuplicateSynonym(
+                    f"{before.term!r} is already an approved synonym of {before.concept_name!r} (synonym {existing[0]})"
+                )
+            if check is not None:
+                check(_approved(connection, before.dataset))
+        after = Synonym.model_validate({
+            **before.model_dump(), "status": "approved" if approve else "rejected",
+            "reviewed_at": utc_now(), "reviewed_by": actor, "review_reason": reason,
+        })
+        connection.execute(
+            "UPDATE taxonomy_synonyms SET status = ?, reviewed_at = ?, reviewed_by = ?, review_reason = ? "
+            "WHERE synonym_id = ?",
+            (after.status, _time(after.reviewed_at), after.reviewed_by, after.review_reason, synonym_id),
+        )
+        action = "synonym_add" if approve else "review_decision"
+        log_change(_event(after, action, before=before, after=after), connection=connection)
+    return after
+
+
 def list_synonyms(query: SynonymQuery, *, db_path: Path | str | None = None) -> SynonymList:
     """One page of synonyms, oldest first, read without creating or migrating the database."""
     result = SynonymList(total=0, offset=query.offset, limit=query.limit, synonyms=[])
@@ -170,7 +265,12 @@ def list_synonyms(query: SynonymQuery, *, db_path: Path | str | None = None) -> 
     if query.term is not None:
         clauses.append("normalized_term = ?")
         params.append(normalize(query.term))
-    if not query.include_removed:
+    if query.status is not None:
+        clauses.append("status = ?")
+        params.append(query.status)
+    elif query.include_removed:
+        clauses.append("status IN ('approved', 'removed')")
+    else:
         clauses.append("status = 'approved'")
     where = " WHERE " + " AND ".join(clauses) if clauses else ""
     with closing(sqlite3.connect(path.as_uri() + "?mode=ro", uri=True)) as connection:
@@ -187,6 +287,22 @@ def list_synonyms(query: SynonymQuery, *, db_path: Path | str | None = None) -> 
         )
         result.synonyms = [_synonym(row) for row in rows]
     return result
+
+
+def get_synonym(synonym_id: str, *, db_path: Path | str | None = None) -> Synonym | None:
+    """One synonym in any status, read without creating the database."""
+    path = Path(db_path or db.DEFAULT_DB_PATH).resolve()
+    if not path.exists():
+        return None
+    with closing(sqlite3.connect(path.as_uri() + "?mode=ro", uri=True)) as connection:
+        if not connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='taxonomy_synonyms'",
+        ).fetchone():
+            return None
+        row = connection.execute(
+            f"SELECT {', '.join(COLUMNS)} FROM taxonomy_synonyms WHERE synonym_id = ?", (synonym_id,),
+        ).fetchone()
+        return _synonym(row) if row else None
 
 
 def approved_synonyms(dataset: str, *, db_path: Path | str | None = None) -> list[Synonym]:
@@ -245,11 +361,14 @@ def _ensure_schema(connection: sqlite3.Connection) -> None:
         for statement in (*SCHEMA, UNIQUE_MAPPING):
             connection.execute(statement)
         connection.execute("INSERT INTO taxonomy_synonym_schema (singleton, version) VALUES (1, ?)", (SCHEMA_VERSION,))
-    elif version == 1:  # #59's table: add the scope columns and widen the unique mapping to include them
-        connection.execute("ALTER TABLE taxonomy_synonyms ADD COLUMN scope_level TEXT NOT NULL DEFAULT ''")
-        connection.execute("ALTER TABLE taxonomy_synonyms ADD COLUMN scope_id TEXT NOT NULL DEFAULT ''")
-        connection.execute("DROP INDEX IF EXISTS synonym_approved_mapping")
-        connection.execute(UNIQUE_MAPPING)
+    elif version in (1, 2):
+        if version == 1:  # #59's table: add the scope columns and widen the unique mapping to include them
+            connection.execute("ALTER TABLE taxonomy_synonyms ADD COLUMN scope_level TEXT NOT NULL DEFAULT ''")
+            connection.execute("ALTER TABLE taxonomy_synonyms ADD COLUMN scope_id TEXT NOT NULL DEFAULT ''")
+            connection.execute("DROP INDEX IF EXISTS synonym_approved_mapping")
+            connection.execute(UNIQUE_MAPPING)
+        for column in ("reviewed_at", "reviewed_by", "review_reason"):  # version 3: who reviewed a suggestion
+            connection.execute(f"ALTER TABLE taxonomy_synonyms ADD COLUMN {column} TEXT")
         connection.execute("UPDATE taxonomy_synonym_schema SET version = ? WHERE singleton = 1", (SCHEMA_VERSION,))
     else:
         raise SynonymError(f"Unsupported synonym schema version {version}; expected {SCHEMA_VERSION}")
@@ -263,17 +382,27 @@ def _approved(connection: sqlite3.Connection, dataset: str) -> list[Synonym]:
 
 
 def _event(synonym: Synonym, action: str, *, before: Synonym | None = None, after: Synonym) -> ChangeEvent:
+    """`synonym_add` (added by hand, or a suggestion approved), `synonym_remove`, or a rejection (`review_decision`)."""
     level = AUDIT_LEVELS[synonym.concept_level]
-    operation = f"synonym:{synonym.synonym_id}:{action.removeprefix('synonym_')}"
+    reviewed = before is not None and before.status == "proposed"
+    step = "reject" if action == "review_decision" else action.removeprefix("synonym_")
+    operation = f"synonym:{synonym.synonym_id}:{step}"
+    if action == "synonym_remove":
+        reason, actor, when = after.removal_reason, after.removed_by, after.removed_at
+    elif reviewed:
+        reason, actor, when = after.review_reason, after.reviewed_by, after.reviewed_at
+    else:
+        reason, actor, when = after.reason, after.actor, after.created_at
     return ChangeEvent(
         event_id=operation, operation_id=operation, dataset=synonym.dataset, snapshot_id=synonym.snapshot_id,
         concept_level=level, concept_id=synonym.concept_id, concept_ref=f"{level}:{synonym.concept_id}",
         concept_name=synonym.concept_name, action=action,
         before=before.model_dump(mode="json") if before else None, after=after.model_dump(mode="json"),
-        reason=after.removal_reason if action == "synonym_remove" else after.reason,
-        actor=after.removed_by if action == "synonym_remove" else after.actor,
-        occurred_at=after.removed_at if action == "synonym_remove" else after.created_at,
-        scope="live",
+        reason=reason, actor=actor, occurred_at=when,
+        decision=(
+            {"action": "reject", "synonym": after.model_dump(mode="json")} if action == "review_decision" else None
+        ),
+        scope="review" if action == "review_decision" else "live",
     )
 
 
@@ -284,7 +413,7 @@ def _time(value: Any) -> str | None:
 def _row(synonym: Synonym) -> tuple[Any, ...]:
     data = synonym.model_dump()
     data["scope_level"], data["scope_id"] = data["scope_level"] or "", data["scope_id"] or ""
-    return tuple(_time(data[c]) if c in ("created_at", "removed_at") else data[c] for c in COLUMNS)
+    return tuple(_time(data[c]) if c in ("created_at", "removed_at", "reviewed_at") else data[c] for c in COLUMNS)
 
 
 def _synonym(row: tuple[Any, ...]) -> Synonym:

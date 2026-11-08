@@ -161,3 +161,59 @@ def test_cli_resolves_and_exports(isolated_db: Path, config: Path, tmp_path: Pat
     assert "--export needs --dataset" in capsys.readouterr().err
     assert main(["synonyms", "--export", str(tmp_path / "s.json"), "--dataset", "original"]) == 0
     assert "wrote 1 approved synonyms" in capsys.readouterr().out
+
+
+def test_suggests_from_a_source_then_approves_and_rejects_with_the_usual_checks(
+    isolated_db: Path, config: Path,
+) -> None:
+    # mini_original has no British/American names; give spelling something to find.
+    sql = (FIXTURES / "mini_original.sql").read_text(encoding="utf-8")
+    (config.parent / "mini.sql").write_text(sql.replace("'Brand Strategy'", "'Brand Organisation'"), encoding="utf-8")
+    data = yaml.safe_load(config.read_text())
+    data["datasets"][0]["paths"] = [str(config.parent / "mini.sql")]
+    config.write_text(yaml.safe_dump(data))
+
+    report = use_cases.suggest_synonyms("spelling", dataset="original", config_path=config, actor="bot")
+    assert [(s.concept_id, s.term, s.source, s.actor) for s in report.proposed] == [
+        ("11", "Brand Organization", "spelling", "bot"),
+    ]
+    again = use_cases.suggest_synonyms("spelling", dataset="original", config_path=config)
+    assert (again.proposed, again.skipped) == ([], {"already_known": 1})
+    approved = use_cases.review_synonym(report.proposed[0].synonym_id, approve=True, reason="US spelling",
+                                        actor="lead", config_path=config)
+    assert use_cases.resolve_term("brand organization", dataset="original", config_path=config).matches[0].via == (
+        "synonym")
+    assert approved.status == "approved"
+
+
+def test_approval_runs_the_ambiguity_check(isolated_db: Path, config: Path, tmp_path: Path) -> None:
+    labels = tmp_path / "skills.csv"
+    labels.write_text('preferredLabel,altLabels\nadvisory,"tax"\n', encoding="utf-8")  # "tax" names tag 100
+    [proposal] = use_cases.suggest_synonyms("esco", dataset="original", config_path=config, path=labels).proposed
+    with pytest.raises(ConflictingSynonym, match="already the name of tag 100"):
+        use_cases.review_synonym(proposal.synonym_id, approve=True, reason="ok", actor="lead", config_path=config)
+    rejected = use_cases.review_synonym(proposal.synonym_id, approve=False, reason="Means the tax tag", actor="lead")
+    assert rejected.status == "rejected"
+
+
+def test_a_source_gets_a_file_only_when_it_reads_one(isolated_db: Path, config: Path, tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="needs a file"):
+        use_cases.suggest_synonyms("esco", dataset="original", config_path=config)
+    with pytest.raises(ValueError, match="doesn't read a file"):
+        use_cases.suggest_synonyms("spelling", dataset="original", config_path=config, path=tmp_path / "x.csv")
+
+
+def test_cli_suggests_lists_and_reviews(isolated_db: Path, config: Path, tmp_path: Path,
+                                       capsys: pytest.CaptureFixture[str]) -> None:
+    labels = tmp_path / "skills.csv"
+    labels.write_text('preferredLabel,altLabels\ngst,"goods and services tax\nvalue added tax"\n', encoding="utf-8")
+    assert main(["synonym-suggest", "--source", "esco", "--file", str(labels), "--config", str(config)]) == 0
+    assert "proposed 2 synonyms for review" in capsys.readouterr().out
+    assert main(["synonyms", "--status", "proposed"]) == 0
+    assert '"status": "proposed"' in capsys.readouterr().out
+    first, second = use_cases.list_synonyms(SynonymQuery(status="proposed")).synonyms
+    assert main(["synonym-review", first.synonym_id, "--approve", "--reason", "Expansion",
+                 "--config", str(config)]) == 0
+    assert main(["synonym-review", second.synonym_id, "--reject", "--reason", "Different tax"]) == 0
+    assert "[OK] rejected" in capsys.readouterr().out
+    assert [s.term for s in use_cases.list_synonyms(SynonymQuery()).synonyms] == ["goods and services tax"]

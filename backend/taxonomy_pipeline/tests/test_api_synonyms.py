@@ -103,3 +103,33 @@ def test_resolve_rejects_bad_requests(run_id: str, changes: dict, status: int) -
     params = {"run_id": run_id, "dataset": "original", "term": "gst", **changes}
     with TestClient(app) as client:
         assert client.get("/synonyms/resolve", params=params).status_code == status
+
+
+def test_suggest_then_approve_and_reject_over_http(run_id: str, tmp_path: Path) -> None:
+    labels = tmp_path / "skills.csv"
+    labels.write_text('preferredLabel,altLabels\ngst,"goods and services tax\nvalue added tax"\n', encoding="utf-8")
+    with TestClient(app) as client:
+        created = client.post("/synonyms/suggest", json={"run_id": run_id, "dataset": "original", "source": "esco",
+                                                         "path": str(labels)})
+        assert created.status_code == 201
+        first, second = created.json()["proposed"]
+        queue = client.get("/synonyms", params={"status": "proposed"}).json()
+        assert queue["total"] == 2
+        assert client.post(f"/synonyms/{first['synonym_id']}/approve", json={"reason": "ok"}).status_code == 422
+        approved = client.post(f"/synonyms/{first['synonym_id']}/approve", json={"reason": "ok", "run_id": run_id})
+        assert approved.status_code == 200 and approved.json()["status"] == "approved"
+        rejected = client.post(f"/synonyms/{second['synonym_id']}/reject", json={"reason": "different tax"})
+        assert rejected.json()["status"] == "rejected"
+        assert client.post(f"/synonyms/{second['synonym_id']}/reject", json={"reason": "again"}).status_code == 404
+
+
+def test_suggest_refuses_files_outside_the_data_roots_and_unknown_sources(
+    run_id: str, monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("TAXONOMY_DATA_ROOTS", str(tmp_path / "allowed"))
+    with TestClient(app) as client:
+        outside = client.post("/synonyms/suggest", json={"run_id": run_id, "dataset": "original", "source": "esco",
+                                                         "path": "/etc/passwd"})
+        assert outside.status_code == 403
+        unknown = client.post("/synonyms/suggest", json={"run_id": run_id, "dataset": "original", "source": "wordnet"})
+        assert unknown.status_code == 422
