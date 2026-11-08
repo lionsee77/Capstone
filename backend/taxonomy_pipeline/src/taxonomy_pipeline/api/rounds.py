@@ -15,6 +15,7 @@ import os
 from pathlib import Path
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
+from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel, ConfigDict
 
 from ..app import rounds as use_cases
@@ -172,7 +173,8 @@ async def upload_file(round_id: str, filename: str, request: Request) -> RoundFi
         if len(content) > use_cases.MAX_UPLOAD_BYTES:
             raise HTTPException(status_code=413, detail="That file is larger than the upload limit")
     try:
-        return use_cases.add_file(_roots(), round_id, filename, bytes(content))
+        # On a worker thread: saving and reading a large table on the event loop would stall every other request.
+        return await run_in_threadpool(use_cases.add_file, _roots(), round_id, filename, bytes(content))
     except _HANDLED as exc:
         raise _translate(exc) from exc
 

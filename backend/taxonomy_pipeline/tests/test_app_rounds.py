@@ -225,6 +225,76 @@ def test_a_mapping_can_only_name_files_in_this_round(roots: rounds.RoundRoots, c
             rounds.configure_round(roots, configured, _mapping(source=source), RoundSettings())
 
 
+def test_replacing_the_imported_table_requires_another_import(roots: rounds.RoundRoots, configured: str) -> None:
+    _run(roots, configured)
+    corrected = CSV.replace("Payroll Software", "Payroll Platform").encode()
+
+    rounds.add_file(roots, configured, "flat.csv", corrected)
+
+    state = rounds.get_round(roots, configured)
+    assert state.status == "setup"
+    assert set(_statuses(state).values()) == {"pending"}
+    assert state.score_run_id is None
+    assert state.import_counts == {}
+    assert "flat.csv changed" in state.warnings[0]
+    assert not (roots.rounds / configured / "report.json").exists()
+    assert not (roots.merge_runs / configured).exists()
+    with pytest.raises(rounds.RoundConflict, match="mapping"):
+        rounds.start_round(roots, configured)
+
+
+def test_the_replacement_is_what_the_next_import_and_run_use(roots: rounds.RoundRoots, configured: str) -> None:
+    rounds.add_file(roots, configured, "flat.csv", CSV.replace("Payroll Software", "Payroll Platform").encode())
+
+    state = rounds.configure_round(roots, configured, _mapping(), RoundSettings())
+
+    assert state.status == "ready"
+    assert not any("changed" in warning for warning in state.warnings)
+    dump = (roots.rounds / configured / "demo_taxonomy.sql").read_text("utf-8")
+    assert "Payroll Platform" in dump and "Payroll Software" not in dump
+    assert _statuses(_run(roots, configured))["merge"] == "done"
+
+
+def test_uploading_the_same_bytes_again_keeps_the_rounds_progress(roots: rounds.RoundRoots, configured: str) -> None:
+    run_id = _run(roots, configured).score_run_id
+
+    rounds.add_file(roots, configured, "flat.csv", CSV.encode())
+
+    state = rounds.get_round(roots, configured)
+    assert state.score_run_id == run_id
+    assert _statuses(state)["merge"] == "done"
+
+
+def test_a_file_the_mapping_does_not_use_changes_nothing(roots: rounds.RoundRoots, configured: str) -> None:
+    rounds.add_file(roots, configured, "notes.csv", b"a,b\n1,2\n")
+    rounds.add_file(roots, configured, "notes.csv", b"a,b\n3,4\n")
+    rounds.remove_file(roots, configured, "notes.csv")
+
+    assert rounds.get_round(roots, configured).status == "ready"
+
+
+def test_removing_the_imported_table_requires_another_import(roots: rounds.RoundRoots, configured: str) -> None:
+    rounds.remove_file(roots, configured, "flat.csv")
+
+    assert rounds.get_round(roots, configured).status == "setup"
+
+
+def test_changing_a_labels_file_the_mapping_reads_requires_another_import(
+    roots: rounds.RoundRoots, isolated_db: Path,
+) -> None:
+    rounds.create_round(roots, "coded", "base")
+    rounds.add_file(roots, "coded", "flat.csv", b"Code,Role,Skill\nMK-1,Brand Strategy,Underwater Welding\n")
+    rounds.add_file(roots, "coded", "labels.csv", b"code,label\nMK,Marketing\n")
+    mapping = _mapping(columns={
+        "category": {"column": "Code", "prefix": 2, "labels": "labels.csv"}, "speciality": "Role", "tag": "Skill",
+    })
+    assert rounds.configure_round(roots, "coded", mapping, RoundSettings()).status == "ready"
+
+    rounds.add_file(roots, "coded", "labels.csv", b"code,label\nMK,Marketing and Sales\n")
+
+    assert rounds.get_round(roots, "coded").status == "setup"
+
+
 def test_the_judge_is_stripped_unless_the_round_turns_it_on(roots: rounds.RoundRoots, configured: str) -> None:
     config = yaml.safe_load((roots.rounds / configured / "config.yaml").read_text("utf-8"))
     params = next(metric["params"] for metric in config["metrics"] if metric["id"] == "saturation")
@@ -659,6 +729,27 @@ def test_a_decision_merge_preview_refuses_fails_the_stage_and_keeps_the_work(
     _, stages = rounds.start_apply(roots, in_review)
     rounds.run_stages(roots, in_review, stages)
     assert rounds.get_round(roots, in_review).status != "failed"
+
+
+def test_changing_the_source_during_review_discards_the_decisions_made_on_it(
+    roots: rounds.RoundRoots, in_review: str,
+) -> None:
+    rounds.save_decisions(roots, in_review, "Pat", [_create(rounds.get_review(roots, in_review).tags[0])])
+
+    rounds.add_file(roots, in_review, "flat.csv", AMBIGUOUS_CSV.replace("Underwater", "Overwater").encode())
+
+    assert rounds.get_round(roots, in_review).status == "setup"
+    assert not (roots.rounds / in_review / "decisions.json").exists()
+    with pytest.raises(rounds.RoundConflict, match="no review queue"):
+        rounds.get_review(roots, in_review)
+
+
+def test_uploading_the_same_source_during_review_keeps_the_decisions(roots: rounds.RoundRoots, in_review: str) -> None:
+    rounds.save_decisions(roots, in_review, "Pat", [_create(rounds.get_review(roots, in_review).tags[0])])
+
+    rounds.add_file(roots, in_review, "flat.csv", AMBIGUOUS_CSV.encode())
+
+    assert rounds.get_review(roots, in_review, state="decided").total == 1
 
 
 def test_integrating_is_refused_while_anything_is_held_or_unapplied(roots: rounds.RoundRoots, in_review: str) -> None:

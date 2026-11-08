@@ -1771,6 +1771,10 @@ a hand-run round.
   the snapshot in one run (`enriched_run_id`), so they compare like for like through
   `GET /runs/{id}/compare/{id}?before_subject=round_baseline&after_subject=enriched`, and the round
   appears on the dashboard's Improvement page. With the judge on, that scoring uses it again.
+- **Changing files:** replacing or removing a file the imported mapping reads, with different
+  contents, sends the round back to `setup` and discards what was built from it, including saved
+  decisions. Import it again to continue; the saved mapping stays. Uploading the same bytes again, or a
+  file the mapping doesn't use, changes nothing.
 - **Resuming:** `POST /rounds/{id}/run` skips finished stages, so a retry never repeats a
   paid step. A stage still marked running after a server restart reads back as failed.
 - **Removing:** only rounds made through `/rounds` can be removed, and not one that is
