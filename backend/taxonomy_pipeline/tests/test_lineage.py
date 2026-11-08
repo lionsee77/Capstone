@@ -126,3 +126,14 @@ def test_skips_rounds_without_a_readable_manifest_or_files(
 
 def test_no_integrations_directory_means_no_rounds(tmp_path: Path) -> None:
     assert read_rounds(tmp_path / "integrations", tmp_path / "merge_runs") == []
+
+
+def test_without_a_merge_root_a_round_lists_its_files_but_no_sources(
+    tmp_path: Path, integration_round: Callable[..., Path],
+) -> None:
+    directory = integration_round("round-1", {"tags.sql": "x"}, "y")
+
+    [round_] = read_rounds(tmp_path / "integrations")
+
+    assert round_.sources == []
+    assert round_.files == [directory / "baseline" / "tags.sql", directory / "additions.sql"]

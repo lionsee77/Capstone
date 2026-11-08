@@ -71,15 +71,18 @@ class IntegrationRound:
     sources: list[str] = field(default_factory=list)
     # Rows the round added per table (`manifest.json` counts).
     added: dict[str, int] = field(default_factory=dict)
+    # The files that load this round's snapshot, in load order: its baseline, then its additions.
+    files: list[Path] = field(default_factory=list)
 
 
-def read_rounds(integrations_root: Path, merge_root: Path) -> list[IntegrationRound]:
+def read_rounds(integrations_root: Path, merge_root: Path | None = None) -> list[IntegrationRound]:
     """Every readable round under `integrations_root`, by directory name.
 
     A directory without a manifest, or whose manifest or files can't be read, is skipped with a
     warning rather than failing the lineage: one half-written round shouldn't hide the others.
     Sources are read from the round's merge run under `merge_root`; a merge run that's gone leaves
-    them empty.
+    them empty, and so does no `merge_root`, for a caller that wants only the snapshots and shouldn't
+    pay to parse each round's saved resolution.
     """
     if not integrations_root.is_dir():
         return []
@@ -95,10 +98,11 @@ def read_rounds(integrations_root: Path, merge_root: Path) -> list[IntegrationRo
     return rounds
 
 
-def _read_round(directory: Path, manifest: dict[str, Any], merge_root: Path) -> IntegrationRound:
+def _read_round(directory: Path, manifest: dict[str, Any], merge_root: Path | None) -> IntegrationRound:
     baseline_files = [directory / name for name in manifest["baseline"]["files"]]
     baseline = file_fingerprint(baseline_files)
-    snapshot = file_fingerprint([*baseline_files, directory / "additions.sql"])
+    snapshot_files = [*baseline_files, directory / "additions.sql"]
+    snapshot = file_fingerprint(snapshot_files)
     if baseline is None or snapshot is None:
         raise ValueError("a baseline file or additions.sql is missing")
     created = manifest.get("created_at")
@@ -108,8 +112,9 @@ def _read_round(directory: Path, manifest: dict[str, Any], merge_root: Path) -> 
         baseline_dataset=manifest["baseline"].get("dataset") or "baseline",
         baseline=baseline,
         snapshot=snapshot,
-        sources=_sources(manifest.get("merge_run") or {}, merge_root),
+        sources=_sources(manifest.get("merge_run") or {}, merge_root) if merge_root else [],
         added={table: int(count) for table, count in (manifest.get("counts") or {}).items()},
+        files=snapshot_files,
     )
 
 
