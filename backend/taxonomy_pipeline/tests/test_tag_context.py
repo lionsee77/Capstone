@@ -36,3 +36,20 @@ def test_needs_a_context_file(tmp_path: Path) -> None:
 def test_refuses_a_file_that_is_not_a_tag_context(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="not an import-source tag-context file"):
         TagContextProvider().load_tag_context(_context_file(tmp_path, {"tags": ["3001"]}))
+
+
+@pytest.mark.parametrize("payload", [{}, {"tags": {"3001": "not an object"}}])
+def test_rejects_missing_or_invalid_tag_context_entries(tmp_path: Path, payload: dict[str, Any]) -> None:
+    with pytest.raises(ValueError):
+        TagContextProvider().load_tag_context(_context_file(tmp_path, payload))
+
+
+def test_preserves_rich_context_without_source_specific_parsing(tmp_path: Path) -> None:
+    context = {"skill_id": "SK-A", "title": "Queries", "description": "Query databases", "type": "Technical"}
+    path = _context_file(tmp_path, {"source": "skillsfuture", "display_name": "SkillsFuture", "tags": {"9": context}})
+    assert TagContextProvider().load_tag_context(path) == {"9": context}
+
+
+def test_workbook_path_explains_that_generated_json_is_required(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="not a workbook"):
+        TagContextProvider().load_tag_context(tmp_path / "skills.xlsx")

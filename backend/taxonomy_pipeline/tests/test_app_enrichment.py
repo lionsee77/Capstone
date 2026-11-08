@@ -40,6 +40,24 @@ def test_merge_preview_needs_at_least_one_input(config_path: Path) -> None:
         use_cases.merge_preview(config_path, [], baseline="original")
 
 
+def test_case_b_defaults_to_the_generic_provider_for_any_dataset(monkeypatch: pytest.MonkeyPatch) -> None:
+    seen = {}
+
+    async def run(*args, **kwargs):
+        seen.update(kwargs)
+        return []
+
+    monkeypatch.setattr(use_cases, "load_taxonomies", lambda *args: {})
+    monkeypatch.setattr(use_cases, "run_case_b", run)
+    result = use_cases.case_b(
+        "config.yaml", "report.json", baseline="original", incoming="skillsfuture", output="out.json",
+        context="skillsfuture_tag_context.json",
+    )
+    assert result == []
+    assert seen["provider"] == "tag_context"
+    assert seen["context"] == "skillsfuture_tag_context.json"
+
+
 @pytest.mark.parametrize("command", ["merge-preview", "integrate"])
 @pytest.mark.parametrize("actor", ["", " \t\n"])
 # Even no-event operations reject blank actors before attempting input reads or output writes.

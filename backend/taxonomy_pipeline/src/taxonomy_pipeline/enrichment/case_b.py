@@ -44,7 +44,7 @@ CSV_FIELDS = [
     "action", "source_dataset", "tag_id", "tag", "original_classification", "service", "category",
     "speciality", "confidence", "reason", "needs_review", RUN_ID_FIELD,
 ]
-# The response shape the model is asked to return, embedded verbatim in the prompt.
+# The response shape the model is asked to return
 RESPONSE_SCHEMA = {
     "type": "object",
     "properties": {"proposals": {"type": "array", "items": {"type": "object", "properties": {
@@ -69,22 +69,35 @@ def parse_json(text: str) -> dict[str, Any]:
         text = text.split("\n", 1)[1].rsplit("```", 1)[0].strip()
     return json.loads(text)
 
-
+# This checks that:
+# 1. every expected field exists;
+# 2. action is one of the allowed actions;
+# 3. confidence is numeric;
+# 4. confidence is not a Boolean;
+# 5. confidence is between 0 and 1.
 def proposal_is_well_formed(proposal: dict[str, Any]) -> bool:
     if not set(PROPOSAL_FIELDS).issubset(proposal) or proposal.get("action") not in VALID_ACTIONS:
         return False
     confidence = proposal.get("confidence")
     return isinstance(confidence, int | float) and not isinstance(confidence, bool) and 0 <= confidence <= 1
 
-
+# core LLM request function
+# It receives:
+# - an async OpenAI-compatible client
+# - the prompt
+# - a batch of incoming tags
+# - the selected model
 async def classify_batch(
     client: Any, prompt: str, batch: list[dict[str, Any]], model: str,
 ) -> list[dict[str, Any]]:
     """Bound API attempts while retaining accepted proposals across response retries."""
+    # so that the function knows exactly which tag IDs must be returned
     expected = {item["tag_id"] for item in batch}
     collected: dict[str, dict[str, Any]] = {}
+    # at most 3 attempts
     for attempt in range(1, 4):
         try:
+            # temperature = 0 so that the classification is as deterministic as possible
             response = await client.chat.completions.create(
                 model=model, messages=[{"role": "user", "content": prompt}], temperature=0,
             )
@@ -106,12 +119,18 @@ async def classify_batch(
             await asyncio.sleep(delay)
             continue
         try:
+            # after a successful response
             raw = response.choices[0].message.content or ""
             logger.debug("  Raw model response:\n%s", raw[:4000] if raw else "  <empty response>")
             payload = parse_json(raw)
+            # requires payload["proposals"] to be a list
             if not isinstance(payload, dict) or not isinstance(payload.get("proposals"), list):
                 raise ValueError("Expected a JSON object with a proposals array")
             proposals = payload["proposals"]
+            # accept only proposals that:
+            # - are dictionaries
+            # - contain an expected tag_id
+            # - pass proposal_is_well_formed()
             for proposal in proposals:
                 if isinstance(proposal, dict) and proposal.get("tag_id") in expected and proposal_is_well_formed(
                     proposal
@@ -120,6 +139,7 @@ async def classify_batch(
             if set(collected) == expected:
                 return [collected[item["tag_id"]] for item in batch]
             missing = sorted(expected - set(collected))
+            # If the model returns only some proposals, the function appends an instruction to the prompt
             prompt += (
                 f"\nYour last response was incomplete. Return exactly one proposal for these missing tag_id "
                 f"values: {missing}. Do not include any other tag IDs."
@@ -129,7 +149,13 @@ async def classify_batch(
             logger.info("  Invalid model response; retrying (%d/3): %s", attempt, exc)
     raise CaseBError(f"Model failed to return one valid proposal for every tag in batch: {sorted(expected)}")
 
-
+# This classifies API errors.
+# It checks:
+# - explicit quota errors
+# - HTTP status codes
+# - OpenAI retry headers
+# - known OpenAI exception classes
+# - connection and timeout errors
 def _transient_error(exc: Exception) -> bool:
     """Retry temporary HTTP/transport failures, excluding exhausted billing quota."""
     if getattr(exc, "code", None) in {"insufficient_quota", "billing_hard_limit_reached"}:
@@ -159,7 +185,11 @@ def _transient_error(exc: Exception) -> bool:
         return False
     return isinstance(exc, APIConnectionError)
 
-
+# The delay priority is:
+# 1. retry-after-ms
+# 2. retry-after seconds
+# 3. retry-after HTTP date
+# 4. exponential backoff with jitter
 def _retry_delay(exc: Exception, attempt: int) -> float:
     """Honor Retry-After without retrying earlier than a long server-requested wait."""
     headers = getattr(getattr(exc, "response", None), "headers", {})
@@ -226,7 +256,7 @@ def build_prompt(
 ) -> str:
     """The classification prompt for one batch; `source_name` is the provider's `source_name()`."""
     return (
-        f"You are classifying incoming {source_name} skills into Ankit's taxonomy. Follow this decision procedure "
+        f"You are classifying incoming {source_name} skills into our current taxonomy. Follow this decision procedure "
         "for every tag. First, inspect the supplied service/category/speciality hierarchy and choose the single "
         "best existing placement. If a suitable existing category and speciality exist under the same service, "
         "you MUST use action=assign_existing and copy both names exactly. Use action=propose_new_speciality "
@@ -236,21 +266,22 @@ def build_prompt(
         "whose name already appears in the supplied hierarchy under the relevant parent. The service, category, "
         "and speciality must form one consistent parent-child path. Do not choose a category from one service "
         f"and a speciality from another. The source tag remains a {source_name} tag, while the placement targets "
-        "Ankit's taxonomy. Copy the original skill title into the tag field exactly. Return exactly one proposal "
-        "per tag_id and no commentary outside JSON.\n\nAllowed Ankit services:\n" + json.dumps(services)
-        + "\nAnkit categories (each includes its parent service):\n" + json.dumps(categories)
-        + "\nAnkit specialities (each includes its parent service and category):\n" + json.dumps(specialities)
+        "our current taxonomy. Copy the original skill title into the tag field exactly. Return exactly one proposal "
+        "per tag_id and no commentary outside JSON.\n\nAllowed services:\n" + json.dumps(services)
+        + "\ncategories (each includes its parent service):\n" + json.dumps(categories)
+        + "\nspecialities (each includes its parent service and category):\n" + json.dumps(specialities)
         + f"\n{source_name} skills:\n" + json.dumps(batch)
         + "\nReturn ONLY valid JSON matching this shape (no Markdown): " + json.dumps(RESPONSE_SCHEMA)
     )
 
-
+# converts raw model proposal into the common output shape
 def to_contract_records(
     proposals: list[dict[str, Any]], tags: dict[str, str], *, source_dataset: str, run_id: str | None,
 ) -> list[dict[str, Any]]:
     """Map model proposals onto the nine-field contract, keeping `action` and the run stamp as extras."""
     records = []
     for proposal in proposals:
+        # if model fails to provide a category or speciality
         unresolved = not proposal.get("category") or not proposal.get("speciality")
         records.append({
             "action": proposal["action"],
@@ -268,7 +299,7 @@ def to_contract_records(
     CLASSIFICATION_OUTPUTS.validate_python(records)
     return records
 
-
+#writes files
 def write_outputs(records: list[dict[str, Any]], output: Path) -> None:
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(json.dumps(records, indent=2, ensure_ascii=False), encoding="utf-8")
@@ -362,28 +393,37 @@ async def run_case_b(
     checkpoint records the saturation run, source and model it was written for,
     and a mismatched one is refused instead of reused.
     """
+
+    # validate baseline hierarchy and incoming datasets
     for name in (baseline, incoming):
         if not isinstance(datasets.get(name), TaxonomyDataset):
             raise CaseBError(f"Dataset {name!r} is not a taxonomy loaded by this config")
+    # resolve provider and paths
     if isinstance(provider, str):
         provider = get_provider(provider)
     output = Path(output)
     checkpoint = Path(checkpoint) if checkpoint else output.with_name(f".{output.stem}.checkpoint.json")
     model = model or default_model()
 
+    # load saturation results
     saturation = load_saturation(report_path, incoming)
     tags = incoming_tags(datasets[incoming])
+    # select only tags routed to case B
     input_tag_ids = [tag_id for tag_id in map(str, case_b_tag_ids(saturation)) if tag_id in tags]
     if not input_tag_ids:
         raise CaseBError(f"None of the Case B tags in {report_path} exist in dataset {incoming!r}")
+    # count ambiguous tags (tags flagged for human review)
     ambiguous = sum(tag_id in saturation.ambiguous_matches() for tag_id in input_tag_ids)
     logger.info(
         "Using %d Case B tag(s) from %s (NO_PARENT; %d need review)", len(input_tag_ids), report_path, ambiguous,
     )
 
+    # load provider context
     contexts = provider.load_tag_context(context)
     source_name = provider.source_name(context)
+    # build baseline prompt data (calculated once and reused for every batch)
     services, categories, specialities = baseline_hierarchy(datasets[baseline])
+
     if client is None:
         client = _openai_client()
     logger.debug("Model: %s", model)
@@ -396,10 +436,11 @@ async def run_case_b(
     proposals = {
         tag_id: proposal for tag_id, proposal in _load_checkpoint(checkpoint, provenance).items() if tag_id in wanted
     }
-    # Batch only what is still missing, so resuming with a different --batch-size never resends finished tags.
+    # Batch only what is still missing, so resuming with a different --batch-size never resends finished tags
     pending = [tag_id for tag_id in input_tag_ids if tag_id not in proposals]
     if proposals:
         logger.info("Resuming from %s: %d/%d already classified", checkpoint, len(proposals), len(input_tag_ids))
+    # build and classify batches
     for start in range(0, len(pending), batch_size):
         batch = []
         for tag_id in pending[start:start + batch_size]:
@@ -411,6 +452,7 @@ async def run_case_b(
         logger.info("Processed %d/%d", len(proposals), len(input_tag_ids))
 
     ordered = [proposals[tag_id] for tag_id in input_tag_ids]
+    # adds needs_review information to records whose saturation result was ambiguous
     records = mark_ambiguous(
         to_contract_records(ordered, tags, source_dataset=incoming, run_id=saturation.run_id), saturation,
     )

@@ -10,6 +10,7 @@ backend/
 ├── sql-files-nus/        # Original SQL dumps
 ├── skillsfuture/         # SkillsFuture Excel sources and taxonomy generator (data prep)
 │   ├── generate_skillsfuture_taxonomy.py
+│   ├── skillsfuture_tag_context.json # generated Case B context, gitignored
 │   ├── validate_skillsfuture_taxonomy.py
 │   ├── AI_TAXONOMY_PIPELINE_PLAN.md
 │   └── *.xlsx              # SkillsFuture source workbooks
@@ -37,10 +38,13 @@ pip install -r requirements.txt
 python skillsfuture/generate_skillsfuture_taxonomy.py
 ```
 
-This reads the workbooks and writes `skillsfuture/skillsfuture_taxonomy.sql`.
+This reads the workbooks and writes `skillsfuture/skillsfuture_taxonomy.sql`
+and `skillsfuture/skillsfuture_tag_context.json` together. The JSON includes
+each generated tag ID's skill ID, title, description and type, including
+skills without mapped roles. Use files from the same generation run.
 The generator remains standalone and needs only the dependencies above.
-A pipeline regression test compares its generated tag IDs and titles with
-Case B's SkillsFuture context loader, including untitled rows and whitespace.
+A pipeline regression test checks that the generated tag IDs and titles
+match the JSON read by Case B's generic context provider.
 It does not connect to MySQL or modify the existing database. The generated SQL
 creates parallel `sf_categories`, `sf_specialities`, `sf_tags`, and
 `sf_speciality_tags` tables, using the existing `services` table. Review the
@@ -71,6 +75,12 @@ turns the reviewed result into an enriched taxonomy snapshot - runs from there
 as `taxonomy-pipeline case-a | case-b | merge-preview | bulk-decide | integrate`; see
 [Classification workflow](taxonomy_pipeline/README.md#classification-workflow).
 Case B's OpenAI settings still go in `backend/.env` (copy `.env.example`).
+Case B now uses `--provider tag_context --context ../skillsfuture/skillsfuture_tag_context.json`
+from `backend/taxonomy_pipeline/`, just like other sources. The separate
+`skillsfuture` provider has been removed. Regenerate the files once when
+upgrading; explicit `.xlsx` context paths must be replaced with the generated JSON.
+For custom output paths, the generator accepts `--context-output PATH`; by
+default it replaces the SQL stem's `_taxonomy` suffix with `_tag_context.json`.
 
 ## Score taxonomy quality
 

@@ -8,6 +8,7 @@ The source workbooks are read-only inputs. No database is contacted or changed.
 from __future__ import annotations
 
 import argparse
+import json
 import re
 from pathlib import Path
 
@@ -39,12 +40,19 @@ def sql(value: str) -> str:
 
 
 def unique_records(path: Path):
-    result = {}
+    return {skill_id: skill["title"] for skill_id, skill in skill_records(path).items()}
+
+
+def skill_records(path: Path) -> dict[str, dict[str, str]]:
+    """Read eligible skills once for both SQL names and the Case B context file."""
+    result: dict[str, dict[str, str]] = {}
     for row in rows(path, "Unique Skills List"):
         skill_id = text(row.get("skill_id"))
         title = text(row.get("skill_title"))
         if skill_id and title:
-            result[skill_id] = title
+            result[skill_id] = {
+                "title": title, "description": text(row.get("skill_description")), "type": text(row.get("skill_type")),
+            }
     return result
 
 
@@ -54,9 +62,18 @@ def main() -> None:
     parser.add_argument("--framework", type=Path, default=DEFAULT_FRAMEWORK)
     parser.add_argument("--mapping", type=Path, default=DEFAULT_MAPPING)
     parser.add_argument("--output", type=Path, default=ROOT / "skillsfuture_taxonomy.sql")
+    parser.add_argument(
+        "--context-output", type=Path, help="tag context JSON (default: beside SQL, <source>_tag_context.json)",
+    )
     args = parser.parse_args()
+    context_path = args.context_output or args.output.with_name(
+        args.output.stem.removesuffix("_taxonomy") + "_tag_context.json"
+    )
+    if context_path.resolve() == args.output.resolve():
+        parser.error("--context-output must differ from the SQL --output path")
 
-    unique = unique_records(args.unique)
+    skills = skill_records(args.unique)
+    unique = {skill_id: skill["title"] for skill_id, skill in skills.items()}
     skill_title_to_id = {title.casefold(): skill_id for skill_id, title in unique.items()}
 
     roles = {}
@@ -109,7 +126,13 @@ def main() -> None:
     lines += [f"({4000+i}, {rid}, {tid})" + ("," if i < len(link_items)-1 else ";") for i, (rid, tid) in enumerate(link_items)]
     lines += ["", "COMMIT;", ""]
     args.output.write_text("\n".join(lines), encoding="utf-8")
+    payload = {
+        "source": "skillsfuture", "display_name": "SkillsFuture",
+        "tags": {str(tid): {"skill_id": sid, **skills[sid]} for sid, tid in tag_items},
+    }
+    context_path.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     print(f"Generated {args.output}")
+    print(f"Generated {context_path}")
     print(f"categories={len(sectors)} specialities={len(role_id)} tags={len(tag_id)} links={len(links)}")
 
 

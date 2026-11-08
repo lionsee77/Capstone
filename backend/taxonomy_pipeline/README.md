@@ -61,7 +61,6 @@ taxonomy_pipeline/
 │   ├── providers/                    # what is specific to one external source
 │   │   ├── base.py                   #   SourceProvider ABC: per-tag context and display name for Case B
 │   │   ├── registry.py               #   PROVIDERS by name; `case-b --provider`
-│   │   ├── skillsfuture.py           #   SkillsFuture: tag-ID offset, unique-skills workbook context
 │   │   └── tag_context.py            #   any `import-source` source: context from its <name>_tag_context.json
 │   ├── enrichment/                   # Case A/B producers and the merge stages (see "Classification workflow")
 │   │   ├── models.py                 #   ClassificationOutput contract + every stage's report model
@@ -152,7 +151,7 @@ field in `resolution.json`. Paths below are under `src/taxonomy_pipeline/`.
 | Loading `backend/.env` | three places | `env.py` only (via `llm.py` for the LLM) |
 | Service/category/speciality id lookups | rebuilt in saturation, Case A, `/taxonomy`, Case B | `TaxonomyDataset.hierarchy()` in `taxonomy/base.py` |
 | Name normalisation | `integrity.normalize`, `saturation.match_key`, `integrate._collation_key` | `matching/names.py` (`normalize`, `match_key`, `collation_key`; its docstring says which stage uses which) |
-| SkillsFuture specifics (`TAG_ID_OFFSET`, unique-skills workbook) | `classification/case_b.py`, `cli.py` | `providers/skillsfuture.py`, behind `providers/base.py` + `registry.py` |
+| SkillsFuture workbook parsing and tag numbering | `classification/case_b.py`, `cli.py` | standalone SkillsFuture generator; Case B reads its JSON through `providers/tag_context.py` |
 | `InputLocation`, `SourceTagRef`, `HierarchyGroup` | root `models.py` | `enrichment/models.py` |
 | Classification placement path | `TaxonomyPath` in `classification/models.py` | `PlacementPath` in `enrichment/models.py` (the API's `TaxonomyPath` keeps its name) |
 | Why a tag is pending | text prefix "Producer requested review" | `SourceDisposition.reason_codes` |
@@ -188,7 +187,7 @@ taxonomy_pipeline.pipeline            -> taxonomy_pipeline.app.scoring
 
 **Changed calls**
 
-- `case-b` takes `--provider` (default: the `--incoming` dataset name) and
+- `case-b` takes `--provider` (default: `tag_context`) and
   `--context` (`--unique` still works); `run_case_b(provider=..., context=...)`
   replaces `unique_skills=...`.
 - `experiments/evaluate_case_b.py` takes `--config` and `--baseline <dataset
@@ -235,7 +234,8 @@ Run from `backend/taxonomy_pipeline/` (the commands default to
 ```bash
 taxonomy-pipeline run --config configs/original_vs_skillsfuture.yaml --output judged_report.json  # needs .[llm] + key
 taxonomy-pipeline case-a --report judged_report.json
-taxonomy-pipeline case-b --report judged_report.json        # needs .[llm] and OPENAI_API_KEY
+taxonomy-pipeline case-b --report judged_report.json --provider tag_context \
+    --context ../skillsfuture/skillsfuture_tag_context.json  # needs .[llm] and OPENAI_API_KEY
 taxonomy-pipeline merge-preview --input case_a_output.json --input case_b_output.json
 # optionally draft decisions for the clear-cut ambiguous tags, then review the rest:
 taxonomy-pipeline bulk-decide --merge-run merge_runs/<timestamp> --report judged_report.json \
@@ -288,20 +288,27 @@ stages' rules and the review-decision format are in the
 
 ### Case B (LLM classification)
 
-Case B's SkillsFuture provider mirrors the standalone generator's tag numbering.
-An end-to-end regression test checks the generated IDs and titles against the
-provider's contexts, including blank titles and whitespace normalization.
+SkillsFuture and generic imports both use the JSON-based `tag_context` reader.
+The standalone SkillsFuture generator writes SQL and context JSON together,
+using the exact same tag IDs. There is no separate SkillsFuture provider;
+all sources use the same JSON reader without reconstructing IDs.
+Regenerate SkillsFuture once with `python skillsfuture/generate_skillsfuture_taxonomy.py`
+from `backend/` to create `skillsfuture_tag_context.json`. Run Case B with
+`--provider tag_context --context ../skillsfuture/skillsfuture_tag_context.json`.
 
 `case-b` asks an OpenAI model to place each parentless new tag into the
 baseline's existing categories and specialities, or to propose a new one,
 using the incoming source's context for each tag. That comes from the source's
-provider (`--provider`, defaulting to the `--incoming` dataset name; see
-`providers/`): for SkillsFuture, the unique-skills workbook's skill
-descriptions (`--context`, or the older `--unique`, defaulting to the one in
-`backend/skillsfuture/`); for a source added with `import-source`, the
+provider (`--provider`, defaulting to `tag_context`; see
+`providers/`): for SkillsFuture, the generator's `skillsfuture_tag_context.json`
+in `backend/skillsfuture/` supplies skill ID, title, description and type;
+explicit workbook paths passed through `--context` or `--unique` must now point
+to this JSON instead. For a source added with `import-source`, use the
 `tag_context` provider and the `<name>_tag_context.json` it wrote
 (`--provider tag_context --context <file>`; the prompt names the source by the
-file's `display_name`). Both taxonomies come from
+file's `display_name`). SkillsFuture also supports this explicit generic form:
+`--provider tag_context --context ../skillsfuture/skillsfuture_tag_context.json`.
+Keep the SQL and context file from the same generator/import run. Both taxonomies come from
 the pipeline config, the same datasets saturation and Case A use. Install the
 optional dependencies and set the key in `backend/.env` (copy
 `backend/.env.example`):

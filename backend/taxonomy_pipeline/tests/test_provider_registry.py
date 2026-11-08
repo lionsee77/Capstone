@@ -4,16 +4,16 @@ import pytest
 
 from taxonomy_pipeline.providers.base import SourceProvider
 from taxonomy_pipeline.providers.registry import PROVIDERS, get_provider
-from taxonomy_pipeline.providers.skillsfuture import SkillsFutureProvider
+from taxonomy_pipeline.providers.tag_context import TagContextProvider
 
 
 def test_registers_each_provider_under_its_own_name() -> None:
     assert all(name == provider.name for name, provider in PROVIDERS.items())
-    assert isinstance(get_provider("skillsfuture"), SkillsFutureProvider)
+    assert isinstance(get_provider("tag_context"), TagContextProvider)
 
 
 def test_an_unknown_provider_lists_the_registered_ones() -> None:
-    with pytest.raises(ValueError, match=r"No source provider 'nope'; registered: \['skillsfuture', 'tag_context'\]"):
+    with pytest.raises(ValueError, match=r"No source provider 'nope'; registered: \['tag_context'\]"):
         get_provider("nope")
 
 

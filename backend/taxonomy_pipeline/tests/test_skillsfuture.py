@@ -1,26 +1,20 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 from pathlib import Path
 
 import pytest
 from openpyxl import Workbook
 
-from taxonomy_pipeline.providers.skillsfuture import (
-    SHEET,
-    TAG_ID_OFFSET,
-    UNIQUE_SKILLS_WORKBOOK,
-    SkillsFutureProvider,
-    build_skill_tag_mapping,
-    source_skills,
-)
+from taxonomy_pipeline.providers.tag_context import TagContextProvider
 
 
 @pytest.fixture
 def workbook(tmp_path: Path) -> Path:
     book = Workbook()
     sheet = book.active
-    sheet.title = SHEET
+    sheet.title = "Unique Skills List"
     sheet.append(["skill_id", "skill_title", "skill_description", "skill_type"])
     sheet.append(["SK-B", " Loan  Processing ", "Processes loans", "Technical"])
     sheet.append(["SK-A", "Auditing", None, "Critical Core"])
@@ -29,49 +23,6 @@ def workbook(tmp_path: Path) -> Path:
     path = tmp_path / "unique.xlsx"
     book.save(path)
     return path
-
-
-def test_reads_each_skills_title_description_and_type_by_skill_id(workbook: Path) -> None:
-    assert source_skills(workbook) == {
-        "SK-B": {"title": "Loan Processing", "description": "Processes loans", "type": "Technical"},
-        "SK-A": {"title": "Auditing", "description": "", "type": "Critical Core"},
-    }
-
-
-def test_numbers_tags_from_the_offset_in_sorted_skill_id_order(workbook: Path) -> None:
-    contexts = SkillsFutureProvider().load_tag_context(workbook)
-    assert list(contexts) == [str(TAG_ID_OFFSET), str(TAG_ID_OFFSET + 1)]
-    assert contexts[str(TAG_ID_OFFSET)] == {
-        "skill_id": "SK-A", "title": "Auditing", "description": "", "type": "Critical Core",
-    }
-    assert contexts[str(TAG_ID_OFFSET + 1)]["skill_id"] == "SK-B"
-
-
-def test_a_tag_with_no_skill_gets_a_null_skill_id(workbook: Path) -> None:
-    provider = SkillsFutureProvider()
-    assert provider.context_for(provider.load_tag_context(workbook), "9999") == {"skill_id": None}
-
-
-def test_defaults_to_the_committed_unique_skills_workbook() -> None:
-    provider = SkillsFutureProvider()
-    assert provider.default_context_path() == UNIQUE_SKILLS_WORKBOOK
-    assert UNIQUE_SKILLS_WORKBOOK.parent.name == "skillsfuture"
-
-
-def test_mapping_sorts_ids_and_excludes_untitled_or_missing_ids() -> None:
-    assert build_skill_tag_mapping({
-        "SK-B": "Second skill", "SK-A": "First skill", "SK-0": "  ", "": "Missing ID",
-    }) == {"SK-A": 3000, "SK-B": 3001}
-
-
-def test_mapping_normalises_workbook_whitespace() -> None:
-    assert build_skill_tag_mapping({" SK- A ": "A title", "SK-B": "Another"}) == {
-        "SK- A": 3000, "SK-B": 3001,
-    }
-
-
-def test_empty_workbook_has_no_mapping() -> None:
-    assert build_skill_tag_mapping({}) == {}
 
 
 def test_generator_reader_and_provider_assign_matching_ids_and_titles(
@@ -122,5 +73,13 @@ def test_generator_reader_and_provider_assign_matching_ids_and_titles(
         str(row["id"]): row["name"]
         for table, rows in iter_insert_statements(output.read_text()) if table == "sf_tags" for row in rows
     }
-    actual = {tag_id: context["title"] for tag_id, context in SkillsFutureProvider().load_tag_context(workbook).items()}
+    context_path = tmp_path / "generated_tag_context.json"
+    generic = TagContextProvider().load_tag_context(context_path)
+    actual = {tag_id: context["title"] for tag_id, context in generic.items()}
     assert actual == expected
+    assert generic["3000"] == {"skill_id": "SK-A", "title": "Auditing", "description": "", "type": "Critical Core"}
+    assert generic["3001"]["description"] == "Processes loans"
+    assert json.loads(context_path.read_text())["source"] == "skillsfuture"
+    assert TagContextProvider().source_name(context_path) == "SkillsFuture"
+    # The unmapped SK-A skill still has context, even though only SK-B has a parent link.
+    assert len(generic) == 2
