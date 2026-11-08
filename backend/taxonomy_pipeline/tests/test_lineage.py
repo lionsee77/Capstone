@@ -126,3 +126,46 @@ def test_skips_rounds_without_a_readable_manifest_or_files(
 
 def test_no_integrations_directory_means_no_rounds(tmp_path: Path) -> None:
     assert read_rounds(tmp_path / "integrations", tmp_path / "merge_runs") == []
+
+
+def test_without_a_merge_root_a_round_lists_its_files_but_no_sources(
+    tmp_path: Path, integration_round: Callable[..., Path],
+) -> None:
+    directory = integration_round("round-1", {"tags.sql": "x"}, "y")
+
+    [round_] = read_rounds(tmp_path / "integrations")
+
+    assert round_.sources == []
+    assert round_.files == [directory / "baseline" / "tags.sql", directory / "additions.sql"]
+
+
+def test_a_round_reads_its_table_names_from_the_snapshots_own_dataset(
+    tmp_path: Path, integration_round: Callable[..., Path],
+) -> None:
+    directory = integration_round("round-1", BASELINE, "y")
+    (directory / "enriched.yaml").write_text(
+        "datasets:\n- name: enriched\n  table_map: {tags: sf_tags}\n- name: other\n  table_map: {tags: wrong}\n",
+        encoding="utf-8",
+    )
+
+    [round_] = read_rounds(tmp_path / "integrations")
+
+    assert round_.table_map == {"tags": "sf_tags"}
+
+
+def test_a_round_without_a_config_has_no_renamed_tables(tmp_path: Path, integration_round: Callable[..., Path]) -> None:
+    integration_round("round-1", BASELINE, "y")
+
+    [round_] = read_rounds(tmp_path / "integrations")
+
+    assert round_.table_map == {}
+
+
+def test_a_round_with_an_unreadable_config_is_skipped_not_fatal(
+    tmp_path: Path, integration_round: Callable[..., Path],
+) -> None:
+    integration_round("good", BASELINE, "y")
+    broken = integration_round("broken", BASELINE, "y")
+    (broken / "enriched.yaml").write_text("datasets: [", encoding="utf-8")
+
+    assert [item.name for item in read_rounds(tmp_path / "integrations")] == ["good"]
