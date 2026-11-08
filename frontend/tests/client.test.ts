@@ -90,6 +90,17 @@ describe("api client", () => {
     );
   });
 
+  it("asks for one page of a round's review queue, leaving out an empty search", async () => {
+    const empty = { tags: [], proposals: [], total: 0, offset: 0, limit: 25, undecided: 0, decided: 0, proposals_undecided: 0 };
+    const plain = mockFetch(200, empty);
+    await api.getReview("r1", { state: "undecided", offset: 0, limit: 25 });
+    expect(plain).toHaveBeenCalledWith("/api/pipeline/rounds/r1/review?state=undecided&offset=0&limit=25", expect.anything());
+
+    const searched = mockFetch(200, empty);
+    await api.getReview("r1", { state: "all", q: "Adobe", offset: 25, limit: 25 });
+    expect(searched).toHaveBeenCalledWith("/api/pipeline/rounds/r1/review?state=all&offset=25&limit=25&q=Adobe", expect.anything());
+  });
+
   it("encodes a temporary proposal id when fetching concept detail", async () => {
     const fetchMock = mockFetch(200, {
       id: "skillsfuture:501", name: "x", level: "categories", dataset: "skillsfuture", paths: [], children: [], tags: [],

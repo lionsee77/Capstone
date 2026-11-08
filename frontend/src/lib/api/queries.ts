@@ -2,11 +2,11 @@
  * TanStack Query hooks - the only way components should talk to the API.
  * Query keys live in `queryKeys` so invalidation stays in one place.
  */
-import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
+import { keepPreviousData, useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { isRoundActive } from "@/lib/rounds";
 
-import { api, type RunSubject, type TaxonomySource } from "./client";
+import { api, type DecisionSubmission, type ReviewQuery, type RunSubject, type TaxonomySource } from "./client";
 import { type ConceptLevel, isRunFinished, type PipelineConfig, type RoundState, type RunStatus } from "./schemas";
 
 export const RUN_POLL_INTERVAL_MS = 2_000;
@@ -46,6 +46,7 @@ export const queryKeys = {
   roundOptions: ["rounds", "options"] as const,
   round: (roundId: string) => ["rounds", "detail", roundId] as const,
   roundConfig: (roundId: string) => ["rounds", "detail", roundId, "config"] as const,
+  review: (roundId: string) => ["rounds", "detail", roundId, "review"] as const,
   health: ["health"] as const,
   taxonomySearch: (source: TaxonomySource | null, q: string, level: ConceptLevel | "") =>
     ["taxonomy", "search", source?.runId, source?.dataset, q, level] as const,
@@ -198,6 +199,54 @@ export function useRunRound(roundId: string) {
     mutationFn: () => api.runRound(roundId),
     onSuccess: (round) => queryClient.setQueryData(queryKeys.round(roundId), round),
   });
+}
+
+/**
+ * One page of a round's review queue. The merge stage's finish time is part of the key, so applying decisions
+ * brings in the new queue as soon as the preview is rebuilt, and the last page stays on screen until then.
+ */
+export function useReviewQueue(round: RoundState, query: ReviewQuery) {
+  const mergedAt = round.stages.find((stage) => stage.id === "merge")?.finished_at ?? null;
+  return useQuery({
+    queryKey: [...queryKeys.review(round.round_id), mergedAt, query],
+    queryFn: () => api.getReview(round.round_id, query),
+    placeholderData: keepPreviousData,
+  });
+}
+
+/** After a decision is saved: the round's state and every page of its queue have changed. */
+function useRoundChanged(roundId: string) {
+  const queryClient = useQueryClient();
+  return (round: RoundState) => {
+    queryClient.setQueryData(queryKeys.round(roundId), round);
+    return queryClient.invalidateQueries({ queryKey: queryKeys.review(roundId) });
+  };
+}
+
+export function useSaveDecisions(roundId: string) {
+  const changed = useRoundChanged(roundId);
+  return useMutation({
+    mutationFn: (body: DecisionSubmission) => api.saveDecisions(roundId, body),
+    onSuccess: changed,
+  });
+}
+
+export function useDraftDecisions(roundId: string) {
+  const changed = useRoundChanged(roundId);
+  return useMutation({
+    mutationFn: (body: { reviewer: string; create_below: number; reuse_above: number }) => api.draftDecisions(roundId, body),
+    onSuccess: (result) => changed(result.round),
+  });
+}
+
+export function useApplyDecisions(roundId: string) {
+  const changed = useRoundChanged(roundId);
+  return useMutation({ mutationFn: () => api.applyDecisions(roundId), onSuccess: changed });
+}
+
+export function useIntegrateRound(roundId: string) {
+  const changed = useRoundChanged(roundId);
+  return useMutation({ mutationFn: () => api.integrateRound(roundId), onSuccess: changed });
 }
 
 export function useDeleteRound(roundId: string) {

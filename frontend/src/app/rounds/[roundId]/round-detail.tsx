@@ -10,7 +10,10 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useDeleteRound, useRound, useRoundConfigText, useRunRound } from "@/lib/api/queries";
 import type { RoundState } from "@/lib/api/schemas";
+import { hasReviewQueue, roundCompareHref } from "@/lib/review";
 import { roundStatusLabel, STAGE_LABELS } from "@/lib/rounds";
+
+import { ReviewPanel } from "./review-panel";
 
 export function RoundDetail({ roundId }: { roundId: string }) {
   const { data: round, isPending, error } = useRound(roundId);
@@ -31,6 +34,8 @@ export function RoundDetail({ roundId }: { roundId: string }) {
         description={`${round.source_name ?? "No source yet"}, built on ${round.baseline_snapshot}. ${roundStatusLabel(round.status)}.`}
       />
       <RoundActions round={round} />
+      {round.status === "complete" && <RoundResult round={round} />}
+      {(hasReviewQueue(round) || (round.status === "running" && !round.decisions_applied)) && <ReviewPanel round={round} />}
       {round.warnings.length > 0 && (
         <Notice title="Worth checking">
           <ul className="flex list-disc flex-col gap-1 pl-4">
@@ -70,6 +75,8 @@ function RoundActions({ round }: { round: RoundState }) {
     );
   }
   if (round.status !== "ready" && round.status !== "failed") return null;
+  // A preview that refused a decision is fixed by changing the decision, which the review panel offers.
+  if (hasReviewQueue(round)) return null;
   return (
     <div className="flex flex-col items-start gap-2">
       <Button disabled={run.isPending} onClick={() => run.mutate()}>
@@ -77,6 +84,20 @@ function RoundActions({ round }: { round: RoundState }) {
       </Button>
       {run.error && <p className="text-sm text-destructive">{run.error.message}</p>}
     </div>
+  );
+}
+
+function RoundResult({ round }: { round: RoundState }) {
+  const compare = roundCompareHref(round);
+  const snapshot = round.stages.find((stage) => stage.id === "integrate")?.summary;
+  return (
+    <Notice title={`The taxonomy now has a new version: ${round.round_id}`}>
+      <p>{snapshot}. It is a snapshot beside the earlier versions, and later rounds can build on it. No database has changed.</p>
+      <p className="mt-2 flex flex-wrap gap-4">
+        {compare && <Link href={compare} className="text-primary underline underline-offset-4">Compare before and after</Link>}
+        <Link href="/improvement" className="text-primary underline underline-offset-4">See it on the Improvement page</Link>
+      </p>
+    </Notice>
   );
 }
 
