@@ -5,7 +5,8 @@ import { decideProxyRequest, upstreamHeaders } from "@/lib/api/proxy";
 // Forwards allowlisted requests to the pipeline API; see `lib/api/proxy.ts` for why it is restricted.
 async function forward(request: NextRequest, ctx: RouteContext<"/api/pipeline/[...path]">): Promise<Response> {
   const { path } = await ctx.params;
-  // A bare action or a delete has no body; an upload's bytes must arrive unchanged, so never read it as text.
+  // A bare action or a delete has no body. A body is streamed, never read here: an upload's bytes must arrive
+  // unchanged, and the API enforces its size limit as they arrive, without this process holding them all.
   const contentType = request.headers.get("content-type");
   const hasBody = (request.method === "POST" || request.method === "PUT") && contentType !== null;
   const env = {
@@ -25,9 +26,10 @@ async function forward(request: NextRequest, ctx: RouteContext<"/api/pipeline/[.
       // Forward the caller's Content-Type (checked above) rather than vouching for the body ourselves,
       // plus the API token, added here so it never reaches the browser.
       headers: upstreamHeaders(hasBody ? contentType : null, env),
-      body: hasBody ? await request.arrayBuffer() : undefined,
+      body: hasBody ? request.body : undefined,
+      ...(hasBody ? { duplex: "half" } : {}),
       cache: "no-store",
-    });
+    } as RequestInit);
     return new Response(upstream.body, {
       status: upstream.status,
       headers: { "Content-Type": upstream.headers.get("Content-Type") ?? "application/json" },
