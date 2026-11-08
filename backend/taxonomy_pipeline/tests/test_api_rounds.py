@@ -208,10 +208,11 @@ def test_the_whole_review_flow_works_over_http(client: TestClient) -> None:
     body = client.get("/rounds/r1").json()
     assert body["status"] == "complete"
     compared = client.get(
-        f"/runs/{body['score_run_id']}/compare/{body['enriched_run_id']}",
+        f"/runs/{body['enriched_run_id']}/compare/{body['enriched_run_id']}",
         params={"before_subject": "round_baseline", "after_subject": "enriched"},
     )
     assert compared.status_code == 200
+    assert compared.json()["comparability"]["comparable"] is True
 
 
 def test_a_bad_decision_shape_is_422(client: TestClient) -> None:

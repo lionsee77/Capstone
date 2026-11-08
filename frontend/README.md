@@ -27,7 +27,9 @@ verdict on screen is the API's.
   defers it, one at a time or across a selected page, or drafts the clear-cut ones first.
   Decisions are saved at once, then applied together, because `merge-preview` rebuilds the
   whole preview to check them (about 25 seconds for O*NET). Then "Generate enriched snapshot"
-  integrates and scores the round, and links to its before-and-after comparison.
+  integrates and scores the round, and links to its before-and-after comparison. That one
+  run scores both versions, so the round also appears on the Improvement page as a two-stage
+  comparison. Earlier stages show as not scored until a whole-chain run covers them.
 - **Improvement** (`/improvement`) - how the taxonomy grew round by round
   (Baseline 1 -> 2 -> 3 ...). It reads `GET /lineage` for the chain of
   enrichment rounds and the best run that scored them (most stages, then judge

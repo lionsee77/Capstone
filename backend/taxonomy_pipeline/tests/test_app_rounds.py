@@ -9,6 +9,7 @@ import pytest
 import yaml
 
 from taxonomy_pipeline.app import rounds
+from taxonomy_pipeline.app.lineage import taxonomy_lineage
 from taxonomy_pipeline.config import load_config
 from taxonomy_pipeline.enrichment.models import PlacementPath, ReviewDecision, SourceTagRef
 from taxonomy_pipeline.models import RoundSettings
@@ -623,6 +624,22 @@ def test_integrating_writes_a_snapshot_scores_it_and_chains_into_the_next_round(
         rounds.start_integrate(roots, in_review)
     with pytest.raises(rounds.RoundConflict, match="already integrated"):
         rounds.save_decisions(roots, in_review, "Pat", [])
+
+
+def test_the_final_run_scores_baseline_and_snapshot_together_for_the_lineage(
+    roots: rounds.RoundRoots, in_review: str,
+) -> None:
+    _decide_all(roots, in_review)
+    _, stages = rounds.start_integrate(roots, in_review)
+    rounds.run_stages(roots, in_review, stages)
+    state = rounds.get_round(roots, in_review)
+
+    lineage = taxonomy_lineage(roots.integrations, roots.merge_runs)
+    chain = next(chain for chain in lineage.chains if in_review in chain.stages)
+    assert chain.runs == [state.enriched_run_id]
+    scored = next(run for run in lineage.runs if run.run_id == state.enriched_run_id).datasets
+    assert scored[in_review] == "enriched"
+    assert scored["base"] == "round_baseline"
 
 
 def test_a_labels_file_that_is_not_text_gets_a_readable_error(roots: rounds.RoundRoots, configured: str) -> None:

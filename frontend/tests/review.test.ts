@@ -90,10 +90,10 @@ describe("proposalDecision", () => {
 });
 
 describe("round links and panels", () => {
-  it("compares the round's baseline with its snapshot only once both are scored", () => {
+  it("compares the round's baseline with its snapshot within the run that scored both", () => {
     expect(roundCompareHref(round({ score_run_id: "a" }))).toBeNull();
     expect(roundCompareHref(round({ score_run_id: "a", enriched_run_id: "b" })))
-      .toBe("/compare?before=a&before_subject=round_baseline&after=b&after_subject=enriched");
+      .toBe("/compare?before=b&before_subject=round_baseline&after=b&after_subject=enriched");
   });
 
   it("offers review once a preview exists, and after one refused a decision", () => {

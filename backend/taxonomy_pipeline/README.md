@@ -1762,9 +1762,10 @@ a hand-run round.
   is what the audit history records. `bulk-decide` is the CLI's, and only drafts: its decisions are
   saved and can be changed before applying. It reads saved decisions, so apply yours first.
 - **Integrate** is refused while a tag is pending or decisions are unapplied. Deferred and
-  excluded tags don't hold it up, and they aren't in the snapshot. It then scores the snapshot with
-  the round's metrics, so `score_run_id` and `enriched_run_id` can be compared through
-  `GET /runs/{before}/compare/{after}?before_subject=round_baseline&after_subject=enriched`.
+  excluded tags don't hold it up, and they aren't in the snapshot. It then scores the baseline and
+  the snapshot in one run (`enriched_run_id`), so they compare like for like through
+  `GET /runs/{id}/compare/{id}?before_subject=round_baseline&after_subject=enriched`, and the round
+  appears on the dashboard's Improvement page. With the judge on, that scoring uses it again.
 - **Resuming:** `POST /rounds/{id}/run` skips finished stages, so a retry never repeats a
   paid step. A stage still marked running after a server restart reads back as failed.
 - **Removing:** only rounds made through `/rounds` can be removed, and not one that is

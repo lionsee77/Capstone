@@ -33,8 +33,8 @@ from typing import Any
 
 import yaml
 
-from .. import env
-from ..config import load_config
+from .. import db, env
+from ..config import PipelineConfig, load_config
 from ..enrichment.lineage import file_fingerprint, read_rounds
 from ..enrichment.models import ReviewDecision, ReviewQueue, ReviewQueueEvidence, SourceTagRef
 from ..enrichment.review_queue import build_review_queue
@@ -53,7 +53,7 @@ from ..models import (
 )
 from ..taxonomy.flat_import import SourceMapping, inspect_table, sheet_names
 from . import enrichment as use_cases
-from .scoring import load_taxonomies, run_config, write_report
+from .scoring import load_taxonomies, run_config, run_pipeline, write_report
 from .sources import DEFAULT_TEMPLATE, ROUND_BASELINE, import_source
 
 ROUND_ID = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
@@ -688,11 +688,24 @@ def _integrate(roots: RoundRoots, state: RoundState) -> tuple[str, str]:
 
 
 def _score_enriched(roots: RoundRoots, state: RoundState) -> tuple[str, str]:
-    _, report = run_config(roots.integrations / state.round_id / "enriched.yaml")
+    """Score the baseline and the snapshot in one run, so comparing them is like for like by construction.
+
+    It's also what `/lineage` needs to show this round on the Improvement page: a run scoring two of its stages.
+    """
+    before = load_config(_config_path(roots, state.round_id))
+    after = load_config(roots.integrations / state.round_id / "enriched.yaml")
+    known = {dataset.name for dataset in before.datasets}
+    config = PipelineConfig(
+        metric_definitions_version=before.metric_definitions_version,
+        datasets=[*before.datasets, *(dataset for dataset in after.datasets if dataset.name not in known)],
+        metrics=[*before.metrics, *(metric for metric in after.metrics if metric not in before.metrics)],
+    )
+    report = run_pipeline(config)
+    db.save_run(report, config_json=config.model_dump_json())
     state.enriched_run_id = report.run_id
     if report.status != "done":
         raise ValueError(report.error or "the scoring run failed")
-    return "done", "Scored the enriched taxonomy with the round's metrics"
+    return "done", "Scored the baseline and the enriched taxonomy together, like for like"
 
 
 _HANDLERS = {
