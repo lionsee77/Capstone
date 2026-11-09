@@ -955,6 +955,10 @@ taxonomy-pipeline import-source --mapping ../onet/onet_mapping.yaml \
 - It writes `<name>_taxonomy.sql` and `<name>_tag_context.json` next to the
   mapping (`--out-dir` to change), then reloads the dump through `sql_dump` and
   fails unless every row reads back unchanged.
+  Context entries include the generated tag's canonical title alongside its
+  description, allowing Case B to reject mismatched titles before model calls.
+  Regenerate older context files with `import-source` to include these titles;
+  keep the SQL and context JSON from the same import run.
 - Categories are unique per (service, name), specialities per name within a
   category, tags per name across the source; a tag under several specialities
   gets one row and several links. Tag names are compared the way the client
