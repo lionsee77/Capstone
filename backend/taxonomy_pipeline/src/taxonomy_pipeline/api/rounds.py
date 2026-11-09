@@ -36,6 +36,7 @@ def _roots() -> use_cases.RoundRoots:
         integrations=Path(os.environ.get("TAXONOMY_INTEGRATIONS_ROOT") or DEFAULT_INTEGRATIONS_ROOT).resolve(),
         merge_runs=Path(os.environ.get("TAXONOMY_MERGE_ROOT") or DEFAULT_MERGE_ROOT).resolve(),
         template=use_cases.DEFAULT_TEMPLATE,
+        original=use_cases.ORIGINAL_DUMPS,
     )
 
 

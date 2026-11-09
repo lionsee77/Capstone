@@ -14,7 +14,8 @@ verdict on screen is the API's.
 
 ## Pages
 
-- **New enrichment round** (`/sources/new`) - start a round on a chosen snapshot, drop its
+- **New enrichment round** (`/sources/new`) - start a round on a chosen snapshot or the original
+  taxonomy (the newest snapshot is the default), drop its
   file or folder, map its columns and set its options, then import and run it. Columns come
   from the uploaded file, with sample values, so nothing is typed from memory. Importing shows
   counts and warnings, and shows any mapping error from the API in place. LLM steps can only be
