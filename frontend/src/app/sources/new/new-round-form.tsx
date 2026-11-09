@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { Notice, Section } from "@/components/layout/page-header";
 import { Button } from "@/components/ui/button";
@@ -25,20 +25,26 @@ import {
   baselineLabel,
   buildMapping,
   buildSettings,
+  currentStep,
   draftFromMapping,
-  draftKey,
   draftFromSettings,
+  draftKey,
   droppedFiles,
-  type FilterDraft,
-  type LevelDraft,
-  mappingProblems,
+  firstStep,
   type MappingDraft,
+  mappingProblems,
   ORIGINAL_BASELINE,
+  readableFiles,
   roundIdProblem,
   type SettingsDraft,
-  suggestSourceName,
+  SETUP_STEPS,
+  type SetupStepId,
+  stepOpen,
   uploadProblem,
+  withOnlyFile,
 } from "@/lib/round-setup";
+
+import { MapColumns } from "./map-columns";
 
 export function NewRoundForm({ roundId }: { roundId: string | null }) {
   const { data: options, error } = useRoundOptions();
@@ -51,6 +57,48 @@ export function NewRoundForm({ roundId }: { roundId: string | null }) {
   }
   if (!options) return <Skeleton className="h-40 w-full" />;
   return roundId ? <SetupRound roundId={roundId} options={options} /> : <StartRound options={options} />;
+}
+
+/** Where the round is up to. A step can be revisited once what it needs is in place. */
+function Stepper({
+  current, isOpen, onChoose,
+}: { current: "name" | SetupStepId; isOpen: (step: SetupStepId) => boolean; onChoose: (step: SetupStepId) => void }) {
+  const position = SETUP_STEPS.findIndex((step) => step.id === current);
+  return (
+    <ol aria-label="Steps" className="flex flex-wrap items-center gap-x-1 gap-y-2">
+      {SETUP_STEPS.map((step, index) => {
+        const active = step.id === current;
+        const done = index < position;
+        const circle = active
+          ? "bg-primary text-primary-foreground"
+          : done ? "bg-accent text-foreground" : "bg-muted text-muted-foreground";
+        const content = (
+          <>
+            <span aria-hidden className={`flex size-6 items-center justify-center rounded-full text-xs font-medium ${circle}`}>
+              {done ? "✓" : index + 1}
+            </span>
+            <span className={active ? "font-medium" : "text-muted-foreground"}>{step.label}</span>
+          </>
+        );
+        return (
+          <li key={step.id} aria-current={active ? "step" : undefined} className="flex items-center gap-1 text-sm">
+            {index > 0 && <span aria-hidden className="mx-1 hidden h-px w-6 bg-rule sm:block" />}
+            {step.id !== "name" && !active && isOpen(step.id) ? (
+              <button type="button" className="flex items-center gap-2 rounded-md px-1 py-0.5 hover:bg-muted" onClick={() => onChoose(step.id as SetupStepId)}>
+                {content}
+              </button>
+            ) : (
+              <span className="flex items-center gap-2 px-1 py-0.5">{content}</span>
+            )}
+          </li>
+        );
+      })}
+    </ol>
+  );
+}
+
+function StepTitle({ number, children }: { number: number; children: string }) {
+  return <>Step {number} of {SETUP_STEPS.length}: {children}</>;
 }
 
 function StartRound({ options }: { options: RoundOptions }) {
@@ -68,46 +116,49 @@ function StartRound({ options }: { options: RoundOptions }) {
     );
   }
   return (
-    <Section title="1. Name the round">
-      <div className="flex flex-wrap items-start gap-4">
-        <div className="flex flex-col gap-1.5">
-          <Label htmlFor="round-id">Round name</Label>
-          <Input id="round-id" className="w-64" placeholder="e.g. onet-demo" value={roundId} onChange={(e) => setRoundId(e.target.value)} />
-          {problem && <p className="max-w-64 text-sm text-destructive">{problem}</p>}
+    <div className="flex flex-col gap-8">
+      <Stepper current="name" isOpen={() => false} onChoose={() => undefined} />
+      <Section title={<StepTitle number={1}>Name the round</StepTitle>}>
+        <div className="flex flex-wrap items-start gap-4">
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="round-id">Round name</Label>
+            <Input id="round-id" className="w-64" placeholder="e.g. onet-demo" value={roundId} onChange={(e) => setRoundId(e.target.value)} />
+            {problem && <p className="max-w-64 text-sm text-destructive">{problem}</p>}
+          </div>
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="round-baseline">Build on</Label>
+            <NativeSelect id="round-baseline" className="w-64" value={baseline} onChange={(e) => setBaseline(e.target.value)}>
+              {options.snapshots.map((snapshot) => (
+                <option key={snapshot} value={snapshot}>{baselineLabel(snapshot)}</option>
+              ))}
+            </NativeSelect>
+            <p className="max-w-64 text-sm text-muted-foreground">
+              {baseline === ORIGINAL_BASELINE
+                ? "Before any enrichment. A source is read from one table, so SkillsFuture gives framework skill titles, not Unique Skills, and review will be long."
+                : "The newest is first. New tags are checked against this version."}
+            </p>
+          </div>
         </div>
-        <div className="flex flex-col gap-1.5">
-          <Label htmlFor="round-baseline">Build on</Label>
-          <NativeSelect id="round-baseline" className="w-64" value={baseline} onChange={(e) => setBaseline(e.target.value)}>
-            {options.snapshots.map((snapshot) => (
-              <option key={snapshot} value={snapshot}>{baselineLabel(snapshot)}</option>
-            ))}
-          </NativeSelect>
-          <p className="max-w-64 text-sm text-muted-foreground">
-            {baseline === ORIGINAL_BASELINE
-              ? "Before any enrichment. A source is read from one table, so SkillsFuture gives framework skill titles, not Unique Skills, and review will be long."
-              : "The newest is first. New tags are checked against this version."}
-          </p>
+        <div>
+          <Button
+            disabled={!roundId || problem !== null || create.isPending}
+            onClick={() => create.mutate(
+              { round_id: roundId, baseline_snapshot: baseline },
+              { onSuccess: (round) => router.replace(`/sources/new?round=${encodeURIComponent(round.round_id)}`) },
+            )}
+          >
+            Next: add files
+          </Button>
         </div>
-      </div>
-      <div>
-        <Button
-          disabled={!roundId || problem !== null || create.isPending}
-          onClick={() => create.mutate(
-            { round_id: roundId, baseline_snapshot: baseline },
-            { onSuccess: (round) => router.replace(`/sources/new?round=${encodeURIComponent(round.round_id)}`) },
-          )}
-        >
-          Create round
-        </Button>
-      </div>
-      {create.error && <p className="text-sm text-destructive">{create.error.message}</p>}
-    </Section>
+        {create.error && <p className="text-sm text-destructive">{create.error.message}</p>}
+      </Section>
+    </div>
   );
 }
 
 function SetupRound({ roundId, options }: { roundId: string; options: RoundOptions }) {
   const { data: round, error } = useRound(roundId);
-  const { data: files = [] } = useRoundFiles(roundId);
+  const { data: files } = useRoundFiles(roundId);
   if (error) {
     return (
       <Notice title="Could not load this round" tone="error">
@@ -115,17 +166,159 @@ function SetupRound({ roundId, options }: { roundId: string; options: RoundOptio
       </Notice>
     );
   }
-  if (!round) return <Skeleton className="h-40 w-full" />;
+  // Waits for the files too: which step to resume on depends on them.
+  if (!round || !files) return <Skeleton className="h-40 w-full" />;
+  return <Wizard key={round.round_id} round={round} files={files} options={options} />;
+}
+
+function Wizard({ round, files, options }: { round: RoundState; files: RoundFile[]; options: RoundOptions }) {
+  const router = useRouter();
+  const readable = readableFiles(files);
+  const [mapping, setMapping] = useState<MappingDraft>(() => withOnlyFile(draftFromMapping(round.mapping), readable));
+  const [settings, setSettings] = useState<SettingsDraft>(() => draftFromSettings(round.settings));
+  const problems = mappingProblems(mapping);
+  const [chosenStep, setChosenStep] = useState<SetupStepId>(() => firstStep(readable.length, problems.length));
+  const step = currentStep(chosenStep, readable.length, problems.length);
+  const configure = useConfigureRound(round.round_id);
+  const run = useRunRound(round.round_id);
+
+  const saved = round.status === "ready" && !configure.isPending;
+  // What's on screen must be what would run: change anything after importing and it has to be imported again.
+  const currentKey = draftKey(mapping, settings);
+  const [importedKey, setImportedKey] = useState(() => draftKey(draftFromMapping(round.mapping), draftFromSettings(round.settings)));
+  const upToDate = saved && currentKey === importedKey;
+
+  const { data: chosen, error: tableError } = useRoundFile(round.round_id, mapping.source || null, mapping.sheet || null);
+  const uploaded = files.find((file) => file.name === mapping.source);
+  // The upload describes the first sheet only, so another sheet waits for its own answer.
+  const table = chosen ?? (mapping.sheet ? undefined : uploaded);
+
+  function goTo(next: SetupStepId) {
+    if (next === "columns") setMapping((current) => withOnlyFile(current, readable));
+    setChosenStep(next);
+  }
+
   return (
     <div className="flex flex-col gap-8">
-      <p className="text-sm text-muted-foreground">Round <span className="font-medium text-foreground">{round.round_id}</span>, built on {round.baseline_snapshot}.</p>
-      <AddFiles round={round} files={files} />
-      {files.length > 0 && <ConfigureRound key={round.round_id} round={round} files={files} options={options} />}
+      <Stepper current={step} isOpen={(id) => stepOpen(id, readable.length, problems.length)} onChoose={goTo} />
+      <p className="text-sm text-muted-foreground">
+        Round <span className="font-medium text-foreground">{round.round_id}</span>, built on {baselineLabel(round.baseline_snapshot)}.
+      </p>
+
+      {step === "files" && (
+        <Section title={<StepTitle number={2}>Add the source files</StepTitle>}>
+          <AddFiles
+            round={round}
+            files={files}
+            onRemoved={(name) => setMapping((current) => (current.source === name ? { ...current, source: "", sheet: "" } : current))}
+          />
+          <StepButtons nextLabel="Next: match columns" canContinue={readable.length > 0} onNext={() => goTo("columns")} />
+        </Section>
+      )}
+
+      {step === "columns" && (
+        <Section title={<StepTitle number={3}>Match the columns</StepTitle>}>
+          <MapColumns mapping={mapping} onChange={setMapping} table={table} tableError={tableError?.message} files={readable} options={options} />
+          {problems.length > 0 && (
+            <div className="text-sm text-muted-foreground">
+              <p className="font-medium">Still needed</p>
+              <ul className="mt-1 flex list-disc flex-col gap-0.5 pl-4">
+                {problems.map((problem) => <li key={problem}>{problem}</li>)}
+              </ul>
+            </div>
+          )}
+          <StepButtons onBack={() => goTo("files")} nextLabel="Next: options" canContinue={problems.length === 0} onNext={() => goTo("options")} />
+        </Section>
+      )}
+
+      {step === "options" && (
+        <Section title={<StepTitle number={4}>Choose the options</StepTitle>}>
+          <p className="text-sm text-muted-foreground">The defaults suit most sources, so you can usually continue without changing anything.</p>
+          <LlmSwitches settings={settings} options={options} tags={table?.row_count} onChange={setSettings} />
+          <details className="rounded-md border border-border p-3">
+            <summary className="cursor-pointer text-sm font-medium">Matching thresholds (advanced)</summary>
+            <div className="mt-3 grid gap-4 md:grid-cols-2">
+              <ThresholdField id="set-threshold" label="Duplicate spelling score (0-100)" setting="threshold" value={settings.threshold} options={options} onChange={(threshold) => setSettings({ ...settings, threshold })} />
+              <ThresholdField id="set-semantic" label="Duplicate meaning score (0-1)" setting="semantic_threshold" value={settings.semanticThreshold} options={options} onChange={(semanticThreshold) => setSettings({ ...settings, semanticThreshold })} />
+              <ThresholdField id="set-add-lexical" label="Clearly new below spelling score (0-100)" setting="add_candidate_lexical_threshold" value={settings.addLexical} options={options} onChange={(addLexical) => setSettings({ ...settings, addLexical })} />
+              <ThresholdField id="set-add-semantic" label="Clearly new below meaning score (0-1)" setting="add_candidate_semantic_threshold" value={settings.addSemantic} options={options} onChange={(addSemantic) => setSettings({ ...settings, addSemantic })} />
+            </div>
+          </details>
+          <StepButtons onBack={() => goTo("columns")} nextLabel="Next: import" canContinue onNext={() => goTo("import")} />
+        </Section>
+      )}
+
+      {step === "import" && (
+        <Section title={<StepTitle number={5}>Import and run</StepTitle>}>
+          <SetupSummary mapping={mapping} settings={settings} options={options} />
+          <div className="flex flex-wrap items-center gap-2">
+            <Button variant="ghost" onClick={() => goTo("options")}>Back</Button>
+            <Button
+              variant={upToDate ? "outline" : "default"}
+              disabled={problems.length > 0 || configure.isPending}
+              onClick={() => configure.mutate(
+                { mapping: buildMapping(mapping), settings: buildSettings(settings) },
+                { onSuccess: () => setImportedKey(currentKey) },
+              )}
+            >
+              {configure.isPending ? "Importing…" : saved ? "Import again with these settings" : "Import the source"}
+            </Button>
+            {upToDate && (
+              <Button
+                disabled={run.isPending}
+                onClick={() => run.mutate(undefined, { onSuccess: () => router.push(`/rounds/${encodeURIComponent(round.round_id)}`) })}
+              >
+                Run the pipeline
+              </Button>
+            )}
+          </div>
+          {configure.error && (
+            <Notice title="The source could not be imported" tone="error">
+              {configure.error.message}
+            </Notice>
+          )}
+          {round.status === "setup" && round.warnings.length > 0 && (
+            <Notice title="Import again before running">
+              {round.warnings.join(" ")}
+            </Notice>
+          )}
+          {saved && !upToDate && (
+            <Notice title="These settings aren't imported yet">
+              The last import used different settings. Import again before running, so the round runs what is shown here.
+            </Notice>
+          )}
+          {upToDate && (
+            <Notice title="Imported">
+              <p>
+                {round.import_counts.categories ?? 0} categories, {round.import_counts.specialities ?? 0} specialities and{" "}
+                {round.import_counts.tags ?? 0} tags.
+              </p>
+              {round.warnings.length > 0 && (
+                <ul className="mt-2 flex list-disc flex-col gap-1 pl-4">
+                  {round.warnings.map((warning) => <li key={warning}>{warning}</li>)}
+                </ul>
+              )}
+            </Notice>
+          )}
+          {run.error && <p className="text-sm text-destructive">{run.error.message}</p>}
+        </Section>
+      )}
     </div>
   );
 }
 
-function AddFiles({ round, files }: { round: RoundState; files: RoundFile[] }) {
+function StepButtons({
+  onBack, nextLabel, canContinue, onNext,
+}: { onBack?: () => void; nextLabel: string; canContinue: boolean; onNext: () => void }) {
+  return (
+    <div className="flex items-center gap-2">
+      {onBack && <Button variant="ghost" onClick={onBack}>Back</Button>}
+      <Button disabled={!canContinue} onClick={onNext}>{nextLabel}</Button>
+    </div>
+  );
+}
+
+function AddFiles({ round, files, onRemoved }: { round: RoundState; files: RoundFile[]; onRemoved: (name: string) => void }) {
   const upload = useUploadRoundFile(round.round_id);
   const remove = useRemoveRoundFile(round.round_id);
   const [dragging, setDragging] = useState(false);
@@ -154,7 +347,7 @@ function AddFiles({ round, files }: { round: RoundState; files: RoundFile[] }) {
   }
 
   return (
-    <Section title="2. Add the source files">
+    <>
       <div
         role="group"
         aria-label="Drop files or a folder here"
@@ -214,276 +407,49 @@ function AddFiles({ round, files }: { round: RoundState; files: RoundFile[] }) {
                 <span className="font-medium">{file.name}</span>
                 <span className="ml-2 text-muted-foreground">
                   {file.error ?? `${file.row_count.toLocaleString()} rows, ${file.columns.length} columns`}
+                  {file.sheets.length > 1 ? `, ${file.sheets.length} sheets` : ""}
                 </span>
               </span>
-              <Button size="xs" variant="ghost" disabled={remove.isPending} onClick={() => remove.mutate(file.name)}>Remove</Button>
+              <Button
+                size="xs"
+                variant="ghost"
+                disabled={remove.isPending}
+                onClick={() => remove.mutate(file.name, { onSuccess: () => onRemoved(file.name) })}
+              >
+                Remove
+              </Button>
             </li>
           ))}
         </ul>
       )}
       {remove.error && <p className="text-sm text-destructive">{remove.error.message}</p>}
-    </Section>
-  );
-}
-
-function ConfigureRound({ round, files, options }: { round: RoundState; files: RoundFile[]; options: RoundOptions }) {
-  const router = useRouter();
-  const [mapping, setMapping] = useState<MappingDraft>(() => draftFromMapping(round.mapping));
-  const [settings, setSettings] = useState<SettingsDraft>(() => draftFromSettings(round.settings));
-  const configure = useConfigureRound(round.round_id);
-  const run = useRunRound(round.round_id);
-
-  // A workbook with a bad first sheet can still have a good one, so it stays choosable; a CSV that can't be read can't.
-  const readable = files.filter((file) => !file.error || file.sheets.length > 0);
-  const source = mapping.source || "";
-  const { data: chosen } = useRoundFile(round.round_id, source || null, mapping.sheet || null);
-  const fallback = useMemo(() => files.find((file) => file.name === source), [files, source]);
-  const table = chosen ?? fallback;
-  const problems = mappingProblems(mapping);
-  const update = (patch: Partial<MappingDraft>) => setMapping((current) => ({ ...current, ...patch }));
-  const saved = round.status === "ready" && !configure.isPending;
-  // What's on screen must be what would run: change anything after importing and it has to be imported again.
-  const currentKey = draftKey(mapping, settings);
-  const [importedKey, setImportedKey] = useState(() => draftKey(draftFromMapping(round.mapping), draftFromSettings(round.settings)));
-  const upToDate = saved && currentKey === importedKey;
-
-  function chooseSource(name: string) {
-    update({
-      source: name, sheet: "",
-      name: mapping.name || suggestSourceName(name),
-      displayName: mapping.displayName || name.replace(/\.[^.]+$/, ""),
-    });
-  }
-
-  return (
-    <>
-      <Section title="3. Say how to read it">
-        <div className="grid gap-4 md:grid-cols-2">
-          <Field label="File to import" id="map-source">
-            <NativeSelect id="map-source" value={source} onChange={(e) => chooseSource(e.target.value)}>
-              <option value="">Choose a file</option>
-              {readable.map((file) => <option key={file.name} value={file.name}>{file.name}</option>)}
-            </NativeSelect>
-          </Field>
-          {(table?.sheets.length ?? 0) > 1 && (
-            <Field label="Sheet" id="map-sheet">
-              <NativeSelect id="map-sheet" value={mapping.sheet} onChange={(e) => update({ sheet: e.target.value })}>
-                <option value="">The first sheet</option>
-                {table?.sheets.map((sheet) => <option key={sheet} value={sheet}>{sheet}</option>)}
-              </NativeSelect>
-            </Field>
-          )}
-          <Field label="Source name" id="map-name" hint="Names its tables and judge cache: lowercase, digits and _.">
-            <Input id="map-name" value={mapping.name} onChange={(e) => update({ name: e.target.value })} />
-          </Field>
-          <Field label="Display name" id="map-display" hint="How the LLM prompt names this source.">
-            <Input id="map-display" value={mapping.displayName} onChange={(e) => update({ displayName: e.target.value })} />
-          </Field>
-        </div>
-
-        {table?.error && (
-          <Notice title="This file or sheet can't be read" tone="error">
-            {table.error}
-          </Notice>
-        )}
-        {table && !table.error && (
-          <div className="flex flex-col gap-4">
-            <LevelFields label="Category" hint="The broad group each row belongs to." value={mapping.category} onChange={(category) => update({ category })} table={table} files={readable} />
-            <LevelFields label="Speciality" hint="The role or area under a category." value={mapping.speciality} onChange={(speciality) => update({ speciality })} table={table} files={readable} />
-            <LevelFields label="Tag" hint="The skill or term itself." value={mapping.tag} onChange={(tag) => update({ tag })} table={table} files={readable} />
-            <Field label="Tag description (optional)" id="map-description" hint="Extra context for classifying a tag.">
-              <ColumnSelect id="map-description" table={table} value={mapping.description} onChange={(description) => update({ description })} empty="None" />
-            </Field>
-            <div className="grid gap-4 md:grid-cols-2">
-              <Field label="Categories go under" id="map-service-mode">
-                <NativeSelect id="map-service-mode" value={mapping.serviceMode} onChange={(e) => update({ serviceMode: e.target.value as MappingDraft["serviceMode"] })}>
-                  <option value="id">One service</option>
-                  <option value="column">A service ID in each row</option>
-                </NativeSelect>
-              </Field>
-              {mapping.serviceMode === "id" ? (
-                <Field label="Service" id="map-service">
-                  <NativeSelect id="map-service" value={mapping.serviceId} onChange={(e) => update({ serviceId: e.target.value })}>
-                    <option value="">Choose a service</option>
-                    {options.services.map((service) => <option key={service.id} value={service.id}>{service.name}</option>)}
-                  </NativeSelect>
-                </Field>
-              ) : (
-                <Field label="Service ID column" id="map-service-column">
-                  <ColumnSelect id="map-service-column" table={table} value={mapping.serviceColumn} onChange={(serviceColumn) => update({ serviceColumn })} />
-                </Field>
-              )}
-            </div>
-            <Filters filters={mapping.filters} table={table} onChange={(filters) => update({ filters })} />
-            <Field label="Table prefix (optional)" id="map-prefix" hint="Defaults to the source name followed by _.">
-              <Input id="map-prefix" className="max-w-xs" value={mapping.tablePrefix} onChange={(e) => update({ tablePrefix: e.target.value })} />
-            </Field>
-          </div>
-        )}
-      </Section>
-
-      <Section title="4. Set the round's options">
-        <LlmSwitches settings={settings} options={options} tags={table?.row_count} onChange={setSettings} />
-        <details className="rounded-md border border-border p-3">
-          <summary className="cursor-pointer text-sm font-medium">Matching thresholds</summary>
-          <div className="mt-3 grid gap-4 md:grid-cols-2">
-            <ThresholdField id="set-threshold" label="Duplicate spelling score (0-100)" setting="threshold" value={settings.threshold} options={options} onChange={(threshold) => setSettings({ ...settings, threshold })} />
-            <ThresholdField id="set-semantic" label="Duplicate meaning score (0-1)" setting="semantic_threshold" value={settings.semanticThreshold} options={options} onChange={(semanticThreshold) => setSettings({ ...settings, semanticThreshold })} />
-            <ThresholdField id="set-add-lexical" label="Clearly new below spelling score (0-100)" setting="add_candidate_lexical_threshold" value={settings.addLexical} options={options} onChange={(addLexical) => setSettings({ ...settings, addLexical })} />
-            <ThresholdField id="set-add-semantic" label="Clearly new below meaning score (0-1)" setting="add_candidate_semantic_threshold" value={settings.addSemantic} options={options} onChange={(addSemantic) => setSettings({ ...settings, addSemantic })} />
-          </div>
-        </details>
-      </Section>
-
-      <Section title="5. Import and run">
-        {problems.length > 0 && (
-          <ul className="flex list-disc flex-col gap-1 pl-4 text-sm text-muted-foreground">
-            {problems.map((problem) => <li key={problem}>{problem}</li>)}
-          </ul>
-        )}
-        <div>
-          <Button
-            variant={upToDate ? "outline" : "default"}
-            disabled={problems.length > 0 || configure.isPending}
-            onClick={() => configure.mutate(
-              { mapping: buildMapping(mapping), settings: buildSettings(settings) },
-              { onSuccess: () => setImportedKey(currentKey) },
-            )}
-          >
-            {configure.isPending ? "Importing…" : saved ? "Import again with these settings" : "Import the source"}
-          </Button>
-        </div>
-        {configure.error && (
-          <Notice title="The source could not be imported" tone="error">
-            {configure.error.message}
-          </Notice>
-        )}
-        {round.status === "setup" && round.warnings.length > 0 && (
-          <Notice title="Import again before running">
-            {round.warnings.join(" ")}
-          </Notice>
-        )}
-        {saved && !upToDate && (
-          <Notice title="These settings aren't imported yet">
-            The last import used different settings. Import again before running, so the round runs what is shown here.
-          </Notice>
-        )}
-        {upToDate && (
-          <Notice title="Imported">
-            <p>
-              {round.import_counts.categories ?? 0} categories, {round.import_counts.specialities ?? 0} specialities and{" "}
-              {round.import_counts.tags ?? 0} tags.
-            </p>
-            {round.warnings.length > 0 && (
-              <ul className="mt-2 flex list-disc flex-col gap-1 pl-4">
-                {round.warnings.map((warning) => <li key={warning}>{warning}</li>)}
-              </ul>
-            )}
-          </Notice>
-        )}
-        {upToDate && (
-          <div>
-            <Button
-              disabled={run.isPending}
-              onClick={() => run.mutate(undefined, { onSuccess: () => router.push(`/rounds/${encodeURIComponent(round.round_id)}`) })}
-            >
-              Run the pipeline
-            </Button>
-          </div>
-        )}
-        {run.error && <p className="text-sm text-destructive">{run.error.message}</p>}
-      </Section>
     </>
   );
 }
 
-function Field({ label, id, hint, children }: { label: string; id: string; hint?: string; children: React.ReactNode }) {
+/** What the import will use, in one place, so the last check doesn't mean going back through the steps. */
+function SetupSummary({ mapping, settings, options }: { mapping: MappingDraft; settings: SettingsDraft; options: RoundOptions }) {
+  const level = (spec: MappingDraft["category"]) => (spec.mode === "column" ? spec.column : `${spec.column} (first ${spec.prefix} characters, named by ${spec.labels})`);
+  const service = options.services.find((item) => String(item.id) === mapping.serviceId)?.name;
+  const llm = [settings.judge && "LLM judge", settings.caseB && "LLM classification of tags without a parent"].filter(Boolean);
+  const rows: [string, string][] = [
+    ["File", mapping.sheet ? `${mapping.source}, sheet ${mapping.sheet}` : mapping.source],
+    ["Category", level(mapping.category)],
+    ["Speciality", level(mapping.speciality)],
+    ["Tag", level(mapping.tag)],
+    ["Goes under", mapping.serviceMode === "id" ? (service ?? mapping.serviceId) : `The service ID in ${mapping.serviceColumn}`],
+    ["Rows kept", mapping.filters.length ? mapping.filters.map((filter) => `${filter.column} is ${filter.values}`).join("; ") : "All"],
+    ["LLM steps", llm.length ? llm.join(", ") : "Off"],
+  ];
   return (
-    <div className="flex flex-col gap-1.5">
-      <Label htmlFor={id}>{label}</Label>
-      {children}
-      {hint && <p className="text-sm text-muted-foreground">{hint}</p>}
-    </div>
-  );
-}
-
-function sampleText(table: RoundFile, column: string): string {
-  return (table.samples[column] ?? []).slice(0, 3).join(", ");
-}
-
-function ColumnSelect({
-  id, table, value, onChange, empty = "Choose a column",
-}: { id: string; table: RoundFile; value: string; onChange: (value: string) => void; empty?: string }) {
-  return (
-    <NativeSelect id={id} value={value} onChange={(e) => onChange(e.target.value)}>
-      <option value="">{empty}</option>
-      {table.columns.map((column) => (
-        <option key={column} value={column}>{column}{sampleText(table, column) ? ` (e.g. ${sampleText(table, column)})` : ""}</option>
-      ))}
-    </NativeSelect>
-  );
-}
-
-function LevelFields({
-  label, hint, value, onChange, table, files,
-}: { label: string; hint: string; value: LevelDraft; onChange: (value: LevelDraft) => void; table: RoundFile; files: RoundFile[] }) {
-  const id = label.toLowerCase();
-  return (
-    <div className="grid gap-3 md:grid-cols-[1fr_12rem]">
-      <Field label={label} id={`map-${id}`} hint={hint}>
-        <ColumnSelect id={`map-${id}`} table={table} value={value.column} onChange={(column) => onChange({ ...value, column })} />
-      </Field>
-      <Field label="Read it as" id={`map-${id}-mode`}>
-        <NativeSelect id={`map-${id}-mode`} value={value.mode} onChange={(e) => onChange({ ...value, mode: e.target.value as LevelDraft["mode"] })}>
-          <option value="column">The column as it is</option>
-          <option value="prefix">A code prefix with labels</option>
-        </NativeSelect>
-      </Field>
-      {value.mode === "prefix" && (
-        <div className="grid gap-3 md:col-span-2 md:grid-cols-2">
-          <Field label="Prefix length" id={`map-${id}-prefix`} hint="How many of the code's first characters name the group.">
-            <Input id={`map-${id}-prefix`} type="number" min="1" value={value.prefix} onChange={(e) => onChange({ ...value, prefix: e.target.value })} />
-          </Field>
-          <Field label="Labels file" id={`map-${id}-labels`} hint="A CSV with code and label columns.">
-            <NativeSelect id={`map-${id}-labels`} value={value.labels} onChange={(e) => onChange({ ...value, labels: e.target.value })}>
-              <option value="">Choose a file</option>
-              {files.filter((file) => file.name.toLowerCase().endsWith(".csv")).map((file) => (
-                <option key={file.name} value={file.name}>{file.name}</option>
-              ))}
-            </NativeSelect>
-          </Field>
-        </div>
-      )}
-    </div>
-  );
-}
-
-function Filters({ filters, table, onChange }: { filters: FilterDraft[]; table: RoundFile; onChange: (filters: FilterDraft[]) => void }) {
-  const change = (index: number, patch: Partial<FilterDraft>) =>
-    onChange(filters.map((filter, position) => (position === index ? { ...filter, ...patch } : filter)));
-  return (
-    <div className="flex flex-col gap-2">
-      <p className="text-sm font-medium">Keep only rows where (optional)</p>
-      {filters.map((filter, index) => (
-        <div key={index} className="flex flex-wrap items-center gap-2">
-          <div className="min-w-48 flex-1">
-            <ColumnSelect id={`map-filter-${index}`} table={table} value={filter.column} onChange={(column) => change(index, { column })} />
-          </div>
-          <span className="text-sm text-muted-foreground">is</span>
-          <Input
-            aria-label={`Values for filter ${index + 1}`}
-            className="max-w-56"
-            placeholder={sampleText(table, filter.column) || 'Value, several with commas, "a, b" for one with a comma'}
-            value={filter.values}
-            onChange={(e) => change(index, { values: e.target.value })}
-          />
-          <Button size="xs" variant="ghost" onClick={() => onChange(filters.filter((_, position) => position !== index))}>Remove</Button>
+    <dl className="grid grid-cols-[8rem_1fr] gap-x-4 gap-y-1.5 text-sm">
+      {rows.map(([term, value]) => (
+        <div key={term} className="contents">
+          <dt className="text-muted-foreground">{term}</dt>
+          <dd className="min-w-0 break-words">{value}</dd>
         </div>
       ))}
-      <div>
-        <Button size="sm" variant="outline" onClick={() => onChange([...filters, { column: "", values: "" }])}>Add a filter</Button>
-      </div>
-    </div>
+    </dl>
   );
 }
 
@@ -530,8 +496,9 @@ function ThresholdField({
 }: { id: string; label: string; setting: string; value: string; options: RoundOptions; onChange: (value: string) => void }) {
   const fallback = options.saturation_defaults[setting];
   return (
-    <Field label={label} id={id}>
+    <div className="flex flex-col gap-1.5">
+      <Label htmlFor={id}>{label}</Label>
       <Input id={id} type="number" step="any" min="0" placeholder={fallback === undefined ? "Default" : `Default: ${fallback}`} value={value} onChange={(e) => onChange(e.target.value)} />
-    </Field>
+    </div>
   );
 }

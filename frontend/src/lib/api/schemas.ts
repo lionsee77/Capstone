@@ -581,6 +581,8 @@ export const roundFileSchema = z.object({
   columns: z.array(z.string()),
   row_count: z.number(),
   samples: z.record(z.string(), z.array(z.string())),
+  preview_rows: z.array(z.record(z.string(), z.string())),
+  sheet_columns: z.record(z.string(), z.array(z.string())),
   error: z.string().nullable(),
 });
 export type RoundFile = z.infer<typeof roundFileSchema>;
