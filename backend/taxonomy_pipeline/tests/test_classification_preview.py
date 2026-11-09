@@ -313,7 +313,7 @@ def test_surfaces_repeated_new_names_across_parents(
     assert len(warnings) == 1
     warning = warnings[0]
     assert warning.code == f"warning.repeated_{level}_name"
-    assert "across 2 parent paths" in warning.message
+    assert "across 2 distinct parents" in warning.message
     for proposal in resolution.screening.proposals:
         if proposal.level == level:
             assert proposal.proposal_id in warning.message
@@ -330,7 +330,7 @@ def test_surfaces_repeated_new_names_across_parents(
     placements = [row for row in exported if row["row_type"] == "placement"]
     assert len(placements) == 2
     assert all(row["status"] == "proposed" and row["needs_review"] == "False" for row in placements)
-    assert all(warning.code in row["note"] and warning.message in row["note"] for row in placements)
+    assert all(warning.code in row["note"] and warning.message not in row["note"] for row in placements)
     assert [row["note"] for row in exported if row["status"] == warning.code] == [warning.message]
     reversed_preview = build_preview(resolve(list(reversed(rows)), empty_baseline, []), empty_baseline)
     assert preview.rows == reversed_preview.rows

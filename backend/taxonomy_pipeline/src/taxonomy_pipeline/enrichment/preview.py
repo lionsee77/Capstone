@@ -8,10 +8,10 @@ from __future__ import annotations
 
 import hashlib
 import json
-from collections import Counter, defaultdict
+from collections import Counter
 from typing import Any
 
-from ..matching.names import match_key, normalize
+from ..matching.names import match_key
 from ..models import MetricResult
 from ..quality.integrity import IntegrityMetric
 from ..taxonomy.base import CONCEPTS, TaxonomyDataset
@@ -21,13 +21,13 @@ from .models import (
     PreviewCounts,
     PreviewRow,
     ResolutionReport,
-    ReviewDecision,
     ValidationFinding,
     ValidationReport,
 )
-from .proposals.models import ProposalScreeningReport, ScreenedProposal
+from .paths import placement_path
+from .proposals.models import ProposalScreeningReport
+from .repeated_names import live_placements
 from .resolution import resolve_outputs, taxonomy_snapshot_id
-from .review import apply_hierarchy_decisions
 
 
 # Serialize identifiers without conflating booleans, integers, strings, or malformed values.
@@ -111,6 +111,11 @@ def _assemble(resolution: ResolutionReport, baseline: TaxonomyDataset) -> Taxono
     return combined
 
 
+# Append presentation notes consistently before the final deterministic row sort.
+def _append_note(row: PreviewRow, text: str) -> None:
+    row.note = " ".join(filter(None, (row.note, text)))
+
+
 # Emit one row per source and normalized path while retaining evidence variants in the resolution report.
 def _placement_rows(
     resolution: ResolutionReport, blocked: bool, baseline: TaxonomyDataset, screening: ProposalScreeningReport,
@@ -125,6 +130,11 @@ def _placement_rows(
         decision.proposal_id: decision for decision in resolution.decisions if decision.proposal_id is not None
     }
     services = {row["id"]: row["name"] for row in baseline.services}
+    live = live_placements(resolution.evidence, screening, resolution.decisions)
+    notes = {}
+    for warning in screening.repeated_names:
+        for proposal_id in warning.proposal_ids:
+            notes[proposal_id] = f"{warning.code}: {warning.name!r} (see cluster check row)"
     rows = []
     for proposal in resolution.evidence.tags:
         source = proposal.source.source_dataset, proposal.source.tag_id
@@ -132,10 +142,10 @@ def _placement_rows(
         tag = tags.get(mappings.get(source))
         placements: dict[tuple[str, str, str], list[ClassificationOutput]] = {}
         for placement in proposal.placements:
-            path = placement.service, normalize(placement.category), normalize(placement.speciality)
+            path = placement_path(placement)
             placements.setdefault(path, []).append(placement)
         unapproved = {
-            (item.service, normalize(item.category), normalize(item.speciality))
+            placement_path(item)
             for item in disposition.unapproved_paths
         }
         for path, variants in sorted(placements.items()):
@@ -162,10 +172,10 @@ def _placement_rows(
                 )
             matched = [item for item in concepts if item.matches]
             if matched:
-                row.note += (" " if row.note else "") + "Hierarchy matches in resolution.screening: " + "; ".join(
+                _append_note(row, "Hierarchy matches in resolution.screening: " + "; ".join(
                     f"{item.level} {item.proposal_id} ({item.status}, {len(item.matches)} candidates)"
                     for item in matched
-                )
+                ))
             if approved:
                 row.category_id, row.speciality_id = category.id, speciality.id
                 row.category_change = "existing" if category.existing else "new"
@@ -176,68 +186,18 @@ def _placement_rows(
                 supplied = [placement.service, placement.category, placement.speciality]
                 # Only a real move: a case or spelling variant of the supplied path (match_key) isn't one.
                 if [match_key(name) for name in resolved_path] != [match_key(name) for name in supplied]:
-                    row.note += (" " if row.note else "") + "Resolved placement: " + " > ".join(resolved_path)
+                    _append_note(row, "Resolved placement: " + " > ".join(resolved_path))
             reviewed = [item for item in concepts if item.proposal_id in decisions]
             if reviewed:
-                row.note += (" " if row.note else "") + "Hierarchy decisions: " + "; ".join(
+                _append_note(row, "Hierarchy decisions: " + "; ".join(
                     f"{item.level}: {item.reason}" for item in reviewed
-                )
+                ))
+            if (*source, path) in live:
+                for concept in concepts:
+                    if concept.proposal_id in notes:
+                        _append_note(row, notes[concept.proposal_id])
             rows.append(row)
     return sorted(rows, key=lambda row: _key(row.model_dump(mode="json")))
-
-
-# Annotate same-level new names across parents without changing placement approvals or review holds.
-def _flag_repeated_names(
-    screening: ProposalScreeningReport, rows: list[PreviewRow], decisions: list[ReviewDecision],
-) -> list[ValidationFinding]:
-    by_path = {tuple(proposal.path): proposal for proposal in screening.proposals}
-    withdrawn = {decision.proposal_id for decision in decisions if decision.action in {"exclude", "defer"}}
-    placements: dict[tuple[str, ...], list[PreviewRow]] = defaultdict(list)
-    for row in rows:
-        if row.status in {"excluded", "deferred"}:
-            continue
-        path = (row.service, normalize(row.category), normalize(row.speciality))
-        for key in (path[:2], path):
-            placements[key].append(row)
-    clusters: dict[tuple[str, str], list[ScreenedProposal]] = defaultdict(list)
-    parents: dict[str, str] = {}
-    for path, proposal in by_path.items():
-        parent = by_path.get(path[:2]) if proposal.level == "speciality" else None
-        if (
-            path not in placements or proposal.existing_id is not None or proposal.proposal_id in withdrawn
-            or parent is not None and parent.proposal_id in withdrawn
-        ):
-            continue
-        name = normalize(proposal.name)
-        if not name:
-            continue
-        # Reviewed category aliases can lead to the same parent and must count as one proposed node.
-        parents[proposal.proposal_id] = _key(
-            ["category_id", parent.existing_id] if parent is not None and parent.existing_id is not None
-            else [normalize(part) for part in path[:-1]]
-        )
-        clusters[(proposal.level, name)].append(proposal)
-    findings = []
-    for (level, name), cluster in sorted(clusters.items()):
-        distinct_parents = {parents[proposal.proposal_id] for proposal in cluster}
-        if len(distinct_parents) < 2:
-            continue
-        members = "; ".join(
-            f"{proposal.proposal_id}: {' > '.join(min(proposal.variants))}"
-            for proposal in sorted(cluster, key=lambda proposal: (proposal.path, proposal.proposal_id))
-        )
-        finding = ValidationFinding(
-            code=f"warning.repeated_{level}_name",
-            message=(
-                f"Repeated new {level} name {name!r} across {len(distinct_parents)} parent paths. "
-                f"Proposals: {members}. Advisory only; placements and approvals are unchanged."
-            ),
-        )
-        findings.append(finding)
-        for proposal in cluster:
-            for row in placements[tuple(proposal.path)]:
-                row.note += (" " if row.note else "") + f"{finding.code}: {finding.message}"
-    return findings
 
 
 # Construct and check a reviewed snapshot while separating prior defects from newly introduced errors.
@@ -278,9 +238,10 @@ def build_preview(resolution: ResolutionReport, baseline: TaxonomyDataset) -> Me
     if expected.screening:
         findings.extend(ValidationFinding(code=f"screening.{name}", message=reason)
                         for name, reason in sorted(expected.screening.skipped_checks.items()))
-    screening = apply_hierarchy_decisions(expected.screening, baseline, expected.decisions)
+    screening = expected.effective_screening
+    assert screening is not None, "Resolution must return effective screening"
     rows = _placement_rows(expected, blocked, baseline, screening)
-    findings.extend(_flag_repeated_names(screening, rows, expected.decisions))
+    findings.extend(ValidationFinding(code=item.code, message=item.message) for item in screening.repeated_names)
     linked = set() if blocked else {link.tag_id for link in expected.links}
     counts = PreviewCounts(
         added_tags=sum(not tag.existing and tag.id in linked for tag in expected.tags),
@@ -316,7 +277,7 @@ def build_preview(resolution: ResolutionReport, baseline: TaxonomyDataset) -> Me
     ) for status, count in sorted(expected.evidence.omitted_counts.items()))
     csv_rows.extend(PreviewRow(row_type="check", status=finding.code, note=finding.message) for finding in findings)
     unresolved_paths = {
-        (row.source_dataset, row.tag_id, row.service, normalize(row.category), normalize(row.speciality))
+        (row.source_dataset, row.tag_id, *placement_path(row))
         for row in rows if row.status in {"pending", "deferred", "unapproved"}
     }
     return MergePreview(
@@ -324,8 +285,7 @@ def build_preview(resolution: ResolutionReport, baseline: TaxonomyDataset) -> Me
         validation=ValidationReport(
             complete=not blocked, findings=findings, duplicate_candidates=expected.evidence.candidates,
             unresolved=[placement for tag in expected.evidence.tags for placement in tag.placements if (
-                placement.source_dataset, placement.tag_id, placement.service,
-                normalize(placement.category), normalize(placement.speciality),
+                placement.source_dataset, placement.tag_id, *placement_path(placement),
             ) in unresolved_paths],
         ),
         mappings=[item.model_copy(deep=True) for item in expected.mappings if item.canonical_tag_id in linked],

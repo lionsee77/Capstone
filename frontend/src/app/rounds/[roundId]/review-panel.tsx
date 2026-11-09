@@ -97,14 +97,21 @@ export function ReviewPanel({ round }: { round: RoundState }) {
       )}
       {queue && queue.proposals.length > 0 && (
         <div className="flex flex-col gap-3">
-          <h3 className="font-heading text-base">Categories and specialities to decide first</h3>
+          <h3 className="font-heading text-base">Categories and specialities to review</h3>
           <p className="text-sm text-muted-foreground">
-            Tags can only be created under these once each one is settled.
+            Held proposals need a decision before tags can be created under them.
+            Repeated-name warnings are advisory and remain visible when both paths are approved.
           </p>
+          {queue.repeated_names.map((warning) => (
+            <Notice key={`${warning.code}:${warning.name}`} title={`Repeated name: ${warning.name}`}>
+              <p className="break-words">{warning.message}</p>
+            </Notice>
+          ))}
           {queue.proposals.map((proposal) => (
             <ProposalCard
               key={proposal.proposal_id}
               proposal={proposal}
+              repeatedNames={queue.repeated_names.filter((warning) => warning.proposal_ids.includes(proposal.proposal_id)).map((warning) => warning.name)}
               disabled={!canEdit}
               onDecide={(decision) => submit([decision])}
               onClear={() => submit([], [], [proposal.proposal_id])}
@@ -384,10 +391,12 @@ function TagCard({
   );
 }
 
+// Show proposal decisions beside the shared screening warnings that affect this path.
 function ProposalCard({
-  proposal, disabled, onDecide, onClear,
+  proposal, repeatedNames, disabled, onDecide, onClear,
 }: {
   proposal: ReviewQueueProposal;
+  repeatedNames: string[];
   disabled: boolean;
   onDecide: (decision: DecisionInput) => void;
   onClear: () => void;
@@ -408,6 +417,9 @@ function ProposalCard({
         <LevelTag level={proposal.level} />
       </div>
       <p className="text-sm text-muted-foreground">{proposal.reason} {proposal.source_tags} tag(s) depend on this.</p>
+      {repeatedNames.length > 0 && (
+        <p className="text-sm font-medium">Repeated name: {repeatedNames.join(", ")}. See the parent groups above.</p>
+      )}
       {proposal.decision ? (
         <SavedDecision decision={proposal.decision} disabled={disabled} onClear={onClear} />
       ) : (

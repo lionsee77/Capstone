@@ -190,7 +190,8 @@ def _cmd_merge_preview(args: argparse.Namespace) -> int:
         f"[{status.upper()}] {counts.added_tags} new tags, {counts.reused_tags} reused, "
         f"{counts.added_links} new links, "
         f"{counts.added_categories} new categories, {counts.added_specialities} new specialities; "
-        f"{counts.pending_sources} sources pending review, {counts.omitted_records} records omitted",
+        f"{counts.pending_sources} sources pending review, {counts.omitted_records} records omitted, "
+        f"{len(run.warnings)} warnings",
         file=sys.stderr,
     )
     print(f"wrote {run.out_dir}/preview.csv (plus validation, deduplication and resolution JSON)")

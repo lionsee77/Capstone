@@ -26,18 +26,36 @@ from .models import (
     ReviewQueueTag,
     TagProposal,
 )
-from .review import apply_hierarchy_decisions
+from .proposals.models import ProposalScreeningReport
+from .repeated_names import live_placements
+from .resolution import resolve_outputs
 from .routing import SaturationReport
 
 
+# Join shared effective screening with tag evidence for every reviewer-facing surface.
 def build_review_queue(
     resolution: ResolutionReport, saturation: SaturationReport | None, baseline: TaxonomyDataset,
     *, decided_sources: set[tuple[str, str]] = frozenset(), decided_proposals: set[str] = frozenset(),
 ) -> ReviewQueueEvidence:
     """Tags still held or dealt with by a reviewer, and proposals that need or had a decision.
 
-    Tags the pipeline accepted by itself aren't listed: nothing about them needs a person.
+    Automatically accepted tags appear only when a live path carries an advisory collision.
     """
+    effective = resolution.effective_screening
+    if effective is None and resolution.screening is not None:
+        # Older saved runs have only raw screening; replay once to rebuild the derived review evidence.
+        effective = resolve_outputs(
+            resolution.evidence, baseline, resolution.decisions, screening=resolution.screening,
+        ).effective_screening
+    warned_sources = set()
+    if effective is not None:
+        warned_ids = {identifier for warning in effective.repeated_names for identifier in warning.proposal_ids}
+        warned_paths = {tuple(item.path) for item in effective.proposals if item.proposal_id in warned_ids}
+        warned_sources = {
+            (source, tag_id) for source, tag_id, path in live_placements(
+                resolution.evidence, effective, resolution.decisions,
+            ) if path in warned_paths or path[:2] in warned_paths
+        }
     tags = {(tag.source.source_dataset, tag.source.tag_id): tag for tag in resolution.evidence.tags}
     tag_ids = _unique_tag_ids(baseline)
     matches = saturation.ambiguous_matches() if saturation else {}
@@ -45,7 +63,7 @@ def build_review_queue(
     items = []
     for disposition in resolution.dispositions:
         key = (disposition.source.source_dataset, disposition.source.tag_id)
-        if disposition.status == "accepted" and key not in decided_sources:
+        if disposition.status == "accepted" and key not in decided_sources and key not in warned_sources:
             continue
         tag = tags.get(key)
         concept = matches.get(key[1]) if saturation and key[0] == saturation.incoming else None
@@ -64,7 +82,8 @@ def build_review_queue(
         ))
     return ReviewQueueEvidence(
         tags=sorted(items, key=lambda item: (normalize(item.tag), item.source.tag_id)),
-        proposals=_proposals(resolution, baseline, decided_proposals),
+        proposals=_proposals(effective, decided_proposals),
+        repeated_names=effective.repeated_names if effective else [],
     )
 
 
@@ -106,16 +125,18 @@ def _duplicates(
     return found
 
 
+# Include advisory collisions even when screening has accepted their proposals automatically.
 def _proposals(
-    resolution: ResolutionReport, baseline: TaxonomyDataset, decided: set[str],
+    effective: ProposalScreeningReport | None, decided: set[str],
 ) -> list[ReviewQueueProposal]:
-    """Proposals screening is holding after the decisions so far, and any a reviewer already decided."""
-    if resolution.screening is None:
+    """Held, warned, or previously decided proposals, without turning advisories into review holds."""
+    if effective is None:
         return []
-    effective = apply_hierarchy_decisions(resolution.screening, baseline, resolution.decisions)
+    warned = {identifier for warning in effective.repeated_names for identifier in warning.proposal_ids}
+    visible = decided | warned
     items = []
     for proposal in effective.proposals:
-        if proposal.status != "review" and proposal.proposal_id not in decided:
+        if proposal.status != "review" and proposal.proposal_id not in visible:
             continue
         items.append(ReviewQueueProposal(
             proposal_id=proposal.proposal_id, level=proposal.level, name=proposal.name, path=proposal.path,

@@ -545,10 +545,13 @@ def _merge(roots: RoundRoots, state: RoundState) -> tuple[str, str]:
     state.merge_counts = counts.model_dump()
     state.pending_sources = counts.pending_sources
     state.decisions_applied = True
-    state.warnings = _unique([*state.warnings, *run.warnings])
+    state.warnings = _unique([
+        *(warning for warning in state.warnings if not warning.startswith("warning.repeated_")), *run.warnings,
+    ])
     _write_queue(roots, state)
     return "done", (
-        f"{counts.added_tags} new tags, {counts.reused_tags} reused, {counts.pending_sources} waiting for review"
+        f"{counts.added_tags} new tags, {counts.reused_tags} reused, {counts.pending_sources} waiting for review, "
+        f"{len(run.warnings)} warnings"
     )
 
 
@@ -595,6 +598,7 @@ def get_review(
         tags=selected[offset:offset + limit], proposals=evidence.proposals, total=len(selected), offset=offset,
         limit=limit, decided=decided, undecided=len(evidence.tags) - decided,
         proposals_undecided=sum(item.decision is None for item in evidence.proposals),
+        repeated_names=evidence.repeated_names,
     )
 
 

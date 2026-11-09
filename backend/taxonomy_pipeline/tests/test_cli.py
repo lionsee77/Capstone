@@ -233,7 +233,7 @@ def test_case_a_then_merge_preview_run_end_to_end_from_the_cli(tmp_path, saturat
 
 # Carry repeated names from producer outputs through saved preview, integration replay and comparable scoring.
 def test_repeated_name_warnings_work_through_the_cli_pipeline(
-    tmp_path: Path, saturation_report: Callable[..., Path],
+    tmp_path: Path, saturation_report: Callable[..., Path], capsys: pytest.CaptureFixture[str],
 ) -> None:
     config_path = _write_stage_config(tmp_path)
     with (tmp_path / "baseline.sql").open("a", encoding="utf-8") as stream:
@@ -269,6 +269,12 @@ def test_repeated_name_warnings_work_through_the_cli_pipeline(
     merge_run = tmp_path / "merge"
     assert main(["merge-preview", "--config", str(config_path), "--input", str(case_a), "--input", str(case_b),
                  "--out-dir", str(merge_run)]) == 0
+    printed = capsys.readouterr()
+    assert "[WARN] warning.repeated_category_name" in printed.err
+    assert "[WARN] warning.repeated_speciality_name" in printed.err
+    assert "2 warnings" in printed.err
+    info = json.loads((merge_run / "run.json").read_text(encoding="utf-8"))
+    assert info["warning_count"] == 2
     with (merge_run / "preview.csv").open(encoding="utf-8-sig", newline="") as stream:
         rows = list(csv.DictReader(stream))
     warnings = [row for row in rows if row["row_type"] == "check" and row["status"].startswith("warning.repeated_")]
@@ -279,6 +285,9 @@ def test_repeated_name_warnings_work_through_the_cli_pipeline(
     assert len(placements) == 4
     assert all(row["status"] == "proposed" and "warning.repeated_" in row["note"] for row in placements)
     saved = json.loads((merge_run / "resolution.json").read_text(encoding="utf-8"))
+    assert {item["code"] for item in saved["effective_screening"]["repeated_names"]} == {
+        item["status"] for item in warnings
+    }
     assert saved["counts"]["pending_sources"] == 0 and saved["decisions"] == []
     snapshot = tmp_path / "snapshot"
     assert main(["integrate", "--config", str(config_path), "--merge-run", str(merge_run),

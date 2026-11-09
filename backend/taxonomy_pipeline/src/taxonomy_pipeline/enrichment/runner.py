@@ -140,6 +140,8 @@ def run_merge_preview(
         screening_settings=screening_settings,
     )
     preview = build_preview(resolution, baseline)
+    warnings.extend(f"{item.code}: {item.message}" for item in preview.validation.findings
+                    if item.code.startswith("warning.repeated_"))
 
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -155,6 +157,7 @@ def run_merge_preview(
         baseline_snapshot_id=resolution.baseline_snapshot_id,
         blocked=preview.blocked,
         pending_sources=preview.counts.pending_sources,
+        warning_count=len(warnings),
     )
     # json.dumps, not model_dump_json, so run.json keeps its existing formatting (ASCII-escaped).
     (out_dir / "run.json").write_text(json.dumps(run_info.model_dump(), indent=2), encoding="utf-8")

@@ -589,6 +589,31 @@ def _decide_all(roots: rounds.RoundRoots, round_id: str) -> None:
     rounds.run_stages(roots, round_id, stages)
 
 
+# Applying a partial path choice refreshes persisted queue findings and removes stale round advisories.
+def test_round_review_surfaces_and_clears_repeated_names(roots: rounds.RoundRoots, configured: str) -> None:
+    _run(roots, configured)
+    directory = roots.directory(configured)
+    rows = [dict(
+        source_dataset="demo", tag_id="999", tag="Deep Welding", original_classification="classified",
+        service="Industry", category=category, speciality="Navigation", reason="Fixture", confidence=0.8,
+    ) for category in ("Marine", "Retail")]
+    (directory / "case_a.json").write_text(json.dumps(rows), encoding="utf-8")
+    _, stages = rounds.start_apply(roots, configured)
+    rounds.run_stages(roots, configured, stages)
+    queue = rounds.get_review(roots, configured)
+    assert len(queue.repeated_names) == 1
+    assert {item.proposal_id for item in queue.proposals} == set(queue.repeated_names[0].proposal_ids)
+    assert any(item.startswith("warning.repeated_") for item in rounds.get_round(roots, configured).warnings)
+    rounds.save_decisions(roots, configured, "Reviewer", [ReviewDecision(
+        members=[SourceTagRef(source_dataset="demo", tag_id="999")], action="create", reason="Choose one path",
+        approved_paths=[PlacementPath(service="Industry", category="Marine", speciality="Navigation")],
+    )])
+    _, stages = rounds.start_apply(roots, configured)
+    rounds.run_stages(roots, configured, stages)
+    assert rounds.get_review(roots, configured).repeated_names == []
+    assert not any(item.startswith("warning.repeated_") for item in rounds.get_round(roots, configured).warnings)
+
+
 def test_the_queue_lists_held_tags_with_their_reason_placements_and_matches(
     roots: rounds.RoundRoots, in_review: str,
 ) -> None:

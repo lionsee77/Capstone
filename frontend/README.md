@@ -23,6 +23,12 @@ verdict on screen is the API's.
   Decisions are saved at once, then applied together, because `merge-preview` rebuilds the
   whole preview to check them (about 25 seconds for O*NET). Then "Generate enriched snapshot"
   integrates and scores the round, and links to its before-and-after comparison.
+  The review panel also shows advisory repeated category/speciality names from
+  effective screening, including automatically accepted proposals and affected tags. Full clusters
+  appear once, grouped by resolved parent with original proposal paths retained;
+  affected proposal cards carry a short reminder. These warnings do not block
+  integration or change approvals. Apply decisions to refresh them after resolving
+  a competing path. Older cached queues need a new merge preview/apply run.
 - **Tag lookup** (`/lookup`) - check whether a term already exists before proposing
   it. It reads `GET /lookup`, so it needs no run: the result names the snapshot it
   checked (the newest one under `integrations/`). Shown: a verdict, then exact and
