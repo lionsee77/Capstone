@@ -13,6 +13,7 @@ from openpyxl import Workbook
 from taxonomy_pipeline.app import rounds
 from taxonomy_pipeline.app.lineage import taxonomy_lineage
 from taxonomy_pipeline.config import load_config
+from taxonomy_pipeline.enrichment import case_b
 from taxonomy_pipeline.enrichment.models import PlacementPath, ReviewDecision, SourceTagRef
 from taxonomy_pipeline.models import RoundSettings
 from taxonomy_pipeline.taxonomy.flat_import import SourceMapping
@@ -484,6 +485,36 @@ def test_new_parentless_tags_are_reported_when_llm_classification_is_off(
     assert case_b.status == "skipped"
     assert "Left out 1 new tag" in case_b.summary
     assert case_b.summary in state.warnings
+
+
+def test_llm_classification_reads_the_context_the_round_generated(
+    roots: rounds.RoundRoots, configured: str, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Case B checks a context file's titles against the imported tags; a round's own file must pass that check."""
+    monkeypatch.setenv("TAXONOMY_ALLOW_LLM", "true")
+    monkeypatch.setenv("OPENAI_API_KEY", "real-looking-key")
+    rounds.configure_round(roots, configured, _mapping(), RoundSettings(case_b=True))
+    sent: list[dict[str, str]] = []
+
+    async def classify(client: object, prompt: str, batch: list[dict[str, str]], model: str) -> list[dict[str, object]]:
+        sent.extend(batch)
+        return [{
+            "action": "classify", "tag_id": item["tag_id"], "tag": item["title"], "service": "Function",
+            "category": "Marketing", "speciality": "Brand Strategy", "confidence": 0.9, "reason": "Stubbed",
+            "needs_review": False,
+        } for item in batch]
+
+    monkeypatch.setattr(case_b, "_openai_client", lambda: object())
+    monkeypatch.setattr(case_b, "classify_batch", classify)
+
+    state = _run(roots, configured)
+
+    stage = next(stage for stage in state.stages if stage.id == "case_b")
+    assert stage.status == "done", stage.error
+    assert [item["title"] for item in sent] == ["Orphan Skill"]
+    context = json.loads((roots.rounds / configured / "demo_tag_context.json").read_text("utf-8"))
+    # #137 checks these titles against the imported tags; only described tags are in the file.
+    assert [tag["title"] for tag in context["tags"].values()] == ["Underwater Welding"]
 
 
 def test_a_running_round_never_reads_as_idle_between_stages(
