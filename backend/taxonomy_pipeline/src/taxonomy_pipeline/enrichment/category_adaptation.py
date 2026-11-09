@@ -27,6 +27,24 @@ never uses source specialities as placement targets. It asks what the tag
 A resolved placement always carries both a category and a speciality, as the
 classification output contract (CLASSIFICATION_OUTPUT_CONTRACT.md) requires.
 
+Two opt-in params (#132) cut the one-tag and repeated specialities step 2
+creates; both are off by default, so the output is unchanged unless a round
+asks for them:
+
+- `category_scoped_semantic_threshold`: before proposing the tag as a new
+  speciality under a *matched* category, compare it with that category's
+  existing specialities only, at this (lower) cosine threshold. A hit places
+  the tag there (`placement_basis: category_content`), deepening an existing
+  speciality instead of adding a one-tag one. Step 1's global threshold stays
+  strict because it searches every speciality; inside the right category a
+  looser match is far less likely to be wrong.
+- `one_category_per_tag`: a tag linked to several source categories (one
+  SkillsFuture skill in many sectors) is placed via the one with the most
+  evidence only - matched categories first, then the most linking source
+  specialities - instead of one placement per category. The others are named
+  in the reason as evidence. This stops the same tag-named speciality being
+  proposed under several categories.
+
 It keeps the `Metric` interface (params, dataset checks, a `MetricResult`) but is
 not in the metric registry: it places tags rather than scoring a taxonomy, so
 `case_a.run_case_a` calls it directly and `GET /metrics` doesn't list it.
@@ -41,7 +59,7 @@ from rapidfuzz import fuzz, process
 
 from ..matching.engine import KnownPool, SourceParents, compare_level, validated_float
 from ..matching.names import is_valid_name, match_key, normalize
-from ..matching.semantic import SemanticMatcher
+from ..matching.semantic import SemanticMatcher, SimilarityMatcher
 from ..models import MetricResult
 from ..quality.base import Metric
 from ..taxonomy.base import Hierarchy, LoadedDataset, TaxonomyDataset
@@ -55,8 +73,12 @@ RESOLVED_CATEGORY_ACTIONS = MATCHED_ACTIONS | {NEW_CATEGORY}
 REVIEW_CATEGORY_ACTIONS = {"REVIEW_AMBIGUOUS", "REVIEW_NEW_PLACEMENT", "REVIEW_OTHER_LEVEL"}
 # How a placement was reached - see the module docstring.
 CONTENT_BASIS = "content"
+CATEGORY_CONTENT_BASIS = "category_content"
 SOURCE_CATEGORY_BASIS = "source_category"
 REVIEW_CANDIDATE_BASIS = "review_candidate"
+# speciality_action of a category_content placement: an existing speciality
+# matched by meaning within the tag's matched category.
+CATEGORY_SCOPED_MATCH = "SKIP_CATEGORY_SCOPED_MATCH"
 # Source specialities named on a fallback placement, as evidence for a reviewer.
 EVIDENCE_SAMPLE = 3
 # Closest baseline categories offered when a source category only partly matches.
@@ -193,6 +215,47 @@ def _closest_categories(
     return [(named[index], round(float(score), 1), "lexical") for _, score, index in best]
 
 
+def _evidence_rank(entry: dict[str, Any], category_outcomes: dict[Any, dict[str, Any]]) -> tuple[int, int, str]:
+    """Sort key for `one_category_per_tag`: a matched category first (its ID and
+    service are real), then a new one, then one only offered for review; within
+    that, the source category with the most source specialities linking the tag
+    to it; ties by name, so the choice never depends on input order."""
+    action = category_outcomes[entry["category"].get("id")]["action"]
+    tier = 0 if action in MATCHED_ACTIONS else 1 if action == NEW_CATEGORY else 2
+    return tier, -len(entry["speciality_names"]), str(entry["category"].get("name"))
+
+
+def _category_scoped_matches(
+    tag_names: dict[Any, Any],
+    pairs: set[tuple[Any, Any]],
+    specialities_by_category: dict[Any, list[dict[str, Any]]],
+    semantic_matcher: SimilarityMatcher,
+    threshold: float,
+) -> dict[tuple[Any, Any], tuple[dict[str, Any], float]]:
+    """For each (tag id, baseline category id) in `pairs`, the category's existing
+    speciality closest in meaning to the tag, kept only at or above `threshold`.
+    One similarity call per category, so cost grows with categories, not tags."""
+    tags_by_category: dict[Any, list[Any]] = {}
+    for tag_id, category_id in sorted(pairs, key=lambda pair: (str(pair[1]), str(pair[0]))):
+        if is_valid_name(tag_names.get(tag_id)):
+            tags_by_category.setdefault(category_id, []).append(tag_id)
+    matches: dict[tuple[Any, Any], tuple[dict[str, Any], float]] = {}
+    for category_id, tag_ids in tags_by_category.items():
+        candidates = [row for row in specialities_by_category.get(category_id, []) if is_valid_name(row.get("name"))]
+        if not candidates:
+            continue
+        scores = np.asarray(semantic_matcher.similarity(
+            [normalize(str(tag_names[tag_id])) for tag_id in tag_ids],
+            [normalize(str(row["name"])) for row in candidates],
+        ))
+        for row_index, tag_id in enumerate(tag_ids):
+            best = int(np.argmax(scores[row_index]))
+            score = float(scores[row_index][best])
+            if score >= threshold:
+                matches[(tag_id, category_id)] = (candidates[best], round(score, 4))
+    return matches
+
+
 def _near_miss(outcome: dict[str, Any] | None) -> dict[str, Any]:
     """The closest baseline speciality a tag missed in the content step, for the reason text."""
     if outcome is None or outcome["action"] != "REVIEW_AMBIGUOUS":
@@ -221,6 +284,9 @@ class CategoryAdaptationMetric(Metric):
         "semantic_threshold": 0.6,
         "add_candidate_lexical_threshold": 60.0,
         "add_candidate_semantic_threshold": 0.5,
+        # #132, both off by default - see the module docstring.
+        "category_scoped_semantic_threshold": None,
+        "one_category_per_tag": False,
     }
 
     def run(self, datasets: dict[str, LoadedDataset], params: dict[str, Any]) -> MetricResult:
@@ -267,12 +333,24 @@ class CategoryAdaptationMetric(Metric):
             semantic_threshold = validated_float(p, "semantic_threshold", -1, 1)
             add_candidate_lexical_threshold = validated_float(p, "add_candidate_lexical_threshold", 0, 100)
             add_candidate_semantic_threshold = validated_float(p, "add_candidate_semantic_threshold", -1, 1)
+            scoped_threshold = (
+                validated_float(p, "category_scoped_semantic_threshold", -1, 1)
+                if p["category_scoped_semantic_threshold"] is not None else None
+            )
         except (TypeError, ValueError) as exc:
             return MetricResult(metric_id=self.id, status="error", summary=str(exc))
+        one_category_per_tag = p["one_category_per_tag"]
+        if not isinstance(one_category_per_tag, bool):
+            return MetricResult(metric_id=self.id, status="error", summary="one_category_per_tag must be true or false")
         try:
             semantic_matcher = SemanticMatcher(str(p["semantic_model"])) if p["semantic_model"] else None
         except ValueError as exc:
             return MetricResult(metric_id=self.id, status="error", summary=str(exc))
+        if scoped_threshold is not None and semantic_matcher is None:
+            return MetricResult(
+                metric_id=self.id, status="error",
+                summary="category_scoped_semantic_threshold needs a semantic_model: it matches by meaning only",
+            )
 
         settings = {
             "threshold": threshold,
@@ -337,6 +415,27 @@ class CategoryAdaptationMetric(Metric):
             for outcome in category_outcomes.values()
             if outcome["action"] in MATCHED_ACTIONS and known.categories.get(outcome["target_id"]) is not None
         ]
+        if one_category_per_tag:
+            for tag_id, entries in source_categories_by_tag.items():
+                if len(entries) > 1:
+                    best, *others = sorted(entries, key=lambda entry: _evidence_rank(entry, category_outcomes))
+                    source_categories_by_tag[tag_id] = [{
+                        **best, "other_source_categories": [str(entry["category"].get("name")) for entry in others],
+                    }]
+        scoped_matches: dict[tuple[Any, Any], tuple[dict[str, Any], float]] = {}
+        if scoped_threshold is not None and semantic_matcher is not None:
+            pairs = {
+                (tag_id, category_outcomes[entry["category"].get("id")]["target_id"])
+                for tag_id, entries in source_categories_by_tag.items() for entry in entries
+                if category_outcomes[entry["category"].get("id")]["action"] in MATCHED_ACTIONS
+            }
+            specialities_by_category: dict[Any, list[dict[str, Any]]] = {}
+            for speciality in baseline.specialities:
+                specialities_by_category.setdefault(speciality.get("category_id"), []).append(speciality)
+            scoped_matches = _category_scoped_matches(
+                {row.get("id"): row.get("name") for row in tag_rows}, pairs, specialities_by_category,
+                semantic_matcher, scoped_threshold,
+            )
 
         placements: list[dict[str, Any]] = []
         for row in tag_rows:
@@ -376,6 +475,8 @@ class CategoryAdaptationMetric(Metric):
                     "needs_review": category_outcome["action"] not in MATCHED_ACTIONS,
                     **near_miss,
                 }
+                if "other_source_categories" in entry:
+                    placement["other_source_categories"] = entry["other_source_categories"]
                 if category_outcome["action"] == "REVIEW_AMBIGUOUS":
                     for field in ("closest_baseline_name", "closest_baseline_score",
                                   "closest_semantic_baseline_name", "closest_semantic_score"):
@@ -393,12 +494,23 @@ class CategoryAdaptationMetric(Metric):
                     placement["target_service_id"] = _assign_service(matched_baseline_rows)
                 if category_outcome["action"] in RESOLVED_CATEGORY_ACTIONS:
                     placement["target_service_name"] = known.service_name(placement["target_service_id"])
-                    # Step 1 already searched every baseline speciality, so
-                    # nothing under this category matches the tag either: the
-                    # tag itself is the proposed speciality.
+                    # Step 1 already searched every baseline speciality at the
+                    # global threshold, so the tag itself is the proposed
+                    # speciality - unless the opt-in category-scoped search
+                    # finds a close enough one inside this matched category.
                     placement["speciality_action"] = NEW_SPECIALITY
                     placement["target_speciality_id"] = f"{incoming.name}:tag:{tag_id}"
                     placement["target_speciality_name"] = tag_name
+                    scoped = scoped_matches.get((tag_id, category_outcome["target_id"]))
+                    if category_outcome["action"] in MATCHED_ACTIONS and scoped is not None:
+                        speciality, score = scoped
+                        placement.update({
+                            "placement_basis": CATEGORY_CONTENT_BASIS,
+                            "speciality_action": CATEGORY_SCOPED_MATCH,
+                            "target_speciality_id": speciality.get("id"),
+                            "target_speciality_name": speciality.get("name"),
+                            "speciality_semantic_score": score,
+                        })
                 candidates = review_candidates.get(category.get("id")) or []
                 if not candidates:
                     placements.append(placement)

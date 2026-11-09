@@ -278,3 +278,38 @@ def test_output_validates_against_the_shared_contract():
     validated = CLASSIFICATION_OUTPUTS.validate_json(CLASSIFICATION_OUTPUTS.dump_json(records))
     assert len(validated) == 3
     assert [record.needs_review for record in validated] == [False, False, True]
+
+
+def test_category_scoped_match_becomes_a_resolved_record_in_the_existing_speciality():
+    placement = _base(
+        placement_basis="category_content",
+        speciality_action="SKIP_CATEGORY_SCOPED_MATCH",
+        target_speciality_id=3,
+        target_speciality_name="Loan Servicing",
+        speciality_semantic_score=0.61,
+    )
+
+    [record] = build_classification_outputs([placement], source_dataset="skillsfuture")
+
+    assert (record.service, record.category, record.speciality) == ("Industry", "Banking", "Loan Servicing")
+    assert record.confidence == 0.61
+    assert record.needs_review is False
+    assert "closest in meaning to existing speciality 'Loan Servicing' (semantic 0.61)" in record.reason
+    CLASSIFICATION_OUTPUTS.validate_python(
+        CLASSIFICATION_OUTPUTS.dump_python([record], mode="json")
+    )
+
+
+def test_source_categories_set_aside_by_one_category_per_tag_are_named_in_the_reason():
+    placement = _base(
+        speciality_action="NEW_SPECIALITY",
+        target_speciality_id="skillsfuture:tag:9001",
+        target_speciality_name="loan processing",
+        other_source_categories=["Insurance", "Wealth"],
+    )
+
+    [record] = build_classification_outputs([placement], source_dataset="skillsfuture")
+
+    assert record.speciality == "loan processing"
+    assert "Also linked to source categories 'Insurance', 'Wealth'; placed via the one with the most evidence only." \
+        in record.reason

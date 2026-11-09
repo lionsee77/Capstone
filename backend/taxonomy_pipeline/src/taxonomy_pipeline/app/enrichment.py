@@ -46,12 +46,15 @@ def _timestamped(parent: str) -> str:
 
 def case_a(
     config_path: str | Path, report: str | Path, *, baseline: str, incoming: str, output: str | Path,
-    semantic_model: str | None = None,
+    semantic_model: str | None = None, category_scoped_semantic_threshold: float | None = None,
+    one_category_per_tag: bool = False,
 ) -> list[dict[str, Any]]:
     """Place the incoming tags saturation routed to Case A and write them to `output`."""
     records = run_case_a(
         load_taxonomies(config_path, baseline, incoming), report,
         baseline=baseline, incoming=incoming, semantic_model=semantic_model or None,
+        category_scoped_semantic_threshold=category_scoped_semantic_threshold,
+        one_category_per_tag=one_category_per_tag,
     )
     Path(output).write_text(json.dumps(records, indent=2, ensure_ascii=False), encoding="utf-8")
     return records

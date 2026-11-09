@@ -29,11 +29,18 @@ def run_case_a(
     baseline: str,
     incoming: str,
     semantic_model: str | None = None,
+    category_scoped_semantic_threshold: float | None = None,
+    one_category_per_tag: bool = False,
 ) -> list[dict[str, Any]]:
-    """Return contract-valid records, each stamped with the saturation run they came from."""
+    """Return contract-valid records, each stamped with the saturation run they came from.
+
+    The two placement options (#132) are off by default; see `category_adaptation`.
+    """
     saturation = load_saturation(report_path, incoming)
     params: dict[str, Any] = {
         "baseline": baseline, "incoming": incoming, "new_tag_ids": case_a_tag_ids(saturation),
+        "category_scoped_semantic_threshold": category_scoped_semantic_threshold,
+        "one_category_per_tag": one_category_per_tag,
     }
     if semantic_model:
         params["semantic_model"] = semantic_model

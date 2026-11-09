@@ -1506,6 +1506,39 @@ Defaults come from `CategoryAdaptationMetric.default_params`
 | `semantic_threshold` | 0.6 | Cosine similarity for a meaning match, used for both categories and specialities. Lower than saturation's tag default (0.70): categories are broader, less precisely-worded concepts, and real runs show correct matches scoring as low as 0.63-0.69 |
 | `add_candidate_lexical_threshold` | 60 | Below this *and* the semantic threshold, nothing is even close - `NEW_CATEGORY`/`NEW_SPECIALITY` instead of `REVIEW_AMBIGUOUS` |
 | `add_candidate_semantic_threshold` | 0.5 | See above |
+| `category_scoped_semantic_threshold` | none (off) | Before proposing a new speciality under a *matched* category, join that category's closest existing speciality at or above this cosine score (`placement_basis: category_content`). Needs `semantic_model`. See below (#132) |
+| `one_category_per_tag` | false | Place a tag via its best-evidenced source category only, not one per source category. See below (#132) |
+
+### Fewer one-tag and repeated specialities (#132)
+
+Round 1 failed two of #88's guard rails because step 2 proposes every unmatched
+tag as its own speciality (486 of 487 new specialities held one tag), once per
+source category (18 repeated names). Two opt-in options address this. Both are
+off by default, so existing rounds give the same output:
+
+```bash
+taxonomy-pipeline case-a --report judged_report.json --output case_a_output.json \
+    --one-category-per-tag --category-scoped-semantic-threshold 0.55
+```
+
+- **`--one-category-per-tag`** keeps the source category with the most evidence:
+  a matched category before a new one before one only offered for review, then
+  the one with the most source specialities linking the tag to it, ties by
+  name. The rest are named in the record's `reason`. On SkillsFuture against
+  the original taxonomy (unjudged report) this removes every repeated
+  new-speciality name among clear-cut placements (12 rows to 0) and cuts
+  Case A's records from 2,894 to 2,074.
+- **`--category-scoped-semantic-threshold`** compares the tag with the existing
+  specialities of its matched category only. The tags reaching step 2 already
+  scored low against *every* speciality in saturation, so few have a good home:
+  of 578 such placements, the best in-category match is ≥ 0.55 for about 20.
+  Above 0.55 the matches read right (*Merchandise Buying* → *Merchandising &
+  Assortment*); between 0.50 and 0.55 some are wrong (*Pricing for Cargo
+  Services* → *Inventory Optimisation*), so 0.55 is the suggested value.
+
+Neither option groups related tags under one new speciality, which is what
+moves tags per speciality most; that needs a naming rule (open on #132).
+`/rounds` runs Case A with defaults until the team picks the options.
 
 ### Actions
 
@@ -1516,6 +1549,7 @@ placement also has a `speciality_action`:
 | Action | Level | Meaning |
 |---|---|---|
 | `SKIP_DUPLICATE` / `SKIP_SEMANTIC_DUPLICATE` | category, speciality | Matched an existing baseline node; reuse its real ID |
+| `SKIP_CATEGORY_SCOPED_MATCH` | speciality | Opt-in (#132): the matched category's closest existing speciality by meaning, at or above `category_scoped_semantic_threshold`; reuse its real ID |
 | `NEW_CATEGORY` | category | No existing category matches the source category; propose it as a new one |
 | `NEW_SPECIALITY` | speciality | The tag matches no existing speciality; propose the tag itself as one, under the resolved category |
 | `REVIEW_AMBIGUOUS` | category | Partial similarity at best; both the closest lexical and closest semantic baseline names are surfaced, and the tag is offered under the closest categories for review |

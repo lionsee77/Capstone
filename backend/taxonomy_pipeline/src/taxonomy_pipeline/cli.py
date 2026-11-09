@@ -147,6 +147,8 @@ def _cmd_case_a(args: argparse.Namespace) -> int:
         records = use_cases.case_a(
             args.config, args.report, baseline=args.baseline, incoming=args.incoming, output=args.output,
             semantic_model=args.semantic_model,
+            category_scoped_semantic_threshold=args.category_scoped_semantic_threshold,
+            one_category_per_tag=args.one_category_per_tag,
         )
     except (OSError, ValueError, RuntimeError) as exc:
         print(f"[FAILED] case-a: {exc}", file=sys.stderr)
@@ -355,6 +357,11 @@ def build_parser() -> argparse.ArgumentParser:
     case_a.add_argument("--report", default="report.json", help=report_help)
     case_a.add_argument("--semantic-model", default="all-MiniLM-L6-v2", help="sentence model; '' for lexical only")
     case_a.add_argument("--output", default="case_a_output.json")
+    case_a.add_argument("--category-scoped-semantic-threshold", type=float, default=None,
+                        help="before proposing a new speciality under a matched category, join the category's "
+                             "closest existing speciality at or above this cosine score (off by default; #132)")
+    case_a.add_argument("--one-category-per-tag", action="store_true",
+                        help="place a tag via its best-evidenced source category only, not one per category (#132)")
     case_a.set_defaults(func=_cmd_case_a)
 
     case_b = subparsers.add_parser("case-b", help="propose placements for parentless new tags with an LLM")

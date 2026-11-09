@@ -392,3 +392,142 @@ def test_category_with_a_mismatched_service_is_flagged_for_review_not_crashed():
     assert placement["placement_basis"] == "review_candidate"
     assert placement["candidate_category_name"] == "Banking"
     assert placement["candidate_score_type"] == "lexical"
+
+
+# --- #132: opt-in placement options -----------------------------------------
+
+
+class _ScopedMatcher:
+    """Unrelated to everything by default, but scores a tag and a speciality that
+    share a word as `shared_word_score`, so a test controls whether the
+    category-scoped search finds a home."""
+
+    shared_word_score = 0.7
+
+    def __init__(self, model_name):
+        assert model_name == "test-model"
+
+    def best_matches(self, queries, choices):
+        return [(choices[0] if choices else None, 0.1) for _ in queries]
+
+    def top_matches(self, queries, choices, k):
+        return [[(choice, 0.1) for choice in choices[:k]] for _ in queries]
+
+    def similarity(self, queries, choices):
+        return np.array([
+            [self.shared_word_score if set(query.split()) & set(choice.split()) else 0.1 for choice in choices]
+            for query in queries
+        ])
+
+
+def _two_sector_datasets() -> dict[str, TaxonomyDataset]:
+    """'loan processing' sits in two SkillsFuture sectors: Banking (one job role)
+    and Insurance (two job roles); both sectors match baseline categories."""
+    datasets = _datasets()
+    datasets["original"].categories.append({"id": 2, "name": "Insurance", "service_id": 1})
+    datasets["original"].specialities.append({"id": 2, "name": "Claims Handling", "category_id": 2})
+    datasets["skillsfuture"].categories.append({"id": 503, "name": "Insurance", "service_id": 1})
+    datasets["skillsfuture"].specialities += [
+        {"id": 603, "name": "Claims Officer", "category_id": 503},
+        {"id": 604, "name": "Underwriter", "category_id": 503},
+    ]
+    datasets["skillsfuture"].speciality_tags += [
+        {"id": 703, "speciality_id": 603, "tag_id": 9001},
+        {"id": 704, "speciality_id": 604, "tag_id": 9001},
+    ]
+    return datasets
+
+
+def _run_on(datasets, new_tag_ids, **params):
+    return CategoryAdaptationMetric().run(
+        datasets, {"baseline": "original", "incoming": "skillsfuture", "new_tag_ids": new_tag_ids, **params},
+    )
+
+
+def test_a_tag_in_several_sectors_gets_one_placement_per_sector_by_default():
+    placements = _run_on(_two_sector_datasets(), [9001]).details["placements"]
+
+    assert sorted(placement["target_category_name"] for placement in placements) == ["Banking", "Insurance"]
+    assert all("other_source_categories" not in placement for placement in placements)
+
+
+def test_one_category_per_tag_keeps_the_sector_with_the_most_linking_job_roles():
+    placements = _run_on(_two_sector_datasets(), [9001], one_category_per_tag=True).details["placements"]
+
+    assert len(placements) == 1
+    assert placements[0]["target_category_name"] == "Insurance"  # two job roles beat one
+    assert placements[0]["other_source_categories"] == ["Banking"]
+
+
+def test_one_category_per_tag_prefers_a_matched_category_over_a_new_one(monkeypatch):
+    # "rocket fuel" also sits in Banking; Space Exploration would be a new
+    # category, so the matched one wins even with equal evidence.
+    monkeypatch.setattr(category_adaptation, "SemanticMatcher", _FakeSemanticMatcher)
+    datasets = _datasets()
+    datasets["skillsfuture"].speciality_tags.append({"id": 705, "speciality_id": 601, "tag_id": 9002})
+
+    placements = _run_on(
+        datasets, [9002], semantic_model="test-model", one_category_per_tag=True,
+    ).details["placements"]
+
+    assert [placement["action"] for placement in placements] == ["SKIP_DUPLICATE"]
+    assert placements[0]["other_source_categories"] == ["Space Exploration"]
+
+
+def test_category_scoped_search_joins_an_existing_speciality_in_the_matched_category(monkeypatch):
+    monkeypatch.setattr(category_adaptation, "SemanticMatcher", _ScopedMatcher)
+    datasets = _datasets()
+    datasets["original"].specialities.append({"id": 3, "name": "Loan Servicing", "category_id": 1})
+
+    placement = _run_on(
+        datasets, [9001], semantic_model="test-model", category_scoped_semantic_threshold=0.55,
+    ).details["placements"][0]
+
+    assert placement["placement_basis"] == "category_content"
+    assert placement["speciality_action"] == "SKIP_CATEGORY_SCOPED_MATCH"
+    assert placement["target_speciality_id"] == 3
+    assert placement["target_speciality_name"] == "Loan Servicing"
+    assert placement["speciality_semantic_score"] == 0.7
+    assert placement["needs_review"] is False
+
+
+def test_category_scoped_search_below_its_threshold_still_proposes_a_new_speciality(monkeypatch):
+    monkeypatch.setattr(category_adaptation, "SemanticMatcher", _ScopedMatcher)
+    datasets = _datasets()
+    datasets["original"].specialities.append({"id": 3, "name": "Loan Servicing", "category_id": 1})
+
+    placement = _run_on(
+        datasets, [9001], semantic_model="test-model", category_scoped_semantic_threshold=0.75,
+    ).details["placements"][0]
+
+    assert placement["placement_basis"] == "source_category"
+    assert placement["speciality_action"] == "NEW_SPECIALITY"
+    assert placement["target_speciality_name"] == "loan processing"
+
+
+def test_category_scoped_search_never_looks_outside_the_matched_category(monkeypatch):
+    # "Loan Servicing" would match, but it sits under Insurance, not Banking.
+    monkeypatch.setattr(category_adaptation, "SemanticMatcher", _ScopedMatcher)
+    datasets = _datasets()
+    datasets["original"].categories.append({"id": 2, "name": "Insurance", "service_id": 1})
+    datasets["original"].specialities.append({"id": 3, "name": "Loan Servicing", "category_id": 2})
+
+    placement = _run_on(
+        datasets, [9001], semantic_model="test-model", category_scoped_semantic_threshold=0.55,
+    ).details["placements"][0]
+
+    assert placement["speciality_action"] == "NEW_SPECIALITY"
+
+
+def test_category_scoped_search_needs_a_semantic_model():
+    result = _run([9001], category_scoped_semantic_threshold=0.55)
+
+    assert result.status == "error"
+    assert "needs a semantic_model" in result.summary
+
+
+def test_one_category_per_tag_must_be_a_boolean():
+    result = _run([9001], one_category_per_tag="yes")
+
+    assert result.status == "error"
+    assert "one_category_per_tag" in result.summary

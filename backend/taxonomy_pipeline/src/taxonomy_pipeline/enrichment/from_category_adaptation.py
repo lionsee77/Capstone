@@ -9,6 +9,7 @@ from __future__ import annotations
 from typing import Any
 
 from .category_adaptation import (
+    CATEGORY_CONTENT_BASIS,
     CONTENT_BASIS,
     INVALID_CATEGORY_NAME,
     NEW_CATEGORY,
@@ -122,7 +123,41 @@ def _evidence_reason(placement: dict[str, Any]) -> str:
         if lexical and lexical != semantic:
             hints.append(f"'{lexical}' in spelling ({placement.get('closest_speciality_score')})")
         reason += f" Closest existing speciality: {' and '.join(hints)}, below the confidence threshold."
-    return reason
+    return reason + _other_categories_reason(placement)
+
+
+def _other_categories_reason(placement: dict[str, Any]) -> str:
+    """The source categories `one_category_per_tag` set aside, so a reviewer still sees them."""
+    others = placement.get("other_source_categories") or []
+    if not others:
+        return ""
+    return (
+        f" Also linked to source categor{'y' if len(others) == 1 else 'ies'} {', '.join(repr(o) for o in others)};"
+        " placed via the one with the most evidence only."
+    )
+
+
+def _category_content_output(placement: dict[str, Any], source_dataset: str) -> ClassificationOutput:
+    """A tag matched by meaning to an existing speciality inside its matched category (#132)."""
+    speciality, category = placement["target_speciality_name"], placement["target_category_name"]
+    score = placement["speciality_semantic_score"]
+    return ClassificationOutput(
+        source_dataset=source_dataset,
+        tag_id=str(placement["tag_id"]),
+        tag=placement["tag_name"],
+        original_classification="classified",
+        service=placement["target_service_name"],
+        category=category,
+        speciality=speciality,
+        confidence=round(float(score), 4),
+        reason=(
+            f"Source category '{placement['source_category_name']}' matches existing category '{category}' "
+            f"({placement['category_match_type']} match). Among that category's specialities the tag is closest "
+            f"in meaning to existing speciality '{speciality}' (semantic {score}), so it joins it instead of "
+            "becoming a new one-tag speciality."
+            + _other_categories_reason(placement)
+        ),
+    )
 
 
 def _content_output(placement: dict[str, Any], source_dataset: str) -> ClassificationOutput:
@@ -186,6 +221,9 @@ def build_classification_outputs(placements: list[dict[str, Any]], source_datase
             continue
         if placement.get("placement_basis") == REVIEW_CANDIDATE_BASIS:
             records.append(_review_candidate_output(placement, source_dataset))
+            continue
+        if placement.get("placement_basis") == CATEGORY_CONTENT_BASIS:
+            records.append(_category_content_output(placement, source_dataset))
             continue
         action = placement["action"]
         reason = _category_reason(placement)
