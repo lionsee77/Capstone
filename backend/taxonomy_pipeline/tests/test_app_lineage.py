@@ -169,3 +169,13 @@ def test_a_chain_with_scores_comes_before_a_longer_or_newer_one_without(
     assert [chain.stages[-1] for chain in chains] == ["scored", "newer"]
     assert chains[0].runs == [report.run_id]
 
+
+def test_a_chain_started_from_a_rounds_baseline_names_its_root_original(
+    tmp_path: Path, integration_round: Callable[..., Path],
+) -> None:
+    integration_round("first", BASELINE, "s", dataset="round_baseline")
+
+    stages = taxonomy_lineage(tmp_path / "integrations", tmp_path / "merge_runs").stages
+
+    assert (stages[0].id, stages[0].name) == ("baseline:original", "original")
+

@@ -23,6 +23,8 @@ from .. import db
 from ..enrichment.lineage import FileFingerprint, IntegrationRound, file_fingerprint, read_rounds
 from ..models import LineageChain, LineageRun, LineageStage, TaxonomyLineage
 from ..quality.registry import METRICS
+from .rounds import ORIGINAL_BASELINE
+from .sources import ROUND_BASELINE
 
 # How many of the newest runs are checked for lineage stages. Run history is small (one row per
 # scoring run), and each run's files are hashed once and then cached.
@@ -46,8 +48,10 @@ def _stages(rounds: list[IntegrationRound]) -> tuple[list[LineageStage], dict[Fi
     roots: dict[FileFingerprint, LineageStage] = {}
     for item in sorted(rounds, key=_created):
         if item.baseline not in produced and item.baseline not in roots:
-            stage_id = _root_id(item.baseline_dataset, {stage.id for stage in roots.values()})
-            roots[item.baseline] = LineageStage(id=stage_id, name=item.baseline_dataset)
+            # A round started from the original taxonomy calls it `round_baseline`, which means nothing here.
+            dataset = ORIGINAL_BASELINE if item.baseline_dataset == ROUND_BASELINE else item.baseline_dataset
+            stage_id = _root_id(dataset, {stage.id for stage in roots.values()})
+            roots[item.baseline] = LineageStage(id=stage_id, name=dataset)
     parents = {**{fingerprint: stage.id for fingerprint, stage in roots.items()}, **produced}
     stages = list(roots.values()) + [
         LineageStage(
