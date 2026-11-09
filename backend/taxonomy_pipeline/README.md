@@ -383,6 +383,29 @@ records, plus `valid_rate` and `review_rate`.
 - Exit code is non-zero if an input file is unreadable or the preview is
   blocked because the merge would introduce structural errors.
 
+Repeated **new hierarchy names** are surfaced as advisory warnings (#132).
+Preview groups proposed categories and specialities separately by integrity's
+`normalize(name)`, across all parent paths. Multiple tags or evidence records
+referencing one proposed node count once; categories and specialities never
+form a shared cluster. Names that only share a `match_key` or a similarity score
+are handled by the existing screening rules, not this exact-name warning.
+
+In `preview.csv`, each cluster has a `row_type=check` row with status
+`warning.repeated_category_name` or `warning.repeated_speciality_name`. Its
+`note` lists the normalised name, number of distinct parent paths, proposal IDs
+and full proposed paths. Affected placement rows carry the same warning in
+their `note`, including pending placements. These are proposal warnings, not
+counts of duplicates actually integrated. Nodes resolved to existing baseline
+IDs, excluded/deferred tags and excluded/deferred hierarchy branches are omitted
+from these clusters; matches against baseline names remain visible through
+hierarchy screening.
+
+Warnings do not merge nodes, choose a parent, change `needs_review`, add review
+holds, or alter approvals, counts, completeness or exit status. They remain
+visible when reviewers approve both new paths. Resolve the repeated-name policy
+and review the affected paths separately; surfacing a cluster alone does not
+satisfy the integrity or depth guard rails.
+
 ### Hierarchy proposal screening
 
 `merge-preview` screens every complete category and speciality proposal against
