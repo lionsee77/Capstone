@@ -1732,7 +1732,7 @@ a hand-run round.
 | `GET /rounds`, `GET /rounds/{id}` | Round state: overall `status`, and each stage's status, summary and error |
 | `POST /rounds` | Create a round: `{round_id, baseline_snapshot}` |
 | `PUT /rounds/{id}/files/{name}` | Upload a `.csv`, `.tsv`, `.xlsx` or `.xlsm` as the raw body, up to 50 MB |
-| `GET /rounds/{id}/files`, `GET /rounds/{id}/files/{name}?sheet=` | Each file's sheets, columns, row count and sample values |
+| `GET /rounds/{id}/files`, `GET /rounds/{id}/files/{name}?sheet=` | Each file's sheets and their columns, row count, sample values and first rows |
 | `DELETE /rounds/{id}/files/{name}` | Remove an uploaded file |
 | `PUT /rounds/{id}/config` | Save `{mapping, settings}`: imports the source and writes the round config |
 | `GET /rounds/{id}/config` | The generated round config, as text |

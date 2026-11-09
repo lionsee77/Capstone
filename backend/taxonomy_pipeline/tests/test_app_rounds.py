@@ -3,10 +3,12 @@ from __future__ import annotations
 
 import json
 import shutil
+from io import BytesIO
 from pathlib import Path
 
 import pytest
 import yaml
+from openpyxl import Workbook
 
 from taxonomy_pipeline.app import rounds
 from taxonomy_pipeline.app.lineage import taxonomy_lineage
@@ -234,6 +236,32 @@ def test_an_oversized_upload_is_refused(roots: rounds.RoundRoots, monkeypatch: p
 
     with pytest.raises(ValueError, match="larger"):
         rounds.add_file(roots, "r1", "flat.csv", b"12345")
+
+
+def test_an_uploaded_table_comes_with_its_first_rows(roots: rounds.RoundRoots) -> None:
+    rounds.create_round(roots, "r1", "base")
+
+    uploaded = rounds.add_file(roots, "r1", "flat.csv", CSV.encode())
+
+    assert uploaded.preview_rows[0] == {
+        "Sector": "Marketing", "Role": "Brand Strategy", "Skill": "Underwater Welding",
+        "Desc": "Joining metal below water",
+    }
+    assert uploaded.sheet_columns == {}
+
+
+def test_a_workbook_lists_the_columns_of_each_of_its_sheets(roots: rounds.RoundRoots) -> None:
+    workbook = Workbook()
+    workbook.active.title = "Legend"
+    workbook.active.append(["Notes"])
+    workbook.create_sheet("Data").append(["Sector", None, "Role", "Skill"])
+    buffer = BytesIO()
+    workbook.save(buffer)
+    rounds.create_round(roots, "r1", "base")
+
+    uploaded = rounds.add_file(roots, "r1", "book.xlsx", buffer.getvalue())
+
+    assert uploaded.sheet_columns == {"Legend": ["Notes"], "Data": ["Sector", "Role", "Skill"]}
 
 
 def test_an_unreadable_table_reports_why_instead_of_failing_the_listing(roots: rounds.RoundRoots) -> None:

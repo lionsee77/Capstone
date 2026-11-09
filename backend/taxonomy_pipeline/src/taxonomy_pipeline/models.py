@@ -428,6 +428,8 @@ class RoundFile(BaseModel):
     columns: list[str] = Field(default_factory=list)
     row_count: int = 0
     samples: dict[str, list[str]] = Field(default_factory=dict)
+    preview_rows: list[dict[str, str]] = Field(default_factory=list)
+    sheet_columns: dict[str, list[str]] = Field(default_factory=dict)
     error: str | None = None
 
 

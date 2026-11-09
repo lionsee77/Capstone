@@ -53,7 +53,7 @@ from ..models import (
     RoundState,
     utcnow,
 )
-from ..taxonomy.flat_import import SourceMapping, inspect_table, sheet_names
+from ..taxonomy.flat_import import SourceMapping, inspect_table, sheet_columns, sheet_names
 from . import enrichment as use_cases
 from .scoring import load_taxonomies, run_config, run_pipeline, write_report
 from .sources import DEFAULT_TEMPLATE, ROUND_BASELINE, import_source
@@ -326,7 +326,8 @@ def _describe(path: Path, sheet: str | None) -> RoundFile:
     described = RoundFile(name=path.name, size=path.stat().st_size)
     try:
         described.sheets = sheet_names(path)
-        described.columns, described.row_count, described.samples = inspect_table(path, sheet)
+        described.sheet_columns = sheet_columns(path)
+        described.columns, described.row_count, described.samples, described.preview_rows = inspect_table(path, sheet)
     except (OSError, ValueError, KeyError, zipfile.BadZipFile) as exc:
         described.error = _read_error(path.name, exc)
     return described
