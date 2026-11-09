@@ -83,7 +83,7 @@ export type TaxonomySource = { runId: string; dataset: string };
 /** One side of a comparison: a stored run, and which of its taxonomies (dataset name) when it scored several. */
 export type RunSubject = { runId: string; subject?: string | null };
 
-export type ReviewQuery = { state: "undecided" | "decided" | "all"; q?: string; offset: number; limit: number };
+export type ReviewQuery = { state: "undecided" | "decided" | "held" | "all"; q?: string; offset: number; limit: number };
 
 export type DecisionSubmission = {
   reviewer: string;

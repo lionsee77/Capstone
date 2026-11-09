@@ -2,88 +2,127 @@
 
 import { useState } from "react";
 
-import { Notice, Section } from "@/components/layout/page-header";
-import { LevelTag } from "@/components/level-tag";
+import { Notice } from "@/components/layout/page-header";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { NativeSelect } from "@/components/ui/native-select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useApplyDecisions, useDraftDecisions, useIntegrateRound, useReviewQueue, useSaveDecisions } from "@/lib/api/queries";
-import type { ReviewQueueProposal, ReviewQueueTag, RoundState } from "@/lib/api/schemas";
+import type { ReviewQueue, ReviewQueueTag, RoundState } from "@/lib/api/schemas";
 import {
+  ACTION_LABELS,
   bulkTagDecisions,
   clampOffset,
   type DecisionInput,
-  placementLabel,
-  proposalDecision,
-  reusableMatches,
-  reuseCandidateLabel,
-  reuseCandidates,
-  tagDecision,
-  type TagAction,
+  reviewNextStep,
+  reviewProgress,
+  type ReviewTab,
+  reviewTab,
+  savedMessage,
 } from "@/lib/review";
 import { useDebouncedValue } from "@/lib/use-debounced-value";
 
+import { ProposalCard, TagRow } from "./review-items";
+
 const PAGE_SIZE = 25;
-const FILTERS = [
-  { id: "undecided", label: "To decide" },
-  { id: "decided", label: "Decided" },
-  { id: "all", label: "All" },
-] as const;
 
 export function ReviewPanel({ round }: { round: RoundState }) {
   const [reviewer, setReviewer] = useState(round.reviewer ?? "");
-  const [filter, setFilter] = useState<(typeof FILTERS)[number]["id"]>("undecided");
+  const [chosenTab, setChosenTab] = useState<ReviewTab | null>(null);
   const [searchInput, setSearchInput] = useState("");
   const search = useDebouncedValue(searchInput.trim(), 300);
   const [offset, setOffset] = useState(0);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [bulkReason, setBulkReason] = useState("");
-  const { data: queue, isPending, error } = useReviewQueue(round, { state: filter, q: search, offset, limit: PAGE_SIZE });
+  const [lastSaved, setLastSaved] = useState("");
+  const { data: queue, isPending, error } = useReviewQueue(round, {
+    state: chosenTab === null || chosenTab === "proposals" ? "undecided" : chosenTab, q: search, offset, limit: PAGE_SIZE,
+  });
   const save = useSaveDecisions(round.round_id);
   const locked = round.status === "running";
+  const tab = reviewTab(chosenTab, queue);
 
+  // Both set during render, as React recommends for state that follows from new data, not in an effect.
   // Deciding the tags on a later page empties it; move back to the last page that still has some.
-  // Set during render, as React recommends for state that follows from new data, not in an effect.
   const lastOffset = queue ? clampOffset(offset, queue.total, PAGE_SIZE) : offset;
   if (lastOffset !== offset) setOffset(lastOffset);
+  // The tab closes when its last tag is settled, so go back to following the work that's left.
+  if (chosenTab === "held" && queue?.held === 0) setChosenTab(null);
+
   const named = reviewer.trim().length > 0;
+  const canEdit = named && !locked && !save.isPending;
 
   function submit(decisions: DecisionInput[], clearTags: ReviewQueueTag["source"][] = [], clearProposals: string[] = []) {
     save.mutate(
       { reviewer: reviewer.trim(), decisions, clear_tags: clearTags, clear_proposals: clearProposals },
-      { onSuccess: () => setSelected(new Set()) },
+      {
+        onSuccess: () => {
+          setSelected(new Set());
+          setLastSaved(savedMessage(decisions, clearTags.length + clearProposals.length));
+        },
+      },
     );
   }
 
-  function changeFilter(next: typeof filter) {
-    setFilter(next);
+  function changeTab(next: ReviewTab) {
+    setChosenTab(next);
     setOffset(0);
     setSelected(new Set());
   }
 
+  const tabs: { id: ReviewTab; label: string; count?: number }[] = queue ? [
+    ...(queue.proposals.length > 0 ? [{ id: "proposals" as const, label: "Categories & specialities", count: queue.proposals_undecided }] : []),
+    { id: "undecided", label: "To decide", count: queue.undecided },
+    { id: "decided", label: "Decided", count: queue.decided },
+    ...(queue.held > 0 ? [{ id: "held" as const, label: "Still held", count: queue.held }] : []),
+  ] : [];
   const selectedTags = (queue?.tags ?? []).filter((tag) => selected.has(tag.source.tag_id));
-  const canEdit = named && !locked && !save.isPending;
+  const showTags = tab !== "proposals";
 
   return (
-    <Section
-      title="Review"
-      aside={queue && <span className="text-sm text-muted-foreground">{queue.undecided} to decide · {queue.decided} decided</span>}
-    >
-      <div className="flex flex-col gap-1.5">
-        <Label className="label-caps" htmlFor="review-reviewer">Reviewer</Label>
-        <Input
-          id="review-reviewer"
-          className="max-w-xs"
-          placeholder="Your name, recorded with each decision"
-          value={reviewer}
-          onChange={(e) => setReviewer(e.target.value)}
-        />
-      </div>
+    <section aria-label="Review" className="flex flex-col gap-4">
+      <ProgressBar round={round} queue={queue} onShowHeld={() => changeTab("held")}>
+        {selectedTags.length > 0 && (
+          <div className="flex flex-wrap items-center gap-2 rounded-md bg-accent p-2" data-testid="bulk-bar">
+            <span className="text-sm font-medium whitespace-nowrap">{selectedTags.length} selected</span>
+            <Input
+              aria-label="Reason for selected tags"
+              className="min-w-40 flex-1 bg-background"
+              placeholder="Note for these (optional)"
+              value={bulkReason}
+              onChange={(e) => setBulkReason(e.target.value)}
+            />
+            {(["create", "exclude", "defer"] as const).map((action) => (
+              <Button
+                key={action}
+                size="sm"
+                variant="outline"
+                disabled={!canEdit}
+                onClick={() => submit(bulkTagDecisions(selectedTags, action, bulkReason))}
+              >
+                {action === "create" ? "Add as new at best placement" : ACTION_LABELS[action]}
+              </Button>
+            ))}
+          </div>
+        )}
+      </ProgressBar>
 
-      <ApplyBar round={round} />
-      <DraftDecisions round={round} reviewer={reviewer} disabled={!canEdit} />
+      <div className="flex flex-wrap items-start gap-x-8 gap-y-4">
+        <div className="flex flex-col gap-1.5">
+          <Label htmlFor="review-reviewer">Your name</Label>
+          <Input
+            id="review-reviewer"
+            className="w-64"
+            placeholder="Recorded with each decision"
+            value={reviewer}
+            onChange={(e) => setReviewer(e.target.value)}
+          />
+          {!named && <p className="text-sm text-muted-foreground">Enter your name to start deciding.</p>}
+        </div>
+        {queue && queue.undecided > 0 && (
+          <DraftDecisions round={round} reviewer={reviewer} disabled={!canEdit} />
+        )}
+      </div>
 
       {save.error && (
         <Notice title="That decision wasn't saved" tone="error">
@@ -96,97 +135,83 @@ export function ReviewPanel({ round }: { round: RoundState }) {
           {error.message}
         </Notice>
       )}
-      {queue && queue.proposals.length > 0 && (
-        <div className="flex flex-col gap-3">
-          <h3 className="font-heading text-base">Categories and specialities to decide first</h3>
-          <p className="text-sm text-muted-foreground">
-            Tags can only be created under these once each one is settled.
-          </p>
-          {queue.proposals.map((proposal) => (
-            <ProposalCard
-              key={proposal.proposal_id}
-              proposal={proposal}
-              disabled={!canEdit}
-              onDecide={(decision) => submit([decision])}
-              onClear={() => submit([], [], [proposal.proposal_id])}
-            />
-          ))}
-        </div>
-      )}
 
       {queue && (
         <div className="flex flex-col gap-3">
-          <div className="flex flex-wrap items-center gap-2">
-            {FILTERS.map(({ id, label }) => (
-              <Button key={id} size="sm" variant={filter === id ? "secondary" : "ghost"} onClick={() => changeFilter(id)}>
-                {label}
+          <div className="flex flex-wrap items-center gap-1 border-b border-rule pb-2" role="group" aria-label="Review lists">
+            {tabs.map(({ id, label, count }) => (
+              <Button key={id} size="sm" variant={tab === id ? "secondary" : "ghost"} aria-pressed={tab === id} onClick={() => changeTab(id)}>
+                {label} <span className="ml-1 text-muted-foreground">{count}</span>
               </Button>
             ))}
-            <Input
-              aria-label="Search tags"
-              className="ml-auto max-w-56"
-              placeholder="Search tags…"
-              value={searchInput}
-              onChange={(e) => {
-                setSearchInput(e.target.value);
-                setOffset(0);
-              }}
-            />
+            {showTags && (
+              <Input
+                aria-label="Search tags"
+                className="ml-auto max-w-56"
+                placeholder="Search tags…"
+                value={searchInput}
+                onChange={(e) => {
+                  setSearchInput(e.target.value);
+                  setOffset(0);
+                }}
+              />
+            )}
           </div>
+          <p aria-live="polite" className="min-h-5 text-sm text-muted-foreground">{lastSaved}</p>
 
-          {queue.tags.length > 0 && (
-            <div className="flex flex-wrap items-center gap-2 rounded-md border border-border bg-muted/50 p-3">
+          {tab === "proposals" && (
+            <div className="flex flex-col gap-3">
+              <p className="text-sm text-muted-foreground">
+                These are new groups the source would add. Tags under them can only go in once each group is settled, so start here.
+              </p>
+              {queue.proposals.map((proposal) => (
+                <ProposalCard
+                  key={proposal.proposal_id}
+                  proposal={proposal}
+                  disabled={!canEdit}
+                  onDecide={(decision) => submit([decision])}
+                  onClear={() => submit([], [], [proposal.proposal_id])}
+                />
+              ))}
+            </div>
+          )}
+
+          {showTags && queue.tags.length > 0 && (
+            <div className="flex flex-wrap items-center gap-2">
               <label className="flex shrink-0 items-center gap-2 text-sm whitespace-nowrap">
                 <input
                   type="checkbox"
                   checked={selectedTags.length === queue.tags.length}
                   onChange={(e) => setSelected(new Set(e.target.checked ? queue.tags.map((tag) => tag.source.tag_id) : []))}
                 />
-                Select this page ({selectedTags.length} selected)
+                Select all on this page
               </label>
-              <Input
-                aria-label="Reason for selected tags"
-                className="min-w-48 flex-1"
-                placeholder="Reason for the selected tags (optional)"
-                value={bulkReason}
-                onChange={(e) => setBulkReason(e.target.value)}
-              />
-              {(["create", "exclude", "defer"] as const).map((action) => (
-                <Button
-                  key={action}
-                  size="sm"
-                  variant="outline"
-                  disabled={!canEdit || selectedTags.length === 0}
-                  onClick={() => submit(bulkTagDecisions(selectedTags, action, bulkReason))}
-                >
-                  {action === "create" ? "Create at best placement" : action === "exclude" ? "Exclude" : "Defer"}
-                </Button>
-              ))}
             </div>
           )}
 
-          {queue.tags.length === 0 && (
-            <Notice title={filter === "undecided" ? "Nothing left to decide here" : "No tags match"}>
-              {filter === "undecided" ? "Apply your decisions to see whether the round is ready to integrate." : "Try another filter or search."}
-            </Notice>
+          {showTags && queue.tags.length === 0 && <EmptyTab tab={tab} searching={search.length > 0} round={round} />}
+          {showTags && (
+            <div className="flex flex-col divide-y divide-rule">
+              {queue.tags.map((tag) => (
+                <TagRow
+                  key={`${tag.source.source_dataset}-${tag.source.tag_id}`}
+                  tag={tag}
+                  held={tab === "held"}
+                  selected={selected.has(tag.source.tag_id)}
+                  disabled={!canEdit}
+                  onToggle={(checked) => {
+                    const next = new Set(selected);
+                    if (checked) next.add(tag.source.tag_id);
+                    else next.delete(tag.source.tag_id);
+                    setSelected(next);
+                  }}
+                  onDecide={(decision) => submit([decision])}
+                  onClear={() => submit([], [tag.source])}
+                />
+              ))}
+            </div>
           )}
-          {queue.tags.map((tag) => (
-            <TagCard
-              key={`${tag.source.source_dataset}-${tag.source.tag_id}`}
-              tag={tag}
-              selected={selected.has(tag.source.tag_id)}
-              disabled={!canEdit}
-              onToggle={(checked) => {
-                const next = new Set(selected);
-                if (checked) next.add(tag.source.tag_id);
-                else next.delete(tag.source.tag_id);
-                setSelected(next);
-              }}
-              onDecide={(decision) => submit([decision])}
-              onClear={() => submit([], [tag.source])}
-            />
-          ))}
-          {(queue.total > PAGE_SIZE || offset > 0) && (
+          {showTags && (queue.total > PAGE_SIZE || offset > 0) && (
             <div className="flex items-center gap-3 text-sm text-muted-foreground">
               <Button size="sm" variant="outline" disabled={offset === 0} onClick={() => setOffset(Math.max(0, offset - PAGE_SIZE))}>
                 Previous
@@ -199,36 +224,96 @@ export function ReviewPanel({ round }: { round: RoundState }) {
           )}
         </div>
       )}
-      {!named && <p className="text-sm text-muted-foreground">Enter your name to make decisions.</p>}
-    </Section>
+    </section>
   );
 }
 
-/** What has to happen next: apply saved decisions, then integrate. */
-function ApplyBar({ round }: { round: RoundState }) {
+function EmptyTab({ tab, searching, round }: { tab: ReviewTab; searching: boolean; round: RoundState }) {
+  if (searching) return <Notice title="No tags match">Try another search or list.</Notice>;
+  if (tab === "decided") return <Notice title="Nothing decided yet">Decisions you make appear here, and can be changed until the snapshot is generated.</Notice>;
+  return (
+    <Notice title="Nothing left to decide here">
+      {round.decisions_applied ? "Use the bar at the top to finish." : "Apply your decisions, using the bar at the top."}
+    </Notice>
+  );
+}
+
+const WORKFLOW = [
+  { id: "decide", label: "Decide" },
+  { id: "apply", label: "Apply" },
+  { id: "generate", label: "Generate snapshot" },
+] as const;
+
+/** Stays on screen while scrolling a long list: how far along the review is and the one thing to do next. */
+function ProgressBar({
+  round, queue, onShowHeld, children,
+}: { round: RoundState; queue: ReviewQueue | undefined; onShowHeld: () => void; children: React.ReactNode }) {
   const apply = useApplyDecisions(round.round_id);
   const integrate = useIntegrateRound(round.round_id);
-  const running = round.status === "running";
-  // A snapshot step that failed is retried from here too: its stage stops the round, but nothing is held.
-  const canIntegrate = round.decisions_applied && round.pending_sources === 0 && !running;
+  const next = reviewNextStep(round, queue);
+  const progress = queue ? reviewProgress(queue) : null;
+  const unsettled = queue ? queue.undecided + queue.proposals_undecided : 0;
+  // Applying is on offer as soon as something's saved, but deciding is still the job while tags are left.
+  const position = next === "apply" && unsettled > 0 ? "decide" : next;
+
   return (
-    <div className="flex flex-wrap items-center gap-3 rounded-md border border-rule p-3">
-      {!round.decisions_applied && (
-        <>
-          <p className="text-sm">Some saved decisions are not applied yet.</p>
-          <Button disabled={running || apply.isPending} onClick={() => apply.mutate()}>Apply decisions</Button>
-        </>
+    <div data-testid="review-bar" className="sticky top-0 z-20 flex flex-col gap-2 border-b border-rule bg-background py-3">
+      <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-2">
+        <ol aria-label="Review steps" className="flex items-center gap-2 text-sm">
+          {WORKFLOW.map(({ id, label }, index) => (
+            <li key={id} aria-current={position === id ? "step" : undefined} className={position === id ? "font-medium" : "text-muted-foreground"}>
+              {index > 0 && <span aria-hidden className="mr-2 text-muted-foreground">→</span>}
+              {index + 1}. {label}
+            </li>
+          ))}
+        </ol>
+        {progress && <span className="text-sm text-muted-foreground">{progress.done.toLocaleString()} of {progress.total.toLocaleString()} tags settled</span>}
+      </div>
+      {progress && (
+        <div
+          role="progressbar"
+          aria-label="Tags settled"
+          aria-valuemin={0}
+          aria-valuemax={progress.total}
+          aria-valuenow={progress.done}
+          className="h-1.5 overflow-hidden rounded-full bg-muted"
+        >
+          <div className="h-full rounded-full bg-primary transition-[width]" style={{ width: `${progress.percent}%` }} />
+        </div>
       )}
-      {round.decisions_applied && round.pending_sources > 0 && (
-        <p className="text-sm">{round.pending_sources} tag(s) still need a decision before this round can be integrated.</p>
-      )}
-      {canIntegrate && (
-        <>
-          <p className="text-sm">Nothing is held. Generating the snapshot adds these tags as a new taxonomy version.</p>
-          <Button disabled={integrate.isPending} onClick={() => integrate.mutate()}>Generate enriched snapshot</Button>
-        </>
-      )}
-      {running && <p className="text-sm text-muted-foreground">Working… this usually takes under a minute.</p>}
+      <div className="flex min-h-8 flex-wrap items-center justify-between gap-3">
+        {next === "working" && <p className="text-sm text-muted-foreground">Working… this usually takes under a minute.</p>}
+        {next === "apply" && (
+          <>
+            <p className="text-sm">
+              {unsettled > 0
+                ? `Your saved decisions aren't checked yet. Apply when you're ready; ${unsettled.toLocaleString()} still to decide.`
+                : "All decided. Apply to check your decisions against the taxonomy."}
+            </p>
+            <div className="flex flex-wrap items-center gap-2">
+              {queue && queue.held > 0 && (
+                <Button size="sm" variant="outline" onClick={onShowHeld}>See the {queue.held.toLocaleString()} still held</Button>
+              )}
+              <Button size="sm" variant={unsettled > 0 ? "outline" : "default"} disabled={apply.isPending} onClick={() => apply.mutate()}>Apply decisions</Button>
+            </div>
+          </>
+        )}
+        {next === "decide" && (
+          <>
+            <p className="text-sm">{round.pending_sources.toLocaleString()} tag(s) must be settled before the new taxonomy version can be generated.</p>
+            {queue && queue.held > 0 && (
+              <Button size="sm" variant="outline" onClick={onShowHeld}>See the {queue.held.toLocaleString()} still held</Button>
+            )}
+          </>
+        )}
+        {next === "generate" && (
+          <>
+            <p className="text-sm">Everything is settled. Generating adds these tags as a new taxonomy version.</p>
+            <Button size="sm" disabled={integrate.isPending} onClick={() => integrate.mutate()}>Generate enriched snapshot</Button>
+          </>
+        )}
+      </div>
+      {children}
       {apply.error && <p className="text-sm text-destructive">{apply.error.message}</p>}
       {integrate.error && <p className="text-sm text-destructive">{integrate.error.message}</p>}
     </div>
@@ -241,203 +326,41 @@ function DraftDecisions({ round, reviewer, disabled }: { round: RoundState; revi
   const draft = useDraftDecisions(round.round_id);
   const counts = draft.data?.counts;
   return (
-    <details className="rounded-md border border-border p-3">
-      <summary className="cursor-pointer text-sm font-medium">Draft the clear-cut decisions</summary>
-      <div className="mt-3 flex flex-col gap-3">
-        <p className="text-sm text-muted-foreground">
-          Creates tags nothing resembles and reuses near-identical ones, at their most confident placement. Drafts can be
-          changed before you apply them. These cut-offs are uncalibrated, so check the results.
+    <div className="flex min-w-64 flex-1 flex-col gap-1.5">
+      <p className="text-sm font-medium">Save time on the clear-cut tags</p>
+      <p className="text-sm text-muted-foreground">
+        Adds tags nothing resembles and links near-identical ones, at their most confident placement. You can change any draft before applying.
+      </p>
+      <div>
+        <Button
+          size="sm"
+          variant="outline"
+          disabled={disabled || draft.isPending || !round.decisions_applied}
+          onClick={() => draft.mutate({ reviewer: reviewer.trim(), create_below: Number(createBelow), reuse_above: Number(reuseAbove) })}
+        >
+          Draft clear-cut decisions
+        </Button>
+      </div>
+      {!round.decisions_applied && <p className="text-sm text-muted-foreground">Apply your saved decisions first.</p>}
+      {counts && (
+        <p className="text-sm">
+          Drafted {counts.create ?? 0} to add and {counts.reuse ?? 0} to link. The rest need your judgement.
         </p>
-        <div className="flex flex-wrap items-end gap-3">
+      )}
+      {draft.error && <p className="text-sm text-destructive">{draft.error.message}</p>}
+      <details className="text-sm">
+        <summary className="cursor-pointer text-muted-foreground">Cut-offs (uncalibrated, so check the results)</summary>
+        <div className="mt-2 flex flex-wrap items-end gap-3">
           <div className="flex flex-col gap-1.5">
-            <Label htmlFor="draft-create">Create below</Label>
+            <Label htmlFor="draft-create">Add as new below</Label>
             <Input id="draft-create" className="w-24" type="number" min="0" max="1" step="0.05" value={createBelow} onChange={(e) => setCreateBelow(e.target.value)} />
           </div>
           <div className="flex flex-col gap-1.5">
-            <Label htmlFor="draft-reuse">Reuse at or above</Label>
+            <Label htmlFor="draft-reuse">Link at or above</Label>
             <Input id="draft-reuse" className="w-24" type="number" min="0" max="1" step="0.05" value={reuseAbove} onChange={(e) => setReuseAbove(e.target.value)} />
           </div>
-          <Button
-            variant="outline"
-            disabled={disabled || draft.isPending || !round.decisions_applied}
-            onClick={() => draft.mutate({ reviewer: reviewer.trim(), create_below: Number(createBelow), reuse_above: Number(reuseAbove) })}
-          >
-            Draft decisions
-          </Button>
         </div>
-        {!round.decisions_applied && <p className="text-sm text-muted-foreground">Apply your saved decisions first.</p>}
-        {counts && (
-          <p className="text-sm">
-            Drafted {counts.create ?? 0} to create and {counts.reuse ?? 0} to reuse; {counts.left_for_review ?? 0} are too
-            close to call and stay with you.
-          </p>
-        )}
-        {draft.error && <p className="text-sm text-destructive">{draft.error.message}</p>}
-      </div>
-    </details>
-  );
-}
-
-function SavedDecision({ decision, disabled, onClear }: { decision: { action: string; reason: string }; disabled: boolean; onClear: () => void }) {
-  return (
-    <div className="flex flex-wrap items-center justify-between gap-2 rounded-md bg-muted/50 px-3 py-2 text-sm">
-      <span><span className="font-medium capitalize">{decision.action}</span>: {decision.reason}</span>
-      <Button size="xs" variant="ghost" disabled={disabled} onClick={onClear}>Undo</Button>
+      </details>
     </div>
-  );
-}
-
-function TagCard({
-  tag, selected, disabled, onToggle, onDecide, onClear,
-}: {
-  tag: ReviewQueueTag;
-  selected: boolean;
-  disabled: boolean;
-  onToggle: (checked: boolean) => void;
-  onDecide: (decision: DecisionInput) => void;
-  onClear: () => void;
-}) {
-  const [placement, setPlacement] = useState(0);
-  const candidates = reuseCandidates(tag);
-  // Nothing preselected: these are only the closest names, and most aren't the same concept.
-  const [reuseTagId, setReuseTagId] = useState<number | undefined>(undefined);
-  const [reason, setReason] = useState("");
-
-  function decide(action: TagAction) {
-    const decision = tagDecision(tag, action, { placement, reuseTagId, reason });
-    if (decision) onDecide(decision);
-  }
-
-  return (
-    <article className="flex flex-col gap-3 rounded-md border border-border p-3">
-      <div className="flex items-start gap-2">
-        <input
-          type="checkbox"
-          className="mt-1"
-          aria-label={`Select ${tag.tag}`}
-          checked={selected}
-          onChange={(e) => onToggle(e.target.checked)}
-        />
-        <div className="flex flex-col gap-1">
-          <h4 className="font-medium">{tag.tag}</h4>
-          <p className="text-sm text-muted-foreground">{tag.reason}</p>
-        </div>
-      </div>
-      {tag.closest.length > 0 && (
-        <p className="text-sm">
-          <span className="text-muted-foreground">Closest existing: </span>
-          {tag.closest.map((match) => `${match.name ?? "unnamed"} (${match.level ?? "unknown level"}, ${match.basis} ${match.score.toFixed(2)})`).join("; ")}
-        </p>
-      )}
-      {tag.duplicates.length > 0 && (
-        <p className="text-sm">
-          <span className="text-muted-foreground">May duplicate: </span>
-          {tag.duplicates.map((other) => other.tag).join(", ")}
-        </p>
-      )}
-      {tag.decision ? (
-        <SavedDecision decision={tag.decision} disabled={disabled} onClear={onClear} />
-      ) : (
-        <div className="flex flex-col gap-2">
-          {tag.placements.length > 0 && (
-            <div className="flex flex-col gap-1">
-              <Label htmlFor={`place-${tag.source.tag_id}`}>Place it under ({tag.placements.length} proposed)</Label>
-              <NativeSelect
-                id={`place-${tag.source.tag_id}`}
-                value={placement}
-                onChange={(e) => setPlacement(Number(e.target.value))}
-              >
-                {tag.placements.map((place, index) => (
-                  <option key={placementLabel(place)} value={index}>
-                    {placementLabel(place)}{place.confidence === null ? "" : ` (${place.confidence.toFixed(2)})`}
-                  </option>
-                ))}
-              </NativeSelect>
-            </div>
-          )}
-          {candidates.length > 0 && (
-            <div className="flex flex-col gap-1">
-              <Label htmlFor={`reuse-${tag.source.tag_id}`}>Or map it to an existing tag</Label>
-              <NativeSelect
-                id={`reuse-${tag.source.tag_id}`}
-                value={reuseTagId ?? ""}
-                onChange={(e) => setReuseTagId(e.target.value ? Number(e.target.value) : undefined)}
-              >
-                <option value="">Choose a tag</option>
-                {candidates.map((candidate) => (
-                  <option key={candidate.tag_id} value={candidate.tag_id}>
-                    {reuseCandidateLabel(candidate)}
-                  </option>
-                ))}
-              </NativeSelect>
-            </div>
-          )}
-          <Input aria-label={`Reason for ${tag.tag}`} placeholder="Reason (optional)" value={reason} onChange={(e) => setReason(e.target.value)} />
-          <div className="flex flex-wrap gap-2">
-            <Button size="sm" disabled={disabled || tag.placements.length === 0} onClick={() => decide("create")}>Create</Button>
-            <Button size="sm" variant="outline" disabled={disabled || reuseTagId === undefined || tag.placements.length === 0} onClick={() => decide("reuse")}>Reuse existing</Button>
-            <Button size="sm" variant="ghost" disabled={disabled} onClick={() => decide("exclude")}>Exclude</Button>
-            <Button size="sm" variant="ghost" disabled={disabled} onClick={() => decide("defer")}>Defer</Button>
-          </div>
-        </div>
-      )}
-    </article>
-  );
-}
-
-function ProposalCard({
-  proposal, disabled, onDecide, onClear,
-}: {
-  proposal: ReviewQueueProposal;
-  disabled: boolean;
-  onDecide: (decision: DecisionInput) => void;
-  onClear: () => void;
-}) {
-  const reusable = reusableMatches(proposal);
-  const [conceptId, setConceptId] = useState(reusable[0]?.id ?? undefined);
-  const [reason, setReason] = useState("");
-
-  function decide(action: TagAction) {
-    const decision = proposalDecision(proposal, action, { conceptId: conceptId ?? undefined, reason });
-    if (decision) onDecide(decision);
-  }
-
-  return (
-    <article className="flex flex-col gap-3 rounded-md border border-border p-3">
-      <div className="flex flex-wrap items-center gap-2">
-        <h4 className="font-medium">{proposal.path.join(" › ")}</h4>
-        <LevelTag level={proposal.level} />
-      </div>
-      <p className="text-sm text-muted-foreground">{proposal.reason} {proposal.source_tags} tag(s) depend on this.</p>
-      {proposal.decision ? (
-        <SavedDecision decision={proposal.decision} disabled={disabled} onClear={onClear} />
-      ) : (
-        <div className="flex flex-col gap-2">
-          {reusable.length > 0 && (
-            <div className="flex flex-col gap-1">
-              <Label htmlFor={`concept-${proposal.proposal_id}`}>Existing {proposal.level} it may be</Label>
-              <NativeSelect
-                id={`concept-${proposal.proposal_id}`}
-                value={String(conceptId)}
-                onChange={(e) => setConceptId(reusable.find((match) => String(match.id) === e.target.value)?.id ?? undefined)}
-              >
-                {reusable.map((match) => (
-                  <option key={String(match.id)} value={String(match.id)}>
-                    {match.path.join(" › ")}
-                  </option>
-                ))}
-              </NativeSelect>
-            </div>
-          )}
-          <Input aria-label={`Reason for ${proposal.name}`} placeholder="Reason (optional)" value={reason} onChange={(e) => setReason(e.target.value)} />
-          <div className="flex flex-wrap gap-2">
-            <Button size="sm" variant="outline" disabled={disabled || reusable.length === 0} onClick={() => decide("reuse")}>Use existing</Button>
-            <Button size="sm" variant="ghost" disabled={disabled} onClick={() => decide("create")}>Create new</Button>
-            <Button size="sm" variant="ghost" disabled={disabled} onClick={() => decide("exclude")}>Exclude</Button>
-            <Button size="sm" variant="ghost" disabled={disabled} onClick={() => decide("defer")}>Defer</Button>
-          </div>
-        </div>
-      )}
-    </article>
   );
 }

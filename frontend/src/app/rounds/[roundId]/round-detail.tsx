@@ -10,7 +10,8 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useDeleteRound, useRound, useRoundConfigText, useRunRound } from "@/lib/api/queries";
 import type { RoundState } from "@/lib/api/schemas";
-import { hasReviewQueue, roundCompareHref } from "@/lib/review";
+import { hasReviewQueue, roundCompareHref, stagesWorthShowing } from "@/lib/review";
+import { baselineLabel } from "@/lib/round-setup";
 import { roundStatusLabel, STAGE_LABELS } from "@/lib/rounds";
 
 import { ReviewPanel } from "./review-panel";
@@ -31,11 +32,10 @@ export function RoundDetail({ roundId }: { roundId: string }) {
       <PageHeader
         eyebrow="Enrichment round"
         title={round.round_id}
-        description={`${round.source_name ?? "No source yet"}, built on ${round.baseline_snapshot}. ${roundStatusLabel(round.status)}.`}
+        description={`${round.source_name ?? "No source yet"}, built on ${baselineLabel(round.baseline_snapshot)}. ${roundStatusLabel(round.status)}.`}
       />
       <RoundActions round={round} />
       {round.status === "complete" && <RoundResult round={round} />}
-      {(hasReviewQueue(round) || (round.status === "running" && !round.decisions_applied)) && <ReviewPanel round={round} />}
       {round.warnings.length > 0 && (
         <Notice title="Worth checking">
           <ul className="flex list-disc flex-col gap-1 pl-4">
@@ -45,8 +45,11 @@ export function RoundDetail({ roundId }: { roundId: string }) {
           </ul>
         </Notice>
       )}
-      <Section title="Stages">
-        <ol className="flex flex-col divide-y divide-rule">
+      <details key={String(stagesWorthShowing(round))} open={stagesWorthShowing(round)} className="group">
+        <summary className="cursor-pointer text-sm font-medium">
+          Stages: {round.stages.filter((stage) => stage.status === "done" || stage.status === "skipped").length} of {round.stages.length} done
+        </summary>
+        <ol className="mt-1 flex flex-col divide-y divide-rule">
           {round.stages.map((stage) => (
             <li key={stage.id} className="flex flex-col gap-1 py-3">
               <div className="flex flex-wrap items-center justify-between gap-3">
@@ -58,7 +61,8 @@ export function RoundDetail({ roundId }: { roundId: string }) {
             </li>
           ))}
         </ol>
-      </Section>
+      </details>
+      {(hasReviewQueue(round) || (round.status === "running" && !round.decisions_applied)) && <ReviewPanel round={round} />}
       <RoundConfig round={round} />
       <RemoveRound round={round} />
     </div>

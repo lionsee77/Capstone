@@ -539,6 +539,7 @@ export const reviewQueueProposalSchema = z.object({
   reason: z.string(),
   blocks_creation: z.boolean(),
   source_tags: z.number(),
+  create_blocked_reason: z.string().nullable(),
   matches: z.array(z.object({
     id: z.union([z.number(), z.string()]).nullable(),
     name: z.string(),
@@ -563,6 +564,7 @@ export const reviewQueueSchema = z.object({
   limit: z.number(),
   undecided: z.number(),
   decided: z.number(),
+  held: z.number(),
   proposals_undecided: z.number(),
 });
 export type ReviewQueue = z.infer<typeof reviewQueueSchema>;
