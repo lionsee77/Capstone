@@ -328,7 +328,10 @@ def build_flat_taxonomy(rows: list[dict[str, str]], mapping: SourceMapping) -> F
             for i, (sid, tid) in enumerate(link_ids)
         ],
     }
-    context = {str(tag_id[key]): {"description": descriptions[key]} for key in tag_keys if key in descriptions}
+    context = {
+        str(tag_id[key]): {"title": spelling[key], "description": descriptions[key]}
+        for key in tag_keys if key in descriptions
+    }
     return FlatTaxonomy(tables=tables, tag_context=context, skipped_rows=skipped, merged_tags=merged)
 
 
