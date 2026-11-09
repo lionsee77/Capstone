@@ -119,3 +119,6 @@ judge_cache_*.json
 
 # O*NET raw download (backend/onet/README.md)
 backend/onet/raw/
+
+# ESCO raw download and its flattened join (backend/esco/README.md)
+backend/esco/raw/

@@ -16,6 +16,7 @@ backend/
 ├── audit/                # Taxonomy audit module and report notebook
 ├── loader/               # load_snapshot.sh: rebuild a database from one pipeline snapshot
 ├── onet/                # O*NET source prepared for the pipeline's import-source
+├── esco/                 # ESCO source: flatten script joining its linked CSVs, then import-source
 ├── taxonomy_pipeline/    # Quality scoring + Case A/B classification and merge preview (CLI + FastAPI) - own README, own deps
 ├── compose.yaml          # MySQL, Adminer, audit and snapshot-loader services
 ├── Dockerfile            # MySQL image and ordered imports

@@ -24,9 +24,11 @@ taxonomy_pipeline/
 │   └── baseline_v1.json.gz           #   the original taxonomy scored with definitions v1
 ├── configs/                          # pipeline configs
 │   ├── baseline_v1.yaml              #   pinned config that produced baselines/baseline_v1.json.gz
+│   ├── generalization_v1.yaml        #   original, SkillsFuture, O*NET and ESCO scored with definitions v1 (#101)
 │   ├── lineage_scorecard.yaml        #   every enrichment stage scored in one run, judge on (/lineage reads it)
 │   └── original_vs_skillsfuture.yaml #   classification rounds: scores both taxonomies, saturation judge on
 ├── docs/                             # design notes and future-work references
+│   ├── generalization-findings.md    #   what scoring O*NET and ESCO showed about matching tuned on SkillsFuture
 │   ├── saturation-coverage-options.md      #   options for deciding "good coverage" from the saturation curve
 │   └── saturation-threshold-calibration.md #   method for choosing saturation thresholds from labelled pairs
 ├── experiments/
@@ -912,7 +914,8 @@ sql-files-nus (original) ─► round 1 additions.sql (SkillsFuture) ─► roun
 person fills in. A level the table only encodes in a code is derived from the
 code's prefix and a `code,label` CSV, with no script. A source split across
 linked files (SkillsFuture, ESCO) gets a short script that joins them into one
-table first. The worked example is O*NET (`backend/onet/`):
+table first; `backend/esco/flatten_esco.py` is the example. The worked example
+for the mapping is O*NET (`backend/onet/`):
 
 ```yaml
 # <source>_mapping.yaml - paths are relative to this file
@@ -1781,7 +1784,8 @@ a hand-run round.
 - **`status`:** `setup`, `ready`, `running`, `failed`, `review`, `ready_to_integrate` or `complete`.
 
 Set `TAXONOMY_ROUNDS_ROOT` to keep rounds elsewhere. Uploads are limited to 20 files per round.
-A source split across linked files still needs a script to flatten it first (#118).
+A source split across linked files still needs a script to flatten it first (#118), as
+`backend/esco/flatten_esco.py` does for ESCO; upload its flat output.
 
 ### Enrichment lineage
 
