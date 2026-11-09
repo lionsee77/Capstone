@@ -49,6 +49,7 @@ def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, isolated_db: Path) -
     monkeypatch.setenv("TAXONOMY_MERGE_ROOT", str(tmp_path / "merge_runs"))
     monkeypatch.setattr(rounds, "SEMANTIC_MODEL", "")
     monkeypatch.setattr(rounds, "DEFAULT_TEMPLATE", template)
+    monkeypatch.setattr(rounds, "ORIGINAL_DUMPS", tmp_path / "sql-files")
     return TestClient(app)
 
 
@@ -76,6 +77,18 @@ def test_options_list_snapshots_and_say_llm_is_off_by_default(
 
     assert body["snapshots"] == ["base"]
     assert body["llm_allowed"] is False
+
+
+def test_the_original_taxonomy_is_offered_and_accepted_when_its_dumps_exist(
+    client: TestClient, tmp_path: Path,
+) -> None:
+    assert client.post("/rounds", json={"round_id": "r1", "baseline_snapshot": "original"}).status_code == 422
+
+    (tmp_path / "sql-files").mkdir()
+    (tmp_path / "sql-files" / "mini.sql").write_text((FIXTURES / "mini_original.sql").read_text("utf-8"), "utf-8")
+
+    assert client.get("/rounds/options").json()["snapshots"] == ["base", "original"]
+    assert client.post("/rounds", json={"round_id": "r1", "baseline_snapshot": "original"}).status_code == 201
 
 
 def test_uploading_stores_the_raw_bytes_and_reports_the_columns(client: TestClient) -> None:
