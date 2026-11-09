@@ -96,7 +96,7 @@ def test_imports_a_source_containing_only_parentless_tags(source: Path) -> None:
     result = import_source(source)
     assert result.counts == {"categories": 0, "specialities": 0, "tags": 1, "speciality_tags": 0}
     context = json.loads(result.context_path.read_text())
-    assert context["tags"] == {"3000": {"description": "Write code"}}
+    assert context["tags"] == {"3000": {"title": "Python", "description": "Write code"}}
     assert any("without complete parent paths" in warning for warning in result.warnings)
 
 

@@ -11,12 +11,13 @@ from experiments.golden_run import StubModel, compare
 from taxonomy_pipeline.enrichment.case_b import build_prompt, classify_batch
 
 
-def test_the_stub_model_answers_every_tag_in_a_real_case_b_prompt_the_same_way_each_time() -> None:
+@pytest.mark.parametrize("source_name", ["SkillsFuture", "O*NET"])
+def test_the_stub_model_answers_every_tag_in_a_real_case_b_prompt_the_same_way_each_time(source_name: str) -> None:
     services = ["Industry", "Subject"]
     categories = [{"service": "Subject", "name": "Computing"}]
     specialities = [{"service": "Subject", "category": "Computing", "name": "Data visualization"}]
     batch = [{"tag_id": str(3000 + index), "title": f"Skill {index}"} for index in range(40)]
-    prompt = build_prompt(services, categories, specialities, batch, source_name="SkillsFuture")
+    prompt = build_prompt(services, categories, specialities, batch, source_name=source_name)
 
     first = asyncio.run(classify_batch(StubModel(), prompt, batch, "stub"))
     again = asyncio.run(classify_batch(StubModel(), prompt, batch, "stub"))

@@ -64,7 +64,10 @@ def test_builds_categories_specialities_tags_and_links_from_mapped_columns(tmp_p
     assert [(r["speciality_id"], r["tag_id"]) for r in taxonomy.tables["speciality_tags"]] == [
         (2000, 3000), (2000, 3001), (2001, 3001),
     ]
-    assert taxonomy.tag_context == {"3000": {"description": "Write code"}, "3001": {"description": "Query databases"}}
+    assert taxonomy.tag_context == {
+        "3000": {"title": "Python", "description": "Write code"},
+        "3001": {"title": "SQL", "description": "Query databases"},
+    }
 
 
 def test_filters_keep_only_rows_matching_one_of_the_allowed_values(tmp_path: Path) -> None:
@@ -190,7 +193,12 @@ def test_tag_context_names_the_source_for_case_b(tmp_path: Path) -> None:
     context = json.loads(dump_tag_context(_build(mapping), mapping))
     assert context["display_name"] == "Demo" and context["source"] == "demo"
     # Excel (3000) has no description, so Case B gets only its name.
-    assert context["tags"] == {"3001": {"description": "Write code"}, "3002": {"description": "Query databases"}}
+    assert context["tags"] == {
+        "3001": {"title": "Python", "description": "Write code"},
+        "3002": {"title": "SQL", "description": "Query databases"},
+    }
+    names = {str(tag["id"]): tag["name"] for tag in _build(mapping).tables["tags"]}
+    assert all(entry["title"] == names[tag_id] for tag_id, entry in context["tags"].items())
 
 
 ONET_HEADERS = ["O*NET-SOC Code", "Title", "Example", "Commodity Title"]
@@ -278,7 +286,7 @@ def test_tags_mysql_treats_as_one_name_become_one_tag_spelled_the_most_common_wa
     assert taxonomy.merged_tags == {"Python": ["python"], "Café": ["cafe"]}
     python_id = next(tag["id"] for tag in taxonomy.tables["tags"] if tag["name"] == "Python")
     assert sum(link["tag_id"] == python_id for link in taxonomy.tables["speciality_tags"]) == 3
-    assert taxonomy.tag_context[str(python_id)] == {"description": "Programming language"}
+    assert taxonomy.tag_context[str(python_id)] == {"title": "Python", "description": "Programming language"}
 
 
 def test_reads_the_first_sheet_when_none_is_named_even_if_another_was_selected(tmp_path: Path) -> None:
