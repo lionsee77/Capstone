@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
+import stat
 from pathlib import Path
 from typing import Any
 
@@ -132,6 +134,34 @@ def test_same_output_paths_are_rejected_without_overwriting_sql(
     assert output.read_text() == "original SQL"
 
 
+@pytest.mark.skipif(os.name != "posix", reason="POSIX file permissions")
+def test_new_outputs_are_readable_even_with_a_restrictive_umask(generator_inputs: tuple[Any, Path]) -> None:
+    generator, output = generator_inputs
+    context = output.with_suffix(".json")
+    previous_umask = os.umask(0o077)
+    try:
+        generator.write_output_pair({output: "new SQL", context: "new JSON"})
+    finally:
+        os.umask(previous_umask)
+    assert stat.S_IMODE(output.stat().st_mode) == 0o644
+    assert stat.S_IMODE(context.stat().st_mode) == 0o644
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX file permissions")
+def test_replaced_outputs_keep_their_existing_permissions(generator_inputs: tuple[Any, Path]) -> None:
+    generator, output = generator_inputs
+    context = output.with_suffix(".json")
+    output.write_text("old SQL")
+    context.write_text("old JSON")
+    output.chmod(0o644)
+    context.chmod(0o640)
+    generator.write_output_pair({output: "new SQL", context: "new JSON"})
+    assert output.read_text() == "new SQL"
+    assert context.read_text() == "new JSON"
+    assert stat.S_IMODE(output.stat().st_mode) == 0o644
+    assert stat.S_IMODE(context.stat().st_mode) == 0o640
+
+
 @pytest.mark.parametrize("failure", ["stage", "replace"])
 def test_output_failure_preserves_the_previous_pair(
     generator_inputs: tuple[Any, Path], monkeypatch: pytest.MonkeyPatch, failure: str,
@@ -140,6 +170,9 @@ def test_output_failure_preserves_the_previous_pair(
     context = output.with_suffix(".json")
     output.write_text("old SQL")
     context.write_text("old JSON")
+    if os.name == "posix":
+        output.chmod(0o640)
+        context.chmod(0o644)
     if failure == "stage":
         original = generator.tempfile.NamedTemporaryFile
         calls = 0
@@ -165,4 +198,7 @@ def test_output_failure_preserves_the_previous_pair(
         generator.write_output_pair({output: "new SQL", context: "new JSON"})
     assert output.read_text() == "old SQL"
     assert context.read_text() == "old JSON"
+    if os.name == "posix":
+        assert stat.S_IMODE(output.stat().st_mode) == 0o640
+        assert stat.S_IMODE(context.stat().st_mode) == 0o644
     assert not list(output.parent.glob(".*"))

@@ -46,6 +46,8 @@ Both files are staged in their destination directories before either is
 replaced. Handled replacement failures roll back to the previous pair; if
 rollback fails, recovery backups are retained and reported. This does not
 provide a two-file atomic transaction across a process or machine crash.
+Existing output permissions are preserved, including during rollback. New
+outputs use `0644` so the MySQL container can read the generated SQL.
 The generated JSON is gitignored: a fresh clone must run the generator before
 Case B or a golden-run recording. The tracked SQL alone is not sufficient.
 The generator remains standalone and needs only the dependencies above.

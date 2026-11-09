@@ -11,6 +11,7 @@ import argparse
 import json
 import os
 import re
+import stat
 import tempfile
 from pathlib import Path
 
@@ -69,8 +70,13 @@ def write_output_pair(outputs: dict[Path, str]) -> None:
         with tempfile.NamedTemporaryFile(dir=path.parent, prefix=f".{path.name}.", delete=False) as stream:
             temporary = Path(stream.name)
             try:
+                try:
+                    mode = stat.S_IMODE(path.stat().st_mode)
+                except FileNotFoundError:
+                    mode = 0o644
                 stream.write(data)
                 stream.flush()
+                os.fchmod(stream.fileno(), mode)
                 os.fsync(stream.fileno())
             except BaseException:
                 temporary.unlink(missing_ok=True)
