@@ -18,6 +18,7 @@ import {
   placementLabel,
   proposalDecision,
   reusableMatches,
+  reuseCandidateLabel,
   reuseCandidates,
   tagDecision,
   type TagAction,
@@ -298,7 +299,8 @@ function TagCard({
 }) {
   const [placement, setPlacement] = useState(0);
   const candidates = reuseCandidates(tag);
-  const [reuseTagId, setReuseTagId] = useState<number | undefined>(candidates[0]?.tag_id);
+  // Nothing preselected: these are only the closest names, and most aren't the same concept.
+  const [reuseTagId, setReuseTagId] = useState<number | undefined>(undefined);
   const [reason, setReason] = useState("");
 
   function decide(action: TagAction) {
@@ -358,12 +360,13 @@ function TagCard({
               <Label htmlFor={`reuse-${tag.source.tag_id}`}>Or map it to an existing tag</Label>
               <NativeSelect
                 id={`reuse-${tag.source.tag_id}`}
-                value={reuseTagId}
-                onChange={(e) => setReuseTagId(Number(e.target.value))}
+                value={reuseTagId ?? ""}
+                onChange={(e) => setReuseTagId(e.target.value ? Number(e.target.value) : undefined)}
               >
+                <option value="">Choose a tag</option>
                 {candidates.map((candidate) => (
                   <option key={candidate.tag_id} value={candidate.tag_id}>
-                    {candidate.name} ({candidate.score.toFixed(2)})
+                    {reuseCandidateLabel(candidate)}
                   </option>
                 ))}
               </NativeSelect>
@@ -372,7 +375,7 @@ function TagCard({
           <Input aria-label={`Reason for ${tag.tag}`} placeholder="Reason (optional)" value={reason} onChange={(e) => setReason(e.target.value)} />
           <div className="flex flex-wrap gap-2">
             <Button size="sm" disabled={disabled || tag.placements.length === 0} onClick={() => decide("create")}>Create</Button>
-            <Button size="sm" variant="outline" disabled={disabled || candidates.length === 0 || tag.placements.length === 0} onClick={() => decide("reuse")}>Reuse existing</Button>
+            <Button size="sm" variant="outline" disabled={disabled || reuseTagId === undefined || tag.placements.length === 0} onClick={() => decide("reuse")}>Reuse existing</Button>
             <Button size="sm" variant="ghost" disabled={disabled} onClick={() => decide("exclude")}>Exclude</Button>
             <Button size="sm" variant="ghost" disabled={disabled} onClick={() => decide("defer")}>Defer</Button>
           </div>

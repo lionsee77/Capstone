@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import type { ReviewQueueProposal, ReviewQueueTag, RoundState } from "@/lib/api/schemas";
 import {
-  bulkTagDecisions, clampOffset, hasReviewQueue, placementLabel, proposalDecision, reusableMatches, reuseCandidates, roundCompareHref, tagDecision,
+  bulkTagDecisions, clampOffset, hasReviewQueue, placementLabel, proposalDecision, reusableMatches, reuseCandidateLabel, reuseCandidates, roundCompareHref, tagDecision,
 } from "@/lib/review";
 
 const place = (category: string) => ({ service: "Function", category, speciality: "Analytics", confidence: 0.6, reason: "Fits" });
@@ -48,6 +48,7 @@ describe("tagDecision", () => {
   it("gives nothing when the choice is incomplete", () => {
     expect(tagDecision(tag({ placements: [] }), "create")).toBeNull();
     expect(tagDecision(tag(), "reuse", { reuseTagId: 9 })).toBeNull();
+    expect(tagDecision(tag({ closest: [match("Acrobat", 9)] }), "reuse")).toBeNull();
   });
 
   it("carries no placement on an exclude or a defer, which the contract forbids", () => {
@@ -59,7 +60,15 @@ describe("tagDecision", () => {
 describe("reuseCandidates", () => {
   it("lists only matches that are one baseline tag, once each", () => {
     const candidates = reuseCandidates(tag({ closest: [match("A", 1, 0.9), match("A", 1, 0.7), match("B", null)] }));
-    expect(candidates).toEqual([{ tag_id: 1, name: "A", score: 0.9 }]);
+    expect(candidates).toEqual([{ tag_id: 1, name: "A", score: 0.9, basis: "semantic" }]);
+  });
+
+  it("says how each one matched, so a close spelling isn't mistaken for the same concept", () => {
+    const [meaning, spelling] = reuseCandidates(tag({
+      closest: [match("aws", 1, 0.67), { ...match("cash", 2, 0.75), basis: "lexical" }],
+    }));
+    expect(reuseCandidateLabel(meaning)).toBe("aws (similar meaning, 0.67)");
+    expect(reuseCandidateLabel(spelling)).toBe("cash (similar spelling, 0.75)");
   });
 });
 
