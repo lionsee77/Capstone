@@ -9,6 +9,7 @@ the reviewed parents, so the two can't drift apart.
 from __future__ import annotations
 
 from collections.abc import Sequence
+from typing import Literal
 
 from ..matching.names import normalize
 from ..taxonomy.base import TaxonomyDataset
@@ -44,8 +45,11 @@ def prepare_hierarchy_decisions(
     return [unique[key] for key in sorted(unique)]
 
 
+CreateBlocker = Literal["exact_match", "spelling_variant", "semantic_failed"]
+
+
 # An exact match that stops `create`: anything but a same-named speciality under another category.
-def _blocks_create(proposal: ScreenedProposal, match: ConceptMatch) -> bool:
+def blocks_create(proposal: ScreenedProposal, match: ConceptMatch) -> bool:
     if not EXACT_MATCH_TYPES & set(match.match_types):
         return False
     cross_parent_speciality = proposal.level == "speciality" and match.concept.level == "speciality" \
@@ -116,15 +120,25 @@ def _require_parent_resolved(proposal: ScreenedProposal, parent: ScreenedProposa
         raise ValueError(f"Resolve the parent before approving proposal {proposal.proposal_id}")
 
 
+def create_blocker(proposal: ScreenedProposal, held: set[str], semantic_failed: bool) -> CreateBlocker | None:
+    """What stops `create` for this proposal, if anything, shared by the check below and the review queue."""
+    if any(blocks_create(proposal, match) for match in proposal.matches):
+        return "exact_match"
+    if proposal.proposal_id in held:
+        return "spelling_variant"
+    return "semantic_failed" if semantic_failed else None
+
+
 def _check_create(proposal: ScreenedProposal, held: set[str], semantic_failed: bool) -> None:
     """`create` is refused for an exact equivalent in the same parent or level, an unresolved incoming
     spelling variant, or a failed requested semantic check. A same-named speciality under another category
     doesn't stop it: `integrate` allows cross-parent duplicate names too."""
-    if any(_blocks_create(proposal, match) for match in proposal.matches):
+    blocker = create_blocker(proposal, held, semantic_failed)
+    if blocker == "exact_match":
         raise ValueError(f"Cannot create proposal {proposal.proposal_id}: exact/equivalent match exists")
-    if proposal.proposal_id in held:
+    if blocker == "spelling_variant":
         raise ValueError(f"Cannot create proposal {proposal.proposal_id}: {proposal.reason}")
-    if semantic_failed:
+    if blocker == "semantic_failed":
         raise ValueError(f"Cannot create proposal {proposal.proposal_id}: requested semantic screening failed; "
                          "rerun merge-preview")
 

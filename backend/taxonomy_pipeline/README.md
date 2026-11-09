@@ -1737,7 +1737,7 @@ a hand-run round.
 | `PUT /rounds/{id}/config` | Save `{mapping, settings}`: imports the source and writes the round config |
 | `GET /rounds/{id}/config` | The generated round config, as text |
 | `POST /rounds/{id}/run` | Run or resume the stages before review, in the background |
-| `GET /rounds/{id}/review?state=&q=&offset=&limit=` | The review queue: `undecided`, `decided` or `all` tags, plus proposals |
+| `GET /rounds/{id}/review?state=&q=&offset=&limit=` | The review queue: `undecided`, `decided`, `held` or `all` tags, plus proposals |
 | `POST /rounds/{id}/decisions` | Save `{reviewer, decisions, clear_tags, clear_proposals}` |
 | `POST /rounds/{id}/bulk-decide` | Draft clear-cut decisions: `{reviewer, create_below, reuse_above}` |
 | `POST /rounds/{id}/apply` | Rebuild the merge preview with the saved decisions, in the background |
@@ -1768,7 +1768,7 @@ a hand-run round.
   earlier one on that tag or proposal. Saving only writes `rounds/<id>/decisions.json`. `apply`
   runs them through `merge-preview`, which has the last word: a decision it refuses fails the
   stage with the reason, and the saved decisions stay to be corrected. A `create` on a path
-  screening still blocks leaves the tag pending. `reviewer` is self-reported, like `--actor`, and
+  screening still blocks leaves the tag pending, listed under `held` until it gets another decision. A proposal's `create_blocked_reason` says when `create` would be refused. `reviewer` is self-reported, like `--actor`, and
   is what the audit history records. `bulk-decide` is the CLI's, and only drafts: its decisions are
   saved and can be changed before applying. It reads saved decisions, so apply yours first.
 - **Integrate** is refused while a tag is pending or decisions are unapplied. Deferred and

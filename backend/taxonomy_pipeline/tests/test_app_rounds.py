@@ -772,6 +772,43 @@ def test_a_round_without_a_preview_has_no_queue(roots: rounds.RoundRoots) -> Non
         rounds.get_review(roots, "r1")
 
 
+def test_a_decision_counts_as_held_only_once_a_preview_applied_it_and_left_the_tag_pending(
+    roots: rounds.RoundRoots, in_review: str,
+) -> None:
+    item = rounds.get_review(roots, in_review).tags[0]
+    rounds.save_decisions(roots, in_review, "Pat", [_create(item)])
+
+    assert rounds.get_review(roots, in_review).held == 0
+    assert rounds.get_review(roots, in_review, state="held").total == 0
+
+    rounds._write_queue(roots, rounds.get_round(roots, in_review))
+
+    assert rounds.get_review(roots, in_review).held == 1
+    assert [tag.tag for tag in rounds.get_review(roots, in_review, state="held").tags] == [item.tag]
+
+
+def test_changing_one_held_tag_leaves_the_others_held(roots: rounds.RoundRoots, in_review: str) -> None:
+    first, second = rounds.get_review(roots, in_review).tags[:2]
+    rounds.save_decisions(roots, in_review, "Pat", [_create(first), _create(second)])
+    rounds._write_queue(roots, rounds.get_round(roots, in_review))
+
+    rounds.save_decisions(roots, in_review, "Pat", [], clear_tags=[first.source])
+
+    assert [tag.tag for tag in rounds.get_review(roots, in_review, state="held").tags] == [second.tag]
+
+
+def test_a_new_decision_on_a_held_tag_is_not_held_until_a_preview_tries_it(
+    roots: rounds.RoundRoots, in_review: str,
+) -> None:
+    item = rounds.get_review(roots, in_review).tags[0]
+    rounds.save_decisions(roots, in_review, "Pat", [_create(item)])
+    rounds._write_queue(roots, rounds.get_round(roots, in_review))
+
+    rounds.save_decisions(roots, in_review, "Pat", [_create(item, reason="Thought again")])
+
+    assert rounds.get_review(roots, in_review).held == 0
+
+
 def test_a_saved_decision_moves_the_tag_and_needs_applying(roots: rounds.RoundRoots, in_review: str) -> None:
     before = rounds.get_review(roots, in_review)
     item = before.tags[0]
