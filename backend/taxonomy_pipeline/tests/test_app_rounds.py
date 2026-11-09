@@ -364,6 +364,26 @@ def test_new_parentless_tags_are_reported_when_llm_classification_is_off(
     assert case_b.summary in state.warnings
 
 
+def test_a_running_round_never_reads_as_idle_between_stages(
+    roots: rounds.RoundRoots, configured: str, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A dashboard stops polling when a round isn't running, so a gap between stages would freeze its page."""
+    real_save = rounds._save
+    seen = []
+
+    def recording(roots_: rounds.RoundRoots, state: rounds.RoundState) -> None:
+        real_save(roots_, state)
+        seen.append(state.status)
+
+    monkeypatch.setattr(rounds, "_save", recording)
+
+    _run(roots, configured)
+
+    assert len(seen) > 4
+    assert set(seen[:-1]) == {"running"}
+    assert seen[-1] in {"review", "ready_to_integrate"}
+
+
 def test_a_failed_stage_records_why_and_stops_the_round(
     roots: rounds.RoundRoots, configured: str, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
