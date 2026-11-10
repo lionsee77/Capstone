@@ -49,6 +49,7 @@ describe("matchLabel", () => {
     expect(matchLabel(match({ match_type: "variant" }))).toBe("Spelling variant");
     expect(matchLabel(match({ match_type: "lexical", lexical_score: 94.74 }))).toBe("Similar spelling (94.7 / 100)");
     expect(matchLabel(match({ match_type: "semantic", semantic_score: 0.7433 }))).toBe("Similar meaning (0.74 / 1)");
+    expect(matchLabel(match({ match_type: "synonym", synonym: "GST" }))).toBe('Approved synonym "GST"');
   });
 });
 

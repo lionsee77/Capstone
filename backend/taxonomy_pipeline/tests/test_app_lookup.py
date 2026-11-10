@@ -14,6 +14,9 @@ from taxonomy_pipeline.app import lookup
 from taxonomy_pipeline.matching.semantic import SemanticMatcher
 from tests.conftest import FIXTURES
 
+# Lookups read approved synonyms; never let them see the developer's real database.
+pytestmark = pytest.mark.usefixtures("isolated_db")
+
 ADDED_TAG = "INSERT INTO `tags` (`id`, `name`, `status`) VALUES (200, '{name}', '{status}');\n"
 
 
@@ -254,3 +257,50 @@ def test_only_the_current_snapshots_name_embeddings_are_kept_between_lookups(
     assert "second search" not in matcher._cache
     assert "Payroll" not in matcher._cache
     assert "Bookkeeping" in matcher._cache
+
+
+def _synonym(term: str, concept_id: str, concept_name: str, **scope: str) -> None:
+    from taxonomy_pipeline.synonyms import SynonymCreate, add_synonym
+
+    request = SynonymCreate(dataset="original", concept_level="tags", concept_id=concept_id, term=term,
+                            reason="test", **scope)
+    add_synonym(request, canonical_name=concept_name, snapshot_id="s")
+
+
+def test_an_approved_synonym_is_an_exact_match_flagged_with_the_synonym(round_with: Callable[..., Path]) -> None:
+    _synonym("Goods and Services Tax", "101", "gst")
+    result = lookup.lookup_term("goods and services tax.", round_with("r1"))
+
+    assert result.exists
+    [match] = result.exact
+    assert (match.id, match.name, match.match_type, match.synonym) == (101, "gst", "synonym", "Goods and Services Tax")
+    assert [path.speciality.name for path in match.paths] == ["Tax Advisory"]
+
+
+def test_a_concept_found_through_a_synonym_is_not_also_listed_as_near(round_with: Callable[..., Path]) -> None:
+    _synonym("Taxation", "100", "tax")
+    result = lookup.lookup_term("taxation", round_with("r1"), min_score=50)
+    assert [(m.id, m.match_type) for m in result.exact] == [(100, "synonym")]
+    assert 100 not in {m.id for m in result.near}
+
+
+def test_a_synonym_matches_spelling_variants_like_names_do(round_with: Callable[..., Path]) -> None:
+    _synonym("Goods and Services Tax", "101", "gst")
+    [match] = lookup.lookup_term("Goods & Services Tax.", round_with("r1")).exact
+    assert (match.id, match.match_type, match.synonym) == (101, "synonym", "Goods and Services Tax")
+
+
+def test_synonyms_that_do_not_fit_the_snapshot_or_need_a_scope_are_left_out(round_with: Callable[..., Path]) -> None:
+    _synonym("Goods tax", "102", "a different name")  # this snapshot's tag 102 isn't that concept
+    _synonym("Levy", "101", "gst", scope_level="specialities", scope_id="10")
+    root = round_with("r1")
+    assert not lookup.lookup_term("goods tax", root).exact
+    assert not lookup.lookup_term("levy", root).exact
+
+
+def test_synonyms_can_be_left_out_and_follow_the_level_filter(round_with: Callable[..., Path]) -> None:
+    _synonym("Goods and Services Tax", "101", "gst")
+    root = round_with("r1")
+    assert not lookup.lookup_term("goods and services tax", root, synonym_dataset=None).exact
+    assert not lookup.lookup_term("goods and services tax", root, level="categories").exact
+    assert lookup.lookup_term("goods and services tax", root, level="tags").exists
