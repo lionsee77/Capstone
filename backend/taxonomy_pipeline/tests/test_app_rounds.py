@@ -9,6 +9,7 @@ import pytest
 import yaml
 
 from taxonomy_pipeline.app import rounds
+from taxonomy_pipeline.app.lineage import taxonomy_lineage
 from taxonomy_pipeline.config import load_config
 from taxonomy_pipeline.enrichment.models import PlacementPath, ReviewDecision, SourceTagRef
 from taxonomy_pipeline.models import RoundSettings
@@ -198,6 +199,13 @@ def test_configuring_imports_the_source_and_writes_a_config_that_loads(
     assert "round_baseline" in rounds.round_config_text(roots, configured)
 
 
+def test_the_saved_mapping_comes_back_for_the_form(roots: rounds.RoundRoots, configured: str) -> None:
+    mapping = rounds.get_round(roots, configured).mapping
+
+    assert mapping["source"] == "flat.csv"
+    assert mapping["columns"]["tag"] == "Skill"
+
+
 def test_a_failed_mapping_keeps_the_last_good_import(roots: rounds.RoundRoots, configured: str) -> None:
     bad = _mapping(columns={"category": "Sector", "speciality": "Role", "tag": "Nope"})
 
@@ -207,6 +215,20 @@ def test_a_failed_mapping_keeps_the_last_good_import(roots: rounds.RoundRoots, c
     assert rounds.get_round(roots, configured).status == "ready"
     assert "Skill" in (roots.rounds / configured / "source" / "mapping.yaml").read_text("utf-8")
     load_config(roots.rounds / configured / "config.yaml")
+
+
+def test_a_source_cannot_take_the_finished_snapshots_name(roots: rounds.RoundRoots, configured: str) -> None:
+    with pytest.raises(ValueError, match="finished snapshot"):
+        rounds.configure_round(roots, configured, _mapping(name="enriched"), RoundSettings())
+
+    assert rounds.get_round(roots, configured).source_name == "demo"
+    assert not (roots.rounds / configured / "enriched_taxonomy.sql").exists()
+
+
+def test_a_source_name_merely_containing_enriched_is_fine(roots: rounds.RoundRoots, configured: str) -> None:
+    state = rounds.configure_round(roots, configured, _mapping(name="enriched_skills"), RoundSettings())
+
+    assert state.source_name == "enriched_skills"
 
 
 def test_a_mapping_can_only_name_files_in_this_round(roots: rounds.RoundRoots, configured: str, tmp_path: Path) -> None:
@@ -777,6 +799,40 @@ def test_integrating_writes_a_snapshot_scores_it_and_chains_into_the_next_round(
         rounds.start_integrate(roots, in_review)
     with pytest.raises(rounds.RoundConflict, match="already integrated"):
         rounds.save_decisions(roots, in_review, "Pat", [])
+
+
+def test_the_final_run_scores_baseline_and_snapshot_together_for_the_lineage(
+    roots: rounds.RoundRoots, in_review: str,
+) -> None:
+    _decide_all(roots, in_review)
+    _, stages = rounds.start_integrate(roots, in_review)
+    rounds.run_stages(roots, in_review, stages)
+    state = rounds.get_round(roots, in_review)
+
+    lineage = taxonomy_lineage(roots.integrations, roots.merge_runs)
+    chain = next(chain for chain in lineage.chains if in_review in chain.stages)
+    assert chain.runs == [state.enriched_run_id]
+    scored = next(run for run in lineage.runs if run.run_id == state.enriched_run_id).datasets
+    assert scored[in_review] == "enriched"
+    assert scored["base"] == "round_baseline"
+
+
+def test_a_labels_file_that_is_not_text_gets_a_readable_error(roots: rounds.RoundRoots, configured: str) -> None:
+    rounds.add_file(roots, configured, "labels.csv", b"\xff\xfe\x98 not utf-8")
+    mapping = _mapping(columns={
+        "category": {"column": "Sector", "prefix": 2, "labels": "labels.csv"}, "speciality": "Role", "tag": "Skill",
+    })
+
+    with pytest.raises(ValueError, match="CSV UTF-8"):
+        rounds.configure_round(roots, configured, mapping, RoundSettings())
+
+
+def test_a_table_that_is_not_utf8_says_how_to_fix_it_when_listed(roots: rounds.RoundRoots) -> None:
+    rounds.create_round(roots, "r1", "base")
+
+    uploaded = rounds.add_file(roots, "r1", "excel-export.csv", "Caf\u00e9,Tag\n".encode("latin-1"))
+
+    assert "CSV UTF-8" in uploaded.error
 
 
 def test_deferred_tags_stay_out_of_the_snapshot_without_holding_it_up(roots: rounds.RoundRoots, in_review: str) -> None:

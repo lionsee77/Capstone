@@ -7,8 +7,16 @@ import { StatusDot } from "@/components/run-status-badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { useRounds } from "@/lib/api/queries";
+import type { RoundState } from "@/lib/api/schemas";
 import { formatDateTime } from "@/lib/format";
 import { roundStatusLabel } from "@/lib/rounds";
+
+/** The dot only says what's plain from a word (running, stopped, finished); waiting states just get the words. */
+function RoundStatus({ round }: { round: RoundState }) {
+  const dot = round.status === "complete" ? "done" : round.status === "running" || round.status === "failed" ? round.status : null;
+  if (dot) return <StatusDot status={dot} />;
+  return <span className="text-sm text-muted-foreground">{roundStatusLabel(round.status)}</span>;
+}
 
 export function RoundsTable() {
   const { data, isPending, error } = useRounds();
@@ -54,10 +62,9 @@ export function RoundsTable() {
             <TableCell>{round.source_name ?? "Not set"}</TableCell>
             <TableCell>{round.baseline_snapshot}</TableCell>
             <TableCell>
-              <StatusDot status={round.status === "running" || round.status === "failed" ? round.status : "pending"} />
-              <span className="ml-2 text-sm text-muted-foreground">{roundStatusLabel(round.status)}</span>
+              <RoundStatus round={round} />
             </TableCell>
-            <TableCell>{formatDateTime(round.created_at)}</TableCell>
+            <TableCell className="whitespace-normal">{formatDateTime(round.created_at)}</TableCell>
           </TableRow>
         ))}
       </TableBody>

@@ -67,10 +67,11 @@ export function RoundDetail({ roundId }: { roundId: string }) {
 
 function RoundActions({ round }: { round: RoundState }) {
   const run = useRunRound(round.round_id);
+  const setupHref = `/sources/new?round=${encodeURIComponent(round.round_id)}`;
   if (round.status === "setup") {
     return (
-      <Notice title="This round isn't set up yet">
-        Finish it from <Link href="/sources/new" className="underline underline-offset-4">New round</Link>.
+      <Notice title="This round needs its source">
+        <Link href={setupHref} className="underline underline-offset-4">Add its files and settings</Link>.
       </Notice>
     );
   }
@@ -79,9 +80,12 @@ function RoundActions({ round }: { round: RoundState }) {
   if (hasReviewQueue(round)) return null;
   return (
     <div className="flex flex-col items-start gap-2">
-      <Button disabled={run.isPending} onClick={() => run.mutate()}>
-        {round.status === "failed" ? "Resume round" : "Run round"}
-      </Button>
+      <div className="flex items-center gap-3">
+        <Button disabled={run.isPending} onClick={() => run.mutate()}>
+          {round.status === "failed" ? "Resume round" : "Run round"}
+        </Button>
+        <Link href={setupHref} className="text-sm underline underline-offset-4">Change its files or settings</Link>
+      </div>
       {run.error && <p className="text-sm text-destructive">{run.error.message}</p>}
     </div>
   );

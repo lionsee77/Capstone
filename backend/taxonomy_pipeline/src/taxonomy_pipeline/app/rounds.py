@@ -35,8 +35,8 @@ from typing import Any
 
 import yaml
 
-from .. import env
-from ..config import load_config
+from .. import db, env
+from ..config import PipelineConfig, load_config
 from ..enrichment.lineage import file_fingerprint, read_rounds
 from ..enrichment.models import ReviewDecision, ReviewQueue, ReviewQueueEvidence, SourceTagRef
 from ..enrichment.review_queue import build_review_queue
@@ -55,11 +55,14 @@ from ..models import (
 )
 from ..taxonomy.flat_import import SourceMapping, inspect_table, sheet_names
 from . import enrichment as use_cases
-from .scoring import load_taxonomies, run_config, write_report
+from .scoring import load_taxonomies, run_config, run_pipeline, write_report
 from .sources import DEFAULT_TEMPLATE, ROUND_BASELINE, import_source
 
 ROUND_ID = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
 RESERVED_ROUND_IDS = {"options"}
+# What `integrate` calls the finished snapshot, unless a source already has the name. The round's comparison asks
+# for the snapshot by this name, so a source using it would be compared in the snapshot's place.
+RESERVED_SOURCE_NAME = "enriched"
 UPLOAD_SUFFIXES = {".csv", ".tsv", ".xlsx", ".xlsm"}
 MAX_UPLOAD_BYTES = 50 * 1024 * 1024
 MAX_FILES = 20
@@ -295,8 +298,16 @@ def _describe(path: Path, sheet: str | None) -> RoundFile:
         described.sheets = sheet_names(path)
         described.columns, described.row_count, described.samples = inspect_table(path, sheet)
     except (OSError, ValueError, KeyError, zipfile.BadZipFile) as exc:
-        described.error = str(exc)
+        described.error = _read_error(path.name, exc)
     return described
+
+
+def _read_error(name: str, exc: Exception) -> str:
+    """Why a file can't be read, in the words of someone who has to fix it."""
+    if isinstance(exc, UnicodeDecodeError):
+        return (f"can't read a text file as UTF-8 ({name}, or the labels file it uses). Check it's the right file, "
+                "and save a spreadsheet export as \"CSV UTF-8\".")
+    return f"can't read {name}: {exc}"
 
 
 def configure_round(
@@ -316,6 +327,8 @@ def _configure(
     roots: RoundRoots, state: RoundState, mapping: SourceMapping, settings: RoundSettings,
 ) -> RoundState:
     _check_llm(settings)
+    if mapping.name == RESERVED_SOURCE_NAME:
+        raise ValueError(f"a source can't be named {RESERVED_SOURCE_NAME!r}: the finished snapshot uses that name")
     round_id = state.round_id
     directory = roots.directory(round_id)
     source = directory / SOURCE_DIR
@@ -351,8 +364,9 @@ def _configure(
                 mapping_path.unlink(missing_ok=True)
             else:
                 mapping_path.write_bytes(previous_mapping)
-            if isinstance(exc, zipfile.BadZipFile | KeyError):  # a corrupt workbook, or a sheet it doesn't have
-                raise ValueError(f"can't read {mapping.source}: {exc}") from exc
+            # A corrupt workbook, a sheet it doesn't have, or a text file that isn't UTF-8.
+            if isinstance(exc, zipfile.BadZipFile | KeyError | UnicodeDecodeError):
+                raise ValueError(_read_error(mapping.source, exc)) from exc
             raise
         _discard_progress(roots, round_id)
         for path in staging.iterdir():
@@ -368,6 +382,7 @@ def _configure(
 
     state = _reset_stages(state)
     state.source_name, state.settings = imported.name, settings
+    state.mapping = mapping.model_dump(mode="json", exclude_none=True)
     state.import_counts, state.warnings = imported.counts, imported.warnings
     stage = _stage(state, "import")
     stage.status, stage.finished_at = "done", utcnow()
@@ -736,11 +751,24 @@ def _integrate(roots: RoundRoots, state: RoundState) -> tuple[str, str]:
 
 
 def _score_enriched(roots: RoundRoots, state: RoundState) -> tuple[str, str]:
-    _, report = run_config(roots.integrations / state.round_id / "enriched.yaml")
+    """Score the baseline and the snapshot in one run, so comparing them is like for like by construction.
+
+    It's also what `/lineage` needs to show this round on the Improvement page: a run scoring two of its stages.
+    """
+    before = load_config(_config_path(roots, state.round_id))
+    after = load_config(roots.integrations / state.round_id / "enriched.yaml")
+    known = {dataset.name for dataset in before.datasets}
+    config = PipelineConfig(
+        metric_definitions_version=before.metric_definitions_version,
+        datasets=[*before.datasets, *(dataset for dataset in after.datasets if dataset.name not in known)],
+        metrics=[*before.metrics, *(metric for metric in after.metrics if metric not in before.metrics)],
+    )
+    report = run_pipeline(config)
+    db.save_run(report, config_json=config.model_dump_json())
     state.enriched_run_id = report.run_id
     if report.status != "done":
         raise ValueError(report.error or "the scoring run failed")
-    return "done", "Scored the enriched taxonomy with the round's metrics"
+    return "done", "Scored the baseline and the enriched taxonomy together, like for like"
 
 
 _HANDLERS = {

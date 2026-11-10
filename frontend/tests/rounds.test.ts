@@ -12,7 +12,7 @@ const round = (status: RoundState["status"]): RoundState => roundStateSchema.par
     add_candidate_lexical_threshold: null, add_candidate_semantic_threshold: null,
   },
   stages: [{ id: "score", status: "done", ...stage }],
-  warnings: [], import_counts: { tags: 1 }, merge_counts: {}, pending_sources: 0, decisions_applied: true,
+  mapping: null, warnings: [], import_counts: { tags: 1 }, merge_counts: {}, pending_sources: 0, decisions_applied: true,
   reviewer: null, score_run_id: null, enriched_run_id: null, status,
 });
 

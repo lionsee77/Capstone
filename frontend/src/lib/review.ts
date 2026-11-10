@@ -85,11 +85,11 @@ export function proposalDecision(
   return { ...base, reason: written || defaults[action] };
 }
 
-/** The dashboard's comparison of the taxonomy before and after this round, once both are scored. */
+/** The dashboard's comparison of the taxonomy before and after this round: one run scored both. */
 export function roundCompareHref(round: RoundState): string | null {
-  if (!round.score_run_id || !round.enriched_run_id) return null;
+  if (!round.enriched_run_id) return null;
   const params = new URLSearchParams({
-    before: round.score_run_id, before_subject: "round_baseline",
+    before: round.enriched_run_id, before_subject: "round_baseline",
     after: round.enriched_run_id, after_subject: "enriched",
   });
   return `/compare?${params}`;

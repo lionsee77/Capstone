@@ -1772,6 +1772,7 @@ a hand-run round.
   `labels` must name files uploaded to this round. A mapping that fails (422 with the
   reason) leaves the last good import in place. Saving a new one discards later progress,
   including decisions, because they described the old source.
+- A source can't be named `enriched`, because that names the finished snapshot in the round's comparison.
 - **`settings`** has `judge`, `case_b` and saturation's `threshold`, `semantic_threshold`,
   `add_candidate_lexical_threshold` and `add_candidate_semantic_threshold`. Unset values keep the
   template's (`configs/original_vs_skillsfuture.yaml`). Nothing else can be set, so a
@@ -1791,9 +1792,10 @@ a hand-run round.
   is what the audit history records. `bulk-decide` is the CLI's, and only drafts: its decisions are
   saved and can be changed before applying. It reads saved decisions, so apply yours first.
 - **Integrate** is refused while a tag is pending or decisions are unapplied. Deferred and
-  excluded tags don't hold it up, and they aren't in the snapshot. It then scores the snapshot with
-  the round's metrics, so `score_run_id` and `enriched_run_id` can be compared through
-  `GET /runs/{before}/compare/{after}?before_subject=round_baseline&after_subject=enriched`.
+  excluded tags don't hold it up, and they aren't in the snapshot. It then scores the baseline and
+  the snapshot in one run (`enriched_run_id`), so they compare like for like through
+  `GET /runs/{id}/compare/{id}?before_subject=round_baseline&after_subject=enriched`, and the round
+  appears on the dashboard's Improvement page. With the judge on, that scoring uses it again.
 - **Changing files:** replacing or removing a file the imported mapping reads, with different
   contents, sends the round back to `setup` and discards what was built from it, including saved
   decisions. Import it again to continue; the saved mapping stays. Uploading the same bytes again, or a

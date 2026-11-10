@@ -14,6 +14,11 @@ verdict on screen is the API's.
 
 ## Pages
 
+- **New enrichment round** (`/sources/new`) - start a round on a chosen snapshot, drop its
+  file or folder, map its columns and set its options, then import and run it. Columns come
+  from the uploaded file, with sample values, so nothing is typed from memory. Importing shows
+  counts and warnings, and shows any mapping error from the API in place. LLM steps can only be
+  ticked when the server allows them, and ticking one says it will spend credits.
 - **Enrichment rounds** (`/rounds`, `/rounds/{id}`) - one new source brought into
   the taxonomy: each stage's status, summary and error, updating while it runs, with
   buttons to run, resume or remove the round and the generated config. Reads `/rounds`.
@@ -22,7 +27,9 @@ verdict on screen is the API's.
   defers it, one at a time or across a selected page, or drafts the clear-cut ones first.
   Decisions are saved at once, then applied together, because `merge-preview` rebuilds the
   whole preview to check them (about 25 seconds for O*NET). Then "Generate enriched snapshot"
-  integrates and scores the round, and links to its before-and-after comparison.
+  integrates and scores the round, and links to its before-and-after comparison. That one
+  run scores both versions, so the round also appears on the Improvement page as a two-stage
+  comparison. Earlier stages show as not scored until a whole-chain run covers them.
 - **Tag lookup** (`/lookup`) - check whether a term already exists before proposing
   it. It reads `GET /lookup`, so it needs no run: the result names the snapshot it
   checked (the newest one under `integrations/`). Shown: a verdict, then exact and
@@ -240,9 +247,8 @@ CI runs all four. See the `frontend` job in `.github/workflows/ci.yml`.
   from a snapshot. So it's a live view of those files, not of that run: an
   edit to a dataset file changes results for the same run immediately,
   with no new run needed - the run is only how you pick which files.
-- **New data source flow:** the store, schema, and `useCreateRun` mutation are
-  ready, but the form isn't built yet. Dataset paths must be absolute
-  *server-side* paths, so uploading a file from the browser would need a new
-  upload endpoint.
+- **Source shapes:** a round imports one flat table per source. Files from a dropped folder
+  are stored flat under their own names, so a later file with the same name replaces an earlier one.
+- **`source-draft-store`** was written for an earlier plan and isn't used by the new-round form.
 - **Run reports** render each metric's `details` as raw JSON for now. Saturation
   curves and breadth coverage still need proper charts.
