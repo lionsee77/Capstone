@@ -48,7 +48,8 @@ def case_a(
     config_path: str | Path, report: str | Path, *, baseline: str, incoming: str, output: str | Path,
     semantic_model: str | None = None, category_scoped_semantic_threshold: float | None = None,
     one_category_per_tag: bool = False, group_new_specialities_threshold: float | None = None,
-    flag_single_tag_specialities: bool = False,
+    flag_single_tag_specialities: bool = False, group_name_model: str | None = None,
+    group_name_cache: str | Path | None = None,
 ) -> list[dict[str, Any]]:
     """Place the incoming tags saturation routed to Case A and write them to `output`."""
     records = run_case_a(
@@ -58,6 +59,7 @@ def case_a(
         one_category_per_tag=one_category_per_tag,
         group_new_specialities_threshold=group_new_specialities_threshold,
         flag_single_tag_specialities=flag_single_tag_specialities,
+        group_name_model=group_name_model, group_name_cache=group_name_cache,
     )
     Path(output).write_text(json.dumps(records, indent=2, ensure_ascii=False), encoding="utf-8")
     return records

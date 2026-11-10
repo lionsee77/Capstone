@@ -138,23 +138,31 @@ def _other_categories_reason(placement: dict[str, Any]) -> str:
 
 
 def _speciality_group_reason(placement: dict[str, Any]) -> str:
-    """How `group_new_specialities_threshold` and `flag_single_tag_specialities` shaped the new speciality."""
+    """How grouping, naming and `flag_single_tag_specialities` shaped the new speciality (#132)."""
     reason = ""
     size = placement.get("speciality_group_size")
     if size:
         others = size - 1
+        central = placement.get("speciality_group_central_tag")
+        if placement.get("speciality_name_source") == "generated":
+            named = (f"named '{placement['target_speciality_name']}' by {placement.get('speciality_name_model')} "
+                     "from all its tags; check the name before approving")
+        else:
+            named = f"named after its most central tag, '{central}'"
+            if placement.get("speciality_name_fallback"):
+                named += f" ({placement['speciality_name_fallback']})"
         if placement.get("speciality_group_leader"):
             sample = ", ".join(repr(name) for name in placement.get("speciality_group_sample") or [])
             more = ", ..." if others > len(placement.get("speciality_group_sample") or []) else ""
             reason += (
-                f" Groups {size} new tags close in meaning as one speciality named after this tag, the one closest "
-                f"to the most others (with {sample}{more})."
+                f" Groups {size} new tags close in meaning as one speciality, {named}. This tag is the most "
+                f"central; the others include {sample}{more}."
             )
         else:
             reason += (
-                f" Grouped with {others} other new tag{'' if others == 1 else 's'} close in meaning under new "
-                f"speciality '{placement['target_speciality_name']}', named after the tag closest to the most "
-                f"others (semantic {placement.get('speciality_group_score')} to it)."
+                f" Grouped with {others} other new tag{'' if others == 1 else 's'} close in meaning "
+                f"(semantic {placement.get('speciality_group_score')} to '{central}') under one new speciality, "
+                f"{named}."
             )
     if placement.get("single_tag_speciality"):
         reason += (
@@ -305,9 +313,11 @@ def build_classification_outputs(placements: list[dict[str, Any]], source_datase
                 speciality=speciality,
                 confidence=confidence,
                 reason=reason,
-                # The contract allows the flag only on a placement; a single-tag
-                # flag is only ever set on one (see _flag_single_tag_specialities).
-                needs_review=bool(placement.get("single_tag_speciality")) and category is not None,
+                # The contract allows the flag only on a placement. A single-tag
+                # flag or a generated name is only ever set on one.
+                needs_review=bool(
+                    placement.get("single_tag_speciality") or placement.get("speciality_name_source") == "generated"
+                ) and category is not None,
             )
         )
     return records

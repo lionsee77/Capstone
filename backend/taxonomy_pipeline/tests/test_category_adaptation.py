@@ -649,6 +649,7 @@ def test_groups_review_candidates_only_on_each_tags_first_candidate_category():
     def candidate(tag_id, name, category_id, rank):
         return {"tag_id": tag_id, "tag_name": name, "placement_basis": "review_candidate",
                 "speciality_action": "NEW_SPECIALITY", "candidate_category_id": category_id, "candidate_rank": rank,
+                "candidate_category_name": f"Category {category_id}",
                 "target_speciality_id": f"skillsfuture:tag:{tag_id}", "target_speciality_name": name}
 
     placements = [
@@ -666,3 +667,72 @@ def test_groups_review_candidates_only_on_each_tags_first_candidate_category():
         ("loan processing", 1): "loan approval", ("loan approval", 1): "loan approval",
         ("loan processing", 2): "loan processing", ("loan approval", 2): "loan approval",
     }
+
+
+class _FakeNamer:
+    """Names each group from `names` in order; records what it was asked."""
+
+    instances: list["_FakeNamer"] = []
+    names: list[str | None] = []
+
+    def __init__(self, model, *, cache_path=None):
+        self.model, self.cache_path, self.groups = model, cache_path, []
+        _FakeNamer.instances.append(self)
+
+    def name(self, groups):
+        self.groups.extend(groups)
+        return list(_FakeNamer.names[: len(groups)])
+
+
+def _named_run(monkeypatch, names, tag_names, **params):
+    monkeypatch.setattr(category_adaptation, "SemanticMatcher", _ScopedMatcher)
+    monkeypatch.setattr(category_adaptation, "LLMGroupNamer", _FakeNamer)
+    _FakeNamer.instances, _FakeNamer.names = [], names
+    return _run_on(_banking_tags_datasets(tag_names), list(tag_names), semantic_model="test-model",
+                   group_new_specialities_threshold=0.6, group_name_model="gpt-test", **params)
+
+
+def test_names_a_group_from_all_its_tags_and_holds_the_name_for_review(monkeypatch):
+    result = _named_run(monkeypatch, ["Loan Origination"], {9001: "loan processing", 9004: "loan approval"},
+                        group_name_cache="names.json")
+
+    namer, = _FakeNamer.instances
+    assert (namer.model, namer.cache_path) == ("gpt-test", "names.json")
+    assert [(g.category, g.tags) for g in namer.groups] == [("Banking", ("loan approval", "loan processing"))]
+    for placement in result.details["placements"]:
+        assert placement["target_speciality_name"] == "Loan Origination"
+        assert placement["speciality_name_source"] == "generated" and placement["needs_review"] is True
+    assert "(1 named by the model)" in result.summary
+
+
+def test_falls_back_to_the_central_tag_when_the_generated_name_already_exists(monkeypatch):
+    result = _named_run(monkeypatch, ["retail banking"], {9001: "loan processing", 9004: "loan approval"})
+
+    placement = result.details["placements"][0]
+    assert placement["target_speciality_name"] == "loan approval"
+    assert placement["speciality_name_source"] == "central_tag"
+    assert placement["speciality_name_fallback"] == "the generated name 'retail banking' already exists"
+    assert placement["needs_review"] is False
+
+
+def test_falls_back_when_the_generated_name_repeats_another_new_speciality(monkeypatch):
+    # "mortgage advice" stays a one-tag speciality named after itself; the group can't take that name.
+    result = _named_run(monkeypatch, ["Mortgage Advice"],
+                        {9001: "loan processing", 9004: "loan approval", 9005: "mortgage advice"})
+
+    assert _speciality_by_tag(result)["loan processing"] == "loan approval"
+
+
+def test_falls_back_when_no_usable_name_came_back(monkeypatch):
+    result = _named_run(monkeypatch, [None], {9001: "loan processing", 9004: "loan approval"})
+
+    placement = result.details["placements"][0]
+    assert placement["target_speciality_name"] == "loan approval"
+    assert placement["speciality_name_fallback"] == "no usable name came back"
+
+
+def test_naming_groups_needs_grouping_on():
+    result = _run([9001], group_name_model="gpt-test")
+
+    assert result.status == "error"
+    assert "set group_new_specialities_threshold too" in result.summary

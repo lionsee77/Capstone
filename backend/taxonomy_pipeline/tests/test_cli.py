@@ -710,3 +710,7 @@ def test_case_a_passes_its_placement_options_through_and_refuses_scoped_search_w
     assert main(["case-a", "--config", str(config_path), "--report", str(report), "--semantic-model", "",
                  "--group-new-specialities-threshold", "0.6", "--output", str(output)]) == 1
     assert "group_new_specialities_threshold needs a semantic_model" in capsys.readouterr().err
+
+    assert main(["case-a", "--config", str(config_path), "--report", str(report), "--semantic-model", "",
+                 "--group-name-model", "gpt-test", "--output", str(output)]) == 1
+    assert "set group_new_specialities_threshold too" in capsys.readouterr().err

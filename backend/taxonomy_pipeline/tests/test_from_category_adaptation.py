@@ -322,21 +322,41 @@ def _new_speciality(**overrides):
 
 
 def test_grouped_tag_joins_the_group_speciality_and_says_which_tag_names_it():
-    member = _new_speciality(
-        target_speciality_name="loan approval", speciality_group_size=3, speciality_group_leader=False,
-        speciality_group_score=0.72,
-    )
-    leader = _new_speciality(
-        tag_id=9004, tag_name="loan approval", target_speciality_name="loan approval", speciality_group_size=3,
-        speciality_group_leader=True, speciality_group_sample=["loan processing", "loan review"],
-    )
+    group = {"target_speciality_name": "loan approval", "speciality_group_size": 3,
+             "speciality_group_central_tag": "loan approval", "speciality_name_source": "central_tag"}
+    member = _new_speciality(**group, speciality_group_leader=False, speciality_group_score=0.72)
+    leader = _new_speciality(**group, tag_id=9004, tag_name="loan approval", speciality_group_leader=True,
+                             speciality_group_sample=["loan processing", "loan review"])
 
     member_record, leader_record = build_classification_outputs([member, leader], source_dataset="skillsfuture")
 
     assert member_record.speciality == "loan approval" and member_record.needs_review is False
-    assert "Grouped with 2 other new tags close in meaning under new speciality 'loan approval'" in member_record.reason
-    assert "(semantic 0.72 to it)" in member_record.reason
+    assert "Grouped with 2 other new tags close in meaning (semantic 0.72 to 'loan approval')" in member_record.reason
+    assert "named after its most central tag, 'loan approval'" in member_record.reason
     assert "Groups 3 new tags" in leader_record.reason and "'loan review'" in leader_record.reason
+
+
+def test_generated_group_name_is_held_for_review_and_credits_the_model():
+    record, = build_classification_outputs([_new_speciality(
+        target_speciality_name="Loan Origination", speciality_group_size=2,
+        speciality_group_central_tag="loan approval",
+        speciality_name_source="generated", speciality_name_model="gpt-test", speciality_group_leader=False,
+        speciality_group_score=0.7, needs_review=True,
+    )], source_dataset="skillsfuture")
+
+    assert record.speciality == "Loan Origination" and record.needs_review is True
+    assert "named 'Loan Origination' by gpt-test from all its tags; check the name" in record.reason
+
+
+def test_says_why_a_group_fell_back_to_its_central_tag_name():
+    record, = build_classification_outputs([_new_speciality(
+        target_speciality_name="loan approval", speciality_group_size=2, speciality_group_central_tag="loan approval",
+        speciality_name_source="central_tag", speciality_name_fallback="the generated name 'Retail Banking' already "
+        "exists", speciality_group_leader=False, speciality_group_score=0.7,
+    )], source_dataset="skillsfuture")
+
+    assert record.needs_review is False
+    assert "(the generated name 'Retail Banking' already exists)" in record.reason
 
 
 def test_single_tag_speciality_flag_holds_the_record_for_review():

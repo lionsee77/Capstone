@@ -27,7 +27,7 @@ never uses source specialities as placement targets. It asks what the tag
 A resolved placement always carries both a category and a speciality, as the
 classification output contract (CLASSIFICATION_OUTPUT_CONTRACT.md) requires.
 
-Four opt-in params (#132) cut the one-tag and repeated specialities step 2
+Five opt-in params (#132) cut the one-tag and repeated specialities step 2
 creates; all are off by default, so the output is unchanged unless a round
 asks for them:
 
@@ -49,9 +49,11 @@ asks for them:
   candidate) are grouped by meaning. Each group becomes one new speciality, named after
   its most central tag: the tag with the most others at or above this cosine
   threshold. Every member is within the threshold of that tag, so names can't
-  drift along a chain of near neighbours. Naming after a member tag is the
-  simple stand-in until the team picks a naming rule; a generated name would
-  replace only `_group_new_specialities`'s choice of `target_speciality_name`.
+  drift along a chain of near neighbours.
+- `group_name_model` (with `group_name_cache`): name each group from all its
+  tags with this chat model instead of after its central tag, and hold the
+  generated name for review. The rule and its fallbacks are in
+  `speciality_names`.
 - `flag_single_tag_specialities`: a new speciality still holding only its own
   tag after all of the above is flagged `needs_review`, so it can't be
   integrated unseen. It adds a review item; it doesn't change depth.
@@ -74,6 +76,7 @@ from ..matching.semantic import SemanticMatcher, SimilarityMatcher
 from ..models import MetricResult
 from ..quality.base import Metric
 from ..taxonomy.base import Hierarchy, LoadedDataset, TaxonomyDataset
+from .speciality_names import GroupNamer, GroupNamingError, LLMGroupNamer, SpecialityGroup
 
 NEW_CATEGORY = "NEW_CATEGORY"
 NEW_SPECIALITY = "NEW_SPECIALITY"
@@ -306,18 +309,24 @@ def _group_key(placement: dict[str, Any]) -> Any:
 
 def _group_new_specialities(
     placements: list[dict[str, Any]], semantic_matcher: SimilarityMatcher, threshold: float, incoming_name: str,
+    *, namer: GroupNamer | None = None, existing_names: frozenset[str] = frozenset(),
 ) -> int:
-    """Point the tags of each group at one new speciality named after the group's leader tag.
+    """Point the tags of each group at one new speciality, and name it.
 
     Grouping is per category (`_group_key`), on distinct tags, so a tag reaching
-    one category twice is grouped once. Returns how many groups were formed.
+    one category twice is grouped once. The name is the leader tag's unless
+    `namer` gives a usable one that repeats neither `existing_names` (normalized
+    baseline speciality names) nor another new speciality (see
+    `speciality_names`). Returns how many groups were formed.
     """
     tags_by_key: dict[Any, dict[Any, str]] = {}
+    category_names: dict[Any, str] = {}
     for placement in placements:
         key = _group_key(placement)
         if key is not None and is_valid_name(placement.get("tag_name")):
             tags_by_key.setdefault(key, {})[placement["tag_id"]] = str(placement["tag_name"])
-    assignment: dict[tuple[Any, Any], dict[str, Any]] = {}
+            category_names[key] = str(placement.get("candidate_category_name") or placement["target_category_name"])
+    groups: list[tuple[Any, Any, list[tuple[Any, float]]]] = []  # (key, leader tag id, [(member id, score)])
     for key, tags in sorted(tags_by_key.items(), key=lambda item: str(item[0])):
         if len(tags) < 2:
             continue
@@ -325,24 +334,49 @@ def _group_new_specialities(
         names = [normalize(tags[tag_id]) for tag_id in tag_ids]
         similarity = np.asarray(semantic_matcher.similarity(names, names))
         for leader, members in _leader_groups(names, similarity, threshold):
-            leader_id = tag_ids[leader]
-            group = {
-                "target_speciality_id": f"{incoming_name}:tag:{leader_id}",
-                "target_speciality_name": tags[leader_id],
-                "speciality_group_size": len(members) + 1,
-                "speciality_group_sample": [tags[tag_ids[index]] for index in members[:EVIDENCE_SAMPLE]],
-            }
-            assignment[(key, leader_id)] = {**group, "speciality_group_leader": True}
-            for index in members:
-                assignment[(key, tag_ids[index])] = {
-                    **group, "speciality_group_leader": False,
-                    "speciality_group_score": round(float(similarity[index, leader]), 4),
-                }
+            groups.append((key, tag_ids[leader], [
+                (tag_ids[index], round(float(similarity[index, leader]), 4)) for index in members
+            ]))
+
+    generated: list[str | None] = [None] * len(groups)
+    if namer is not None and groups:
+        generated = namer.name([
+            SpecialityGroup(category_names[key], (tags_by_key[key][leader], *(tags_by_key[key][m] for m, _ in members)))
+            for key, leader, members in groups
+        ])
+    grouped = {(key, tag_id) for key, leader, members in groups for tag_id in (leader, *(m for m, _ in members))}
+    taken = set(existing_names) | {
+        normalize(str(placement["target_speciality_name"])) for placement in placements
+        if _group_key(placement) is not None and (_group_key(placement), placement["tag_id"]) not in grouped
+    }
+    assignment: dict[tuple[Any, Any], dict[str, Any]] = {}
+    for (key, leader_id, members), name in zip(groups, generated, strict=True):
+        tags = tags_by_key[key]
+        group: dict[str, Any] = {
+            "target_speciality_id": f"{incoming_name}:tag:{leader_id}",
+            "target_speciality_name": tags[leader_id],
+            "speciality_group_size": len(members) + 1,
+            "speciality_group_central_tag": tags[leader_id],
+            "speciality_group_sample": [tags[member_id] for member_id, _ in members[:EVIDENCE_SAMPLE]],
+            "speciality_name_source": "central_tag",
+        }
+        if namer is not None:
+            if name is not None and normalize(name) not in taken:
+                group.update(target_speciality_name=name, speciality_name_source="generated",
+                             speciality_name_model=namer.model, needs_review=True)
+            else:
+                group["speciality_name_fallback"] = (
+                    "no usable name came back" if name is None else f"the generated name {name!r} already exists"
+                )
+        taken.add(normalize(str(group["target_speciality_name"])))
+        assignment[(key, leader_id)] = {**group, "speciality_group_leader": True}
+        for member_id, score in members:
+            assignment[(key, member_id)] = {**group, "speciality_group_leader": False, "speciality_group_score": score}
     for placement in placements:
         key = _group_key(placement)
         if key is not None and (key, placement["tag_id"]) in assignment:
             placement.update(assignment[(key, placement["tag_id"])])
-    return sum(1 for group in assignment.values() if group["speciality_group_leader"])
+    return len(groups)
 
 
 def _flag_single_tag_specialities(placements: list[dict[str, Any]]) -> int:
@@ -394,6 +428,8 @@ class CategoryAdaptationMetric(Metric):
         "one_category_per_tag": False,
         "group_new_specialities_threshold": None,
         "flag_single_tag_specialities": False,
+        "group_name_model": None,
+        "group_name_cache": None,
     }
 
     def run(self, datasets: dict[str, LoadedDataset], params: dict[str, Any]) -> MetricResult:
@@ -472,6 +508,17 @@ class CategoryAdaptationMetric(Metric):
                 metric_id=self.id, status="error",
                 summary="group_new_specialities_threshold needs a semantic_model: it groups by meaning only",
             )
+        namer: GroupNamer | None = None
+        if p["group_name_model"]:
+            if group_threshold is None:
+                return MetricResult(
+                    metric_id=self.id, status="error",
+                    summary="group_name_model names grouped specialities; set group_new_specialities_threshold too",
+                )
+            try:
+                namer = LLMGroupNamer(str(p["group_name_model"]), cache_path=p["group_name_cache"])
+            except GroupNamingError as exc:
+                return MetricResult(metric_id=self.id, status="error", summary=str(exc))
 
         settings = {
             "threshold": threshold,
@@ -653,11 +700,21 @@ class CategoryAdaptationMetric(Metric):
                         "target_speciality_name": tag_name,
                     })
 
-        groups = (
-            _group_new_specialities(placements, semantic_matcher, group_threshold, incoming.name)
-            if group_threshold is not None and semantic_matcher is not None else 0
-        )
+        try:
+            groups = (
+                _group_new_specialities(
+                    placements, semantic_matcher, group_threshold, incoming.name, namer=namer,
+                    existing_names=frozenset(normalize(str(row.get("name"))) for row in baseline.specialities),
+                )
+                if group_threshold is not None and semantic_matcher is not None else 0
+            )
+        except GroupNamingError as exc:
+            return MetricResult(metric_id=self.id, status="error", summary=str(exc))
         flagged = _flag_single_tag_specialities(placements) if flag_single_tag else 0
+        named = sum(
+            1 for placement in placements
+            if placement.get("speciality_group_leader") and placement.get("speciality_name_source") == "generated"
+        )
 
         basis_counts = Counter(placement.get("placement_basis", NO_SOURCE_CATEGORY) for placement in placements)
         action_counts = Counter(placement["action"] for placement in placements)
@@ -669,6 +726,7 @@ class CategoryAdaptationMetric(Metric):
             + "; actions "
             + ", ".join(f"{action}={count}" for action, count in sorted(action_counts.items()))
             + (f"; {groups} new-speciality groups" if group_threshold is not None else "")
+            + (f" ({named} named by the model)" if namer is not None else "")
             + (f"; {flagged} single-tag placements flagged" if flag_single_tag else "")
         )
         return MetricResult(
