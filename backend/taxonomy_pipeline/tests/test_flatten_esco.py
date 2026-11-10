@@ -59,34 +59,44 @@ def raw(tmp_path: Path) -> Path:
     return folder
 
 
-def test_joins_occupations_and_skills_into_one_row_per_essential_link(raw: Path) -> None:
+def test_joins_occupations_and_skills_into_one_row_per_link_keeping_its_relation_type(raw: Path) -> None:
     result = flatten_esco.flatten(raw)
 
     assert result.rows == [
         {"isco_group": "2511", "occupation": "data scientist", "skill": "Python (computer programming)",
-         "skill_description": "A programming language."},
-        {"isco_group": "7512", "occupation": "baker", "skill": "bake bread", "skill_description": ""},
+         "skill_description": "A programming language.", "relation_type": "essential"},
+        {"isco_group": "2511", "occupation": "data scientist", "skill": "statistics",
+         "skill_description": "The study of data.", "relation_type": "optional"},
+        {"isco_group": "7512", "occupation": "baker", "skill": "bake bread", "skill_description": "",
+         "relation_type": "essential"},
     ]
-    assert result.links_read == 3 and result.links_filtered_out == 1
+    assert result.links_read == 3
 
 
-def test_keeps_optional_links_when_asked_for_both_relation_types(raw: Path) -> None:
-    result = flatten_esco.flatten(raw, ("essential", "optional"))
-
-    assert {(row["occupation"], row["skill"]) for row in result.rows} == {
-        ("data scientist", "Python (computer programming)"), ("data scientist", "statistics"), ("baker", "bake bread"),
-    }
-
-
-def test_keeps_every_link_of_a_pre_filtered_export_without_a_relation_type_column(raw: Path) -> None:
+def test_fills_the_relation_type_of_a_pre_filtered_export_only_when_told_to(raw: Path) -> None:
     _write(raw / "occupationSkillRelations_en.csv", ["occupationUri", "skillUri"], [
         [f"{OCC}a", f"{SKILL}1"], [f"{OCC}a", f"{SKILL}2"],
     ])
 
-    result = flatten_esco.flatten(raw)
+    blank = flatten_esco.flatten(raw)
+    assumed = flatten_esco.flatten(raw, assume_relation_type="essential")
 
-    assert len(result.rows) == 2 and not result.relation_type_column
-    assert "no relationType column" in result.notes[0]
+    assert {row["relation_type"] for row in blank.rows} == {""} and not blank.relation_type_column
+    assert "keeps no rows" in blank.notes[0]
+    assert {row["relation_type"] for row in assumed.rows} == {"essential"}
+
+
+def test_refuses_to_assume_a_relation_type_the_export_already_has(raw: Path) -> None:
+    with pytest.raises(ValueError, match="has a relationType column"):
+        flatten_esco.flatten(raw, assume_relation_type="essential")
+
+
+def test_refuses_a_repeated_link_whose_relation_type_differs(raw: Path) -> None:
+    with (raw / "occupationSkillRelations_en.csv").open("a", encoding="utf-8", newline="") as stream:
+        csv.writer(stream).writerow([f"{OCC}a", "optional", f"{SKILL}1"])
+
+    with pytest.raises(ValueError, match=r"Relations_en\.csv:5: link .* repeats line 2 as 'optional'"):
+        flatten_esco.flatten(raw)
 
 
 def test_drops_an_exactly_repeated_occupation_or_skill_row(raw: Path) -> None:
@@ -97,8 +107,18 @@ def test_drops_an_exactly_repeated_occupation_or_skill_row(raw: Path) -> None:
 
     result = flatten_esco.flatten(raw)
 
-    assert result.repeated_skills == 1 and result.repeated_occupations == 1
-    assert len(result.rows) == 2
+    assert result.skills.repeats == 1 and result.occupations.repeats == 1
+    assert result.skills.repeats_differing_elsewhere == 0
+    assert len(result.rows) == 3
+
+
+def test_drops_a_repeat_that_differs_only_in_a_column_the_join_ignores_and_counts_it(raw: Path) -> None:
+    with (raw / "occupations_en.csv").open("a", encoding="utf-8", newline="") as stream:
+        csv.writer(stream).writerow([f"{OCC}b", "baker", "7512", "a newer description"])
+
+    result = flatten_esco.flatten(raw)
+
+    assert result.occupations.repeats == 1 and result.occupations.repeats_differing_elsewhere == 1
 
 
 def test_refuses_a_repeated_uri_whose_data_differs(raw: Path) -> None:
@@ -106,6 +126,17 @@ def test_refuses_a_repeated_uri_whose_data_differs(raw: Path) -> None:
         csv.writer(stream).writerow([f"{SKILL}3", "bake pastry", ""])
 
     with pytest.raises(ValueError, match=r"skills_en\.csv:5: conceptUri .*3 repeats line 4 with different data"):
+        flatten_esco.flatten(raw)
+
+
+def test_names_file_lines_not_record_numbers_after_a_multi_line_field(raw: Path) -> None:
+    _write(raw / "skills_en.csv", ["conceptUri", "preferredLabel", "altLabels"], [
+        [f"{SKILL}1", "Python (computer programming)", "python\nPython 3\npy"],  # lines 2-4
+        [f"{SKILL}2", "statistics", ""],                                          # line 5
+        [f"{SKILL}1", "Python", ""],                                              # line 6
+    ])
+
+    with pytest.raises(ValueError, match=r"skills_en\.csv:6: conceptUri .*1 repeats line 2 with different data"):
         flatten_esco.flatten(raw)
 
 
@@ -119,7 +150,7 @@ def test_skips_links_to_unknown_concepts_and_repeated_links(raw: Path) -> None:
     result = flatten_esco.flatten(raw)
 
     assert result.repeated_links == 1 and result.dangling_links == 2
-    assert len(result.rows) == 2
+    assert len(result.rows) == 3
 
 
 def test_refuses_an_occupation_without_a_four_digit_isco_unit_group(raw: Path) -> None:
@@ -140,7 +171,7 @@ def test_command_writes_the_flat_csv_and_fails_cleanly_on_a_bad_export(raw: Path
     assert flatten_esco.main(["--raw", str(raw)]) == 0
     with (raw / "esco_flat.csv").open(encoding="utf-8") as stream:
         assert list(csv.DictReader(stream))[0]["occupation"] == "data scientist"
-    assert "wrote 2 occupation-skill rows" in capsys.readouterr().out
+    assert "wrote 3 occupation-skill rows" in capsys.readouterr().out
 
     (raw / "skills_en.csv").unlink()
     assert flatten_esco.main(["--raw", str(raw)]) == 1
@@ -156,6 +187,7 @@ def test_committed_mapping_imports_the_flat_table_under_isco_major_groups(raw: P
 
     result = import_source(source / "esco_mapping.yaml")
 
+    # The mapping's filter, not the script, drops the optional data scientist -> statistics link.
     assert result.counts == {"categories": 2, "specialities": 2, "tags": 2, "speciality_tags": 2}
     dump = (source / "esco_taxonomy.sql").read_text(encoding="utf-8")
     assert "(1000, 'Craft and related trades workers', 2, '1')" in dump

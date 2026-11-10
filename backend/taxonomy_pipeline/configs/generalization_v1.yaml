@@ -79,10 +79,16 @@ metrics:
   - {id: breadth, params: {<<: *breadth, target: onet}}
   - {id: breadth, params: {<<: *breadth, target: esco}}
 
-  # Each incoming source is compared against the original plus every earlier
-  # source, so O*NET and ESCO are each judged against everything before them.
+  # Side check, NOT definitions v1: count O*NET's and ESCO's own categories as
+  # industry candidates (their mappings put them under Function, service 2).
+  - {id: breadth, params: {<<: *breadth, target: onet, industry_service_id: 2}}
+  - {id: breadth, params: {<<: *breadth, target: esco, industry_service_id: 2}}
+
+  # Cumulative curve: each incoming source is compared against the original plus
+  # every earlier source, so O*NET and ESCO face far more known concepts than
+  # SkillsFuture does. Use it for "how much does each source still add".
   - id: saturation
-    params:
+    params: &saturation
       baseline: original
       incoming: [skillsfuture, onet, esco]
       threshold: 90
@@ -95,3 +101,9 @@ metrics:
       add_candidate_semantic_threshold: 0.50
       cross_level: true
       judge: null
+
+  # Like-for-like: each source against the original alone, so all three face the
+  # same known concepts. Use these to compare how the thresholds behave across
+  # sources (step 1 of the curve above is already SkillsFuture against the original).
+  - {id: saturation, params: {<<: *saturation, incoming: [onet]}}
+  - {id: saturation, params: {<<: *saturation, incoming: [esco]}}

@@ -24,7 +24,7 @@ taxonomy_pipeline/
 │   └── baseline_v1.json.gz           #   the original taxonomy scored with definitions v1
 ├── configs/                          # pipeline configs
 │   ├── baseline_v1.yaml              #   pinned config that produced baselines/baseline_v1.json.gz
-│   ├── generalization_v1.yaml        #   original, SkillsFuture, O*NET and ESCO scored with definitions v1 (#101)
+│   ├── generalization_v1.yaml        #   original, SkillsFuture, O*NET and ESCO scored with definitions v1, plus labelled side checks (#101)
 │   ├── lineage_scorecard.yaml        #   every enrichment stage scored in one run, judge on (/lineage reads it)
 │   └── original_vs_skillsfuture.yaml #   classification rounds: scores both taxonomies, saturation judge on
 ├── docs/                             # design notes and future-work references

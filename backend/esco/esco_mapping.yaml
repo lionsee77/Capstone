@@ -10,6 +10,11 @@ columns:
   speciality: occupation             # e.g. technical director
   tag: skill                         # e.g. manage musical staff
   tag_description: skill_description # empty unless the export kept skills_en.csv's description column
+# ESCO marks each link essential or optional; flatten_esco.py keeps both and this
+# keeps essential only, the closer match to "this occupation's tags". Add
+# optional to the list to import both.
+filters:
+  relation_type: essential
 # ISCO major groups are occupational functions, not industries (same as O*NET's
 # SOC major groups), so every category goes under the baseline's "Function" service (id 2).
 service_id: 2
