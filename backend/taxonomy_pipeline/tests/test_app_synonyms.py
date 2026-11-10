@@ -9,7 +9,7 @@ import yaml
 from taxonomy_pipeline.app import synonyms as use_cases
 from taxonomy_pipeline.audit import ChangeQuery, read_changes
 from taxonomy_pipeline.cli import main
-from taxonomy_pipeline.synonyms import SynonymCreate, SynonymQuery, UnknownConcept
+from taxonomy_pipeline.synonyms import ConflictingSynonym, InvalidScope, SynonymCreate, SynonymQuery, UnknownConcept
 from tests.conftest import FIXTURES
 
 
@@ -87,6 +87,31 @@ def test_cli_reports_a_refused_synonym_and_exits_non_zero(
     assert "[FAILED] synonym-add" in capsys.readouterr().err
 
 
+def test_a_global_synonym_that_is_another_concepts_name_is_refused_but_a_scoped_one_is_kept(
+    isolated_db: Path, config: Path,
+) -> None:
+    # mini_original: tag 100 "tax" and tag 103 "advisory" both sit in speciality 10 (category 1, Accounting).
+    with pytest.raises(ConflictingSynonym, match="already the name of tag 100"):
+        use_cases.add_synonym(_request(concept_id="103", term="Tax"), config_path=config)
+    assert not use_cases.list_synonyms(SynonymQuery()).synonyms
+    scoped = use_cases.add_synonym(
+        _request(concept_id="103", term="Tax", scope_level="specialities", scope_id="10"), config_path=config,
+    )
+    assert scoped.scope == ("specialities", "10")
+
+
+def test_a_scope_the_concept_is_not_in_is_refused(isolated_db: Path, config: Path) -> None:
+    with pytest.raises(InvalidScope, match="doesn't sit inside category 3"):
+        use_cases.add_synonym(_request(scope_level="categories", scope_id="3"), config_path=config)
+
+
+def test_cli_adds_a_scoped_synonym(isolated_db: Path, config: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    assert main(["synonym-add", "--config", str(config), "--level", "tags", "--concept-id", "103",
+                 "--term", "tax", "--reason", "Means advisory in Tax Advisory", "--scope-level", "specialities",
+                 "--scope-id", "10"]) == 0
+    assert "within specialities 10" in capsys.readouterr().out
+
+
 @pytest.mark.parametrize("text", ["datasets: [unclosed", "datasets: not-a-list\nmetrics: []"])
 def test_a_broken_config_is_reported_as_unavailable_not_as_a_missing_concept(
     isolated_db: Path, tmp_path: Path, text: str, capsys: pytest.CaptureFixture[str],
@@ -110,3 +135,26 @@ def test_a_dataset_whose_file_is_gone_is_unavailable(isolated_db: Path, tmp_path
                                       "metrics": [{"id": "integrity", "params": {"dataset": "original"}}]}))
     with pytest.raises(TaxonomyUnavailable, match="couldn't be loaded"):
         use_cases.add_synonym(_request(), config_path=config)
+
+
+def test_synonym_check_lists_synonyms_stored_before_the_ambiguity_rules(
+    isolated_db: Path, config: Path, capsys: pytest.CaptureFixture[str],
+) -> None:
+    from taxonomy_pipeline.synonyms import add_synonym as store_add
+
+    for concept_id, name in (("101", "gst"), ("102", "unused-tag")):  # what #59 allowed: one term, two concepts
+        store_add(_request(concept_id=concept_id, term="Levy"), canonical_name=name, snapshot_id="s")
+    problems = use_cases.synonym_problems("original", config_path=config)
+    assert sorted((p.concept_id, p.problem) for p in problems) == [
+        ("101", "ambiguous: a global synonym of 2 concepts"), ("102", "ambiguous: a global synonym of 2 concepts"),
+    ]
+    assert main(["synonym-check", "--config", str(config)]) == 1
+    assert "[FLAGGED] 2 synonym problem(s)" in capsys.readouterr().out
+
+
+def test_adding_checks_only_against_synonyms_that_still_fit(isolated_db: Path, config: Path) -> None:
+    from taxonomy_pipeline.synonyms import add_synonym as store_add
+
+    # A synonym recorded for tag 102 under a name it no longer has doesn't block "Levy" for tag 101.
+    store_add(_request(concept_id="102", term="Levy"), canonical_name="old name", snapshot_id="s")
+    assert use_cases.add_synonym(_request(term="Levy"), config_path=config).concept_id == "101"

@@ -1,8 +1,10 @@
-"""Synonym use cases shared by the CLI (`synonym-add`, `synonym-remove`, `synonyms`) and `/synonyms`.
+"""Synonym use cases shared by the CLI (`synonym-add`, `synonym-remove`, `synonyms`, `synonym-check`)
+and the `/synonyms` routes.
 
 Adding a synonym first checks the concept exists in the named taxonomy, found either
 through a config file (the CLI) or through a past run's config (the API, the same
-way `/taxonomy` resolves a dataset). The synonym records that taxonomy's snapshot
+way `/taxonomy` resolves a dataset), then that the term won't become ambiguous
+(`SynonymIndex.check_new`, #61). The synonym records that taxonomy's snapshot
 fingerprint, so its audit event identifies exactly which version of the concept it
 was checked against. Neither path writes to a taxonomy file.
 
@@ -21,10 +23,13 @@ from ..enrichment.resolution import taxonomy_snapshot_id
 from ..synonyms import (
     Synonym,
     SynonymCreate,
+    SynonymIndex,
     SynonymList,
+    SynonymProblem,
     SynonymQuery,
     TaxonomyUnavailable,
     UnknownConcept,
+    approved_synonyms,
     concept_name,
 )
 from ..synonyms import add_synonym as store_add
@@ -41,11 +46,18 @@ def add_synonym(request: SynonymCreate, *, config_path: str | Path | None = None
     Give exactly one of `config_path` (a pipeline config declaring `request.dataset`)
     or `run_id` (a past run that loaded it). Raises UnknownConcept when the run, dataset
     or concept doesn't exist, TaxonomyUnavailable when it can't be loaded, RetiredConcept
-    for a retired concept, and SynonymError for a refused term.
+    for a retired concept, ConflictingSynonym when the term already means another concept
+    where it would apply, InvalidScope for a scope the concept isn't in, and SynonymError
+    for any other refused term.
     """
     taxonomy = _taxonomy(request.dataset, config_path=config_path, run_id=run_id)
     name = concept_name(taxonomy, request.concept_level, request.concept_id)
-    return store_add(request, canonical_name=name, snapshot_id=taxonomy_snapshot_id(taxonomy))
+    index = SynonymIndex(taxonomy)  # built before the store takes its write lock
+
+    def check(same_term: list[Synonym]) -> None:
+        index.check_new(request, same_term)
+
+    return store_add(request, canonical_name=name, snapshot_id=taxonomy_snapshot_id(taxonomy), check=check)
 
 
 def remove_synonym(synonym_id: str, *, reason: str, actor: str = "unspecified") -> Synonym:
@@ -57,6 +69,15 @@ def remove_synonym(synonym_id: str, *, reason: str, actor: str = "unspecified") 
 def list_synonyms(query: SynonymQuery) -> SynonymList:
     """One page of synonyms matching the query's filters, without loading any taxonomy."""
     return store_list(query)
+
+
+def synonym_problems(dataset: str, *, config_path: str | Path | None = None,
+                     run_id: str | None = None) -> list[SynonymProblem]:
+    """`dataset`'s approved synonyms that don't resolve as recorded against its taxonomy (found as for
+    `add_synonym`): stale ones (concept gone, renamed or moved out of scope), and global synonyms that are
+    another concept's name or that two concepts share, e.g. from before the #61 rules existed."""
+    taxonomy = _taxonomy(dataset, config_path=config_path, run_id=run_id)
+    return SynonymIndex(taxonomy, approved_synonyms(dataset)).problems()
 
 
 def _taxonomy(dataset: str, *, config_path: str | Path | None, run_id: str | None) -> TaxonomyDataset:

@@ -51,6 +51,9 @@ def test_adds_lists_and_removes_a_synonym(run_id: str) -> None:
     ({"term": "gst"}, 422),
     ({"term": "   "}, 422),
     ({"concept_level": "services"}, 422),
+    ({"concept_id": "103", "term": "tax"}, 409),  # already the name of tag 100: needs a scope
+    ({"scope_level": "categories", "scope_id": "3"}, 422),  # gst sits in category 1, not 3
+    ({"scope_level": "categories"}, 422),
 ])
 def test_refused_requests_return_client_errors(run_id: str, changes: dict, status: int) -> None:
     with TestClient(app) as client:
@@ -107,3 +110,14 @@ def test_remove_and_list_map_store_errors_instead_of_500(run_id: str, isolated_d
             connection.execute("UPDATE taxonomy_synonym_schema SET version = 99")
         assert client.post("/synonyms", json=_body(run_id, term="GST levy")).status_code == 503
         assert client.post("/synonyms/x/remove", json={"reason": "x"}).status_code == 503
+
+
+def test_problems_lists_stale_or_ambiguous_synonyms_of_a_runs_dataset(run_id: str) -> None:
+    from taxonomy_pipeline.synonyms import SynonymCreate, add_synonym
+
+    add_synonym(SynonymCreate(dataset="original", concept_level="tags", concept_id="101", term="Levy",
+                              reason="old"), canonical_name="renamed since", snapshot_id="s")
+    with TestClient(app) as client:
+        body = client.get("/synonyms/problems", params={"run_id": run_id, "dataset": "original"}).json()
+        assert [p["problem"] for p in body] == ["stale: its concept is now named 'gst'"]
+        assert client.get("/synonyms/problems", params={"run_id": "missing", "dataset": "original"}).status_code == 404

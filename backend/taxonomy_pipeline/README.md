@@ -51,7 +51,8 @@ taxonomy_pipeline/
 │   │   ├── judge.py                  #   optional LLM judge (OpenAI Decisions API) for saturation's ambiguous concepts
 │   │   └── engine.py                 #   the comparison engine saturation and Case A share
 │   ├── synonyms/                     # PB07: other names for existing concepts, stored beside the taxonomy
-│   │   ├── models.py                 #   SynonymCreate, Synonym, SynonymQuery, SynonymList contracts
+│   │   ├── models.py                 #   SynonymCreate, Synonym, SynonymQuery, SynonymList, Resolution contracts
+│   │   ├── resolver.py               #   SynonymIndex: what a term means (scopes, ambiguity) and check_new (#61)
 │   │   └── store.py                  #   SQLite table + audit event per change; concept_name check
 │   ├── quality/                      # pluggable quality checks that score one taxonomy
 │   │   ├── base.py                   #   Metric ABC (run; measures for comparisons)
@@ -1966,7 +1967,9 @@ curl -H "Authorization: Bearer $TAXONOMY_API_TOKEN" -H "Content-Type: applicatio
 `synonym-add` finds the concept through `--config` (default `configs/baseline_v1.yaml`)
 and `--dataset` (default `original`). `POST /synonyms` takes a past run's `run_id`
 instead, the way `/taxonomy` finds a dataset, because the API doesn't read callers'
-config files. Levels are `categories`, `specialities` and `tags`.
+config files. Levels are `categories`, `specialities` and `tags`. Add
+`--scope-level`/`--scope-id` (or `scope_level`/`scope_id` in the body) for a scoped
+synonym, below.
 
 Rules:
 
@@ -1975,10 +1978,12 @@ Rules:
 - **No duplicates.** Terms are compared by `match_key` (stored as `term_key`): case,
   spacing, trailing punctuation, `&`/`and`, `-isation`/`-ization` and a trailing plural,
   so "JS tag", "js tags" and " JS tag. " are one synonym. Adding one already approved for
-  that concept is refused (409 over HTTP); so is the concept's own name or a spelling of
-  it ("Audits" for *audit*), and a term with no letters or digits or a placeholder
-  ("test", "new") (422). Another concept's name, or the same term on two concepts, is
-  refused once #61 lands.
+  that concept in the same scope is refused (409 over HTTP); so is the concept's own name
+  or a spelling of it ("Audits" for *audit*), and a term with no letters or digits or a
+  placeholder ("test", "new") (422).
+- **A global synonym can't have two meanings** (#61). It is refused (409) when the term
+  is already another concept's name, or another concept's global synonym. A word that
+  means different things in different branches must be scoped instead.
 - **The concept must exist and be active.** An unknown run, dataset or concept ID is
   refused (404) before anything is written, and so is a dataset whose config can't be
   read or whose files can't be loaded (404, with the loading error). A retired concept
@@ -1997,8 +2002,53 @@ Rules:
   the concept was checked against. Read them with `taxonomy-pipeline changes
   --action synonym_add`.
 
-What isn't built yet: lookups and scoring don't use synonyms (#60); scoped synonyms and
-ambiguity checks (#61); suggested synonyms from external sources (ESCO, O*NET, spelling
+#### Scopes and ambiguity (#61)
+
+A synonym is **global**, or **scoped** to one category or speciality the concept sits
+in: "pitch" can mean the tag *Sales Pitch* only inside the *Sales* category, while
+elsewhere it still means the tag *Pitch*.
+
+```bash
+# illustrative IDs: tag 100 "Sales Pitch" sits under category 1 "Sales"
+taxonomy-pipeline synonym-add --level tags --concept-id 100 --term Pitch \
+    --scope-level categories --scope-id 1 --reason "Sales jargon" --actor david
+```
+
+The scope must be a branch the concept sits in: for a tag, a speciality it is linked
+to or that speciality's category; for a speciality, its category. A category can't be
+scoped. Two concepts can't share a synonym in the same scope (409).
+
+`SynonymIndex.resolve(term, level=..., within=...)` (`synonyms/resolver.py`) says what a
+term means for a lookup made inside branch `within`. Candidates come in tiers, most
+specific first, and the first tier with any candidate decides:
+
+1. synonyms scoped to the lookup's branch (a speciality's scope before its category's);
+2. concept names;
+3. global synonyms.
+
+Terms compare by `match_key`, like stored synonyms. The result is `resolved` (one
+concept), `ambiguous` (several in the deciding tier, all listed once, none chosen: two
+rows sharing a name are ambiguous too) or `unknown`. Each match says whether it came
+`via` the concept's name or a synonym, and which synonym. Removed synonyms never
+resolve. `within` may be a category, speciality or tag (its branches), given as a string
+or integer ID; an unknown one is refused rather than treated as "no branch".
+
+A stored synonym only applies where it still fits the taxonomy: its concept exists with
+the name the synonym was recorded against, and a scoped one's concept still sits in its
+scope. One that doesn't fit (renamed, removed, moved) is set aside instead of resolving
+to the wrong concept, and doesn't block new synonyms. Synonyms from before these rules
+(#59 allowed one term on two concepts) can also be shadowed by a name or ambiguous.
+`synonym-check` (or `GET /synonyms/problems?run_id=...&dataset=...`) lists every such
+synonym with the reason, and exits 1 when there is any:
+
+```bash
+taxonomy-pipeline synonym-check            # configs/baseline_v1.yaml, dataset original
+``` Lookups start using this in #60.
+
+The table's schema is now version 2 (scope columns). A version 1 table from #59 is
+migrated on the next write, and its synonyms become global.
+
+What isn't built yet: lookups and scoring don't use synonyms (#60); suggested synonyms from external sources (ESCO, O*NET, spelling
 variants), which will arrive as `proposed` rows a reviewer approves or rejects. The
 `synonyms` context sits between `quality` and `matching`, so when #60 lands, the approved
 mappings are passed into matching as data rather than matching importing this context.
