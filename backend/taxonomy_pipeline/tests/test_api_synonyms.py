@@ -80,3 +80,33 @@ def test_synonym_routes_require_the_api_token(monkeypatch: pytest.MonkeyPatch, i
         assert client.get("/synonyms").status_code == 401
         assert client.post("/synonyms", json={}).status_code == 401
         assert client.get("/synonyms", headers={"Authorization": "Bearer test-secret"}).status_code == 200
+
+
+def test_a_runs_dataset_whose_file_has_moved_is_404_not_500(run_id: str, tmp_path: Path) -> None:
+    from taxonomy_pipeline.config import PipelineConfig
+
+    moved = tmp_path / "moved.sql"
+    moved.write_text((FIXTURES / "mini_original.sql").read_text(encoding="utf-8"), encoding="utf-8")
+    config = PipelineConfig.model_validate({
+        "datasets": [{"name": "original", "paths": [str(moved)]}],
+        "metrics": [{"id": "integrity", "params": {"dataset": "original"}}],
+    })
+    report = run_pipeline(config)
+    db.save_run(report, config_json=config.model_dump_json())
+    moved.unlink()
+    with TestClient(app) as client:
+        response = client.post("/synonyms", json=_body(report.run_id))
+    assert response.status_code == 404 and "couldn't be loaded" in response.json()["detail"]
+
+
+def test_remove_and_list_map_store_errors_instead_of_500(run_id: str, isolated_db: Path) -> None:
+    import sqlite3
+    from contextlib import closing
+
+    with TestClient(app) as client:
+        assert client.post("/synonyms/%20/remove", json={"reason": "x"}).status_code == 404
+        assert client.post("/synonyms", json=_body(run_id)).status_code == 201
+        with closing(sqlite3.connect(isolated_db)) as connection, connection:
+            connection.execute("UPDATE taxonomy_synonym_schema SET version = 99")
+        assert client.post("/synonyms", json=_body(run_id, term="GST levy")).status_code == 503
+        assert client.post("/synonyms/x/remove", json={"reason": "x"}).status_code == 503

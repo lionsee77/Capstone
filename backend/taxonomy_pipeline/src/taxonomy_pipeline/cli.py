@@ -1,5 +1,5 @@
 """`taxonomy-pipeline run|check-comparable|compare|serve|import-source|case-a|case-b|merge-preview|
-review-proposals|bulk-decide|integrate|lookup|synonyms|synonym-add|synonym-remove`
+review-proposals|bulk-decide|integrate|lookup|synonyms|synonym-add|synonym-remove|synonym-check`
 
 A thin adapter over `app/`: each command parses its flags, calls the one use
 case behind it (`app.scoring` for `run` and `check-comparable`, `app.comparison` for `compare`,
@@ -317,6 +317,20 @@ def _cmd_synonym_add(args: argparse.Namespace) -> int:
     return 0
 
 
+# List stored synonyms that don't resolve as recorded, through the same use case as GET /synonyms/problems.
+def _cmd_synonym_check(args: argparse.Namespace) -> int:
+    try:
+        problems = synonym_cases.synonym_problems(args.dataset, config_path=args.config)
+    except (OSError, ValueError, sqlite3.Error) as exc:
+        print(f"[FAILED] synonym-check: {exc}", file=sys.stderr)
+        return 1
+    for problem in problems:
+        print(f"[WARN] {problem.term!r} -> {problem.concept_name!r} ({problem.concept_level} {problem.concept_id}, "
+              f"synonym {problem.synonym_id}): {problem.problem}")
+    print(f"[{'OK' if not problems else 'FLAGGED'}] {len(problems)} synonym problem(s) in {args.dataset}")
+    return 1 if problems else 0
+
+
 # Remove one synonym through the same use case as POST /synonyms/{id}/remove.
 def _cmd_synonym_remove(args: argparse.Namespace) -> int:
     try:
@@ -497,6 +511,10 @@ def build_parser() -> argparse.ArgumentParser:
     synonym_remove.add_argument("--reason", required=True, help="why it is removed (kept in the audit log)")
     synonym_remove.add_argument("--actor", default="unspecified", help="self-reported identity for the audit log")
     synonym_remove.set_defaults(func=_cmd_synonym_remove)
+    synonym_check = subparsers.add_parser("synonym-check", help="list synonyms that are stale, shadowed or ambiguous")
+    synonym_check.add_argument("--config", default="configs/baseline_v1.yaml", help="config declaring --dataset")
+    synonym_check.add_argument("--dataset", default="original")
+    synonym_check.set_defaults(func=_cmd_synonym_check)
 
     # check whether a term already exists before proposing it
     lookup = subparsers.add_parser("lookup", help="check a term against the newest integrated snapshot")

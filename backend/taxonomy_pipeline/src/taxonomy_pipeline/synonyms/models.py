@@ -70,6 +70,8 @@ class Synonym(_Scoped):
     synonym_id: Text
     term: Text
     normalized_term: Text
+    # `match_key(term)`: what duplicates and lookups compare, so "Audits" is the same term as "audit" (#59).
+    term_key: Text
     dataset: Text
     concept_level: SynonymLevel
     concept_id: Text
@@ -108,8 +110,8 @@ class SynonymList(BaseModel):
     synonyms: list[Synonym]
 
 
-class ResolvedConcept(BaseModel):
-    """One concept a term resolved to, and how: by the concept's own name or through a synonym."""
+class ResolvedConcept(_Scoped):
+    """One concept a term resolved to, and how: by the concept's own name or through a synonym (and its scope)."""
 
     model_config = ConfigDict(frozen=True)
 
@@ -119,8 +121,6 @@ class ResolvedConcept(BaseModel):
     via: Literal["name", "synonym"]
     synonym_id: str | None = None
     synonym_term: str | None = None
-    scope_level: ScopeLevel | None = None
-    scope_id: str | None = None
 
 
 class Resolution(BaseModel):

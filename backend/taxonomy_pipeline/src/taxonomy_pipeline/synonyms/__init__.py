@@ -17,20 +17,25 @@ from .models import (
     SynonymList,
     SynonymQuery,
 )
-from .resolver import ConflictingSynonym, InvalidScope, SynonymIndex
+from .resolver import ConflictingSynonym, InvalidScope, SynonymIndex, SynonymProblem
 from .store import (
     DuplicateSynonym,
+    RetiredConcept,
     SynonymError,
     SynonymNotFound,
+    TaxonomyUnavailable,
     UnknownConcept,
+    UnsupportedSchema,
     add_synonym,
+    approved_synonyms,
     concept_name,
     list_synonyms,
     remove_synonym,
 )
 
 __all__ = [
-    "ConflictingSynonym", "DuplicateSynonym", "InvalidScope", "Resolution", "ResolvedConcept", "ScopeLevel",
-    "Synonym", "SynonymCreate", "SynonymError", "SynonymIndex", "SynonymLevel", "SynonymList", "SynonymNotFound",
-    "SynonymQuery", "UnknownConcept", "add_synonym", "concept_name", "list_synonyms", "remove_synonym",
+    "ConflictingSynonym", "DuplicateSynonym", "InvalidScope", "Resolution", "ResolvedConcept", "RetiredConcept",
+    "ScopeLevel", "Synonym", "SynonymCreate", "SynonymError", "SynonymIndex", "SynonymLevel", "SynonymList",
+    "SynonymNotFound", "SynonymProblem", "SynonymQuery", "TaxonomyUnavailable", "UnknownConcept",
+    "UnsupportedSchema", "add_synonym", "approved_synonyms", "concept_name", "list_synonyms", "remove_synonym",
 ]

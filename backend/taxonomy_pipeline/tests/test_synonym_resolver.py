@@ -5,7 +5,7 @@ from datetime import UTC, datetime
 
 import pytest
 
-from taxonomy_pipeline.matching.names import normalize
+from taxonomy_pipeline.matching.names import match_key, normalize
 from taxonomy_pipeline.synonyms import ConflictingSynonym, InvalidScope, Synonym, SynonymCreate, SynonymIndex
 from taxonomy_pipeline.taxonomy.base import TaxonomyDataset
 
@@ -29,7 +29,8 @@ NAMES = {("tags", "100"): "Sales Pitch", ("tags", "200"): "Pitch", ("tags", "201
 def synonym(term: str, level: str, concept_id: str, scope: tuple[str, str] | None = None,
             status: str = "approved") -> Synonym:
     return Synonym(
-        synonym_id=f"{term}-{concept_id}-{scope}", term=term, normalized_term=normalize(term), dataset="original",
+        synonym_id=f"{term}-{concept_id}-{scope}", term=term, normalized_term=normalize(term), term_key=match_key(term),
+        dataset="original",
         concept_level=level, concept_id=concept_id, concept_name=NAMES[(level, concept_id)], snapshot_id="s",
         status=status, source="manual", reason="test", actor="test", created_at=datetime(2026, 11, 8, tzinfo=UTC),
         scope_level=scope[0] if scope else None, scope_id=scope[1] if scope else None,
