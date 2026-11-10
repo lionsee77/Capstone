@@ -78,6 +78,16 @@ def _ensure_schema(connection: sqlite3.Connection) -> None:
         connection.execute("INSERT INTO taxonomy_audit_schema (singleton, version) VALUES (1, ?)", (SCHEMA_VERSION,))
 
 
+# Let another governance store share one write transaction with the audit log.
+def ensure_schema(connection: sqlite3.Connection) -> None:
+    """Create or adopt the audit schema on `connection`, committing before the caller's own transaction.
+
+    Call it before `BEGIN IMMEDIATE` when passing that connection to `log_change`, so a
+    governance change and its audit event commit or roll back together.
+    """
+    _ensure_schema(connection)
+
+
 # Insert one validated event through the shared writer, optionally in an operation's transaction.
 def log_change(
     event: ChangeEvent, *, db_path: Path | str | None = None, connection: sqlite3.Connection | None = None,

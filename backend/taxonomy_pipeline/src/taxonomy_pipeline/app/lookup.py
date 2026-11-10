@@ -10,6 +10,16 @@ the snapshot so a caller can see which version answered.
 A lookup runs on every keystroke of the dashboard's form, so a snapshot's parsed rows
 and name folds are kept between calls. They are keyed by file contents, so a new
 round, or an edited one, is picked up without a restart.
+
+Approved global synonyms count as exact matches (`match_type: "synonym"`, #60). They
+are read live from the synonym store for `synonym_dataset` (default `original`, the
+taxonomy synonyms are recorded against), only those whose term key (`match_key`, as
+for names) is the query's, through the store's index, so each keystroke reads a few rows.
+A snapshot keeps the baseline's IDs, since `integrate` only inserts, but a synonym only
+applies where its concept ID still has the name it was recorded with, so a mismatched
+snapshot never gets a wrong match.
+Scoped synonyms need the branch a term is used in, which a lookup doesn't have, so
+they don't apply here; `synonym-resolve --within-...` answers that question.
 """
 from __future__ import annotations
 
@@ -22,13 +32,17 @@ from typing import Any
 from ..config import DatasetConfig
 from ..enrichment.lineage import FileFingerprint, IntegrationRound, read_rounds
 from ..matching.lookup import DEFAULT_MIN_SCORE, NameIndex, NameMatch
+from ..matching.names import match_key
 from ..matching.semantic import SemanticMatcher
 from ..models import ConceptLevel, LookupMatch, TagLookupResult
+from ..synonyms import Synonym, approved_synonyms
 from ..taxonomy import load_dataset
 from ..taxonomy.base import Hierarchy, TaxonomyDataset
 from .browse import LEVELS, concept_paths
 
 DEFAULT_LIMIT = 20
+# The dataset synonyms are recorded against (`synonym-add --dataset`), whose IDs integrated snapshots keep.
+DEFAULT_SYNONYM_DATASET = "original"
 MAX_LIMIT = 100
 MAX_TERM_LENGTH = 200
 # The model every semantic stage uses; `SemanticMatcher` loads it at its pinned revision.
@@ -55,6 +69,7 @@ class _Snapshot:
     hierarchy: Hierarchy
     rows: list[tuple[ConceptLevel, dict[str, Any]]]
     index: NameIndex
+    by_id: dict[tuple[str, str], dict[str, Any]]
 
 
 # FastAPI runs each request on its own thread, and loading or running the sentence model from two at
@@ -67,8 +82,11 @@ _loaded: _Snapshot | None = None
 def lookup_term(
     term: str, integrations_root: Path, *, snapshot: str | None = None, level: ConceptLevel | None = None,
     limit: int = DEFAULT_LIMIT, min_score: float = DEFAULT_MIN_SCORE, semantic: bool = False,
+    synonym_dataset: str | None = DEFAULT_SYNONYM_DATASET,
 ) -> TagLookupResult:
-    """Exact and near matches for `term`. `limit` caps near matches only: every exact one is always returned."""
+    """Exact and near matches for `term`. `limit` caps near matches only: every exact one is always returned.
+
+    Synonym hits from `synonym_dataset` join the exact matches; None leaves synonyms out."""
     _check_inputs(term, level, limit, min_score)
     chosen = _choose_round(integrations_root, snapshot)
     loaded = _load(chosen)
@@ -82,7 +100,13 @@ def lookup_term(
     if level:
         matches = [match for match in matches if loaded.rows[match.index][0] == level]
     exact = [_to_model(loaded, match) for match in matches if match.exact]
-    near = [_to_model(loaded, match) for match in matches if not match.exact][:limit]
+    if synonym_dataset:
+        named = {(match.level, str(match.id)) for match in exact}
+        exact += [hit for hit in _synonym_hits(loaded, approved_synonyms(synonym_dataset, term=term), level)
+                  if (hit.level, str(hit.id)) not in named]
+    found = {(match.level, str(match.id)) for match in exact}  # a concept found exactly isn't also listed as near
+    near = [model for model in (_to_model(loaded, match) for match in matches if not match.exact)
+            if (model.level, str(model.id)) not in found][:limit]
     return TagLookupResult(query=term, snapshot=chosen.name, exists=bool(exact), exact=exact, near=near)
 
 
@@ -125,7 +149,8 @@ def _load(item: IntegrationRound) -> _Snapshot:
         (level, row) for level in LEVELS for row in getattr(loaded, level) if row.get("name") is not None
     ]
     index = NameIndex([str(row["name"]) for _, row in rows])
-    _loaded = _Snapshot(item.snapshot, loaded.hierarchy(), rows, index)
+    by_id = {(level, str(row.get("id"))): row for level, row in rows}
+    _loaded = _Snapshot(item.snapshot, loaded.hierarchy(), rows, index, by_id)
     return _loaded
 
 
@@ -140,6 +165,24 @@ def _semantic_matcher() -> SemanticMatcher:
         return _load_matcher()
     except (ValueError, OSError) as exc:  # the optional dependency is missing, or the model can't be fetched
         raise SemanticUnavailable(f"semantic matching is unavailable: {exc}") from exc
+
+
+def _synonym_hits(loaded: _Snapshot, synonyms: list[Synonym], level: ConceptLevel | None) -> list[LookupMatch]:
+    """Concepts the query names through these approved global synonyms (already matched by term key),
+    where the snapshot still has the concept with the name the synonym was recorded against."""
+    hits = []
+    for synonym in synonyms:
+        if synonym.scope or (level and synonym.concept_level != level):
+            continue
+        row = loaded.by_id.get((synonym.concept_level, synonym.concept_id))
+        if row is None or match_key(str(row.get("name"))) != match_key(synonym.concept_name):
+            continue  # this snapshot doesn't have the concept the synonym was recorded against
+        hits.append(LookupMatch(
+            id=row["id"], name=str(row["name"]), level=synonym.concept_level, match_type="synonym",
+            lexical_score=100.0, synonym=synonym.term, active=str(row.get("status")) != "0",
+            paths=concept_paths(loaded.hierarchy, synonym.concept_level, row),
+        ))
+    return hits
 
 
 def _to_model(loaded: _Snapshot, match: NameMatch) -> LookupMatch:

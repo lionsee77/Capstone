@@ -14,15 +14,36 @@ verdict on screen is the API's.
 
 ## Pages
 
+- **New enrichment round** (`/sources/new`) - start a round on a chosen snapshot or the original
+  taxonomy, one step at a time: name, files, columns, options, import and run. A step opens once
+  what it needs exists, and `?round={id}` comes back to the first step still needing something.
+  The columns step shows the table's first rows with each chosen column marked, and how those rows
+  will read as paths, so a choice is checked against the data. It skips a leading sheet too narrow
+  to be the table, clears column choices when the file or sheet changes, and fills in the source
+  names from the file name, under "More options". A filter offers values found in its column.
+  Importing shows counts and warnings, and shows any mapping error from the API in place. Change
+  anything afterwards and it has to be imported again before it can run. LLM steps can only be
+  ticked when the server allows them, and ticking one says it will spend credits.
 - **Enrichment rounds** (`/rounds`, `/rounds/{id}`) - one new source brought into
   the taxonomy: each stage's status, summary and error, updating while it runs, with
   buttons to run, resume or remove the round and the generated config. Reads `/rounds`.
-  Once a merge preview exists, a review panel lists each held tag with the reason, its
-  proposed placements and closest existing matches. A reviewer creates, reuses, excludes or
-  defers it, one at a time or across a selected page, or drafts the clear-cut ones first.
+  Once a merge preview exists, the stages fold away for a review panel. A bar stays on screen
+  while scrolling, with progress and the one next step: decide, apply or generate. New categories
+  and specialities come first, because tags under an unsettled one can't be placed, and only
+  offer the actions the API would accept, saying why when "Add as new" isn't one. Each tag says in
+  plain words why it was held, with its proposed placements. A reviewer adds it as new, uses an
+  existing tag, leaves it out or decides later (`create`, `reuse`, `exclude` and `defer` to the
+  API), one at a time or across a selected page, or drafts the clear-cut ones first. The pipeline's
+  own reason and closest matches are under "Details".
+  Reuse never picks a tag for the reviewer: each option says whether it matched by spelling or
+  meaning, because the closest spelling is often a different concept. An applied decision that
+  still can't be used, such as a placement under a category that was left out, appears under
+  "Still held" with what to do about it.
   Decisions are saved at once, then applied together, because `merge-preview` rebuilds the
   whole preview to check them (about 25 seconds for O*NET). Then "Generate enriched snapshot"
-  integrates and scores the round, and links to its before-and-after comparison.
+  integrates and scores the round, and links to its before-and-after comparison. That one
+  run scores both versions, so the round also appears on the Improvement page as a two-stage
+  comparison. Earlier stages show as not scored until a whole-chain run covers them.
   The review panel also shows advisory repeated category/speciality names from
   effective screening, including automatically accepted proposals and affected tags. Full clusters
   appear once, grouped by resolved parent with original proposal paths retained;
@@ -250,9 +271,8 @@ CI runs all four. See the `frontend` job in `.github/workflows/ci.yml`.
   from a snapshot. So it's a live view of those files, not of that run: an
   edit to a dataset file changes results for the same run immediately,
   with no new run needed - the run is only how you pick which files.
-- **New data source flow:** the store, schema, and `useCreateRun` mutation are
-  ready, but the form isn't built yet. Dataset paths must be absolute
-  *server-side* paths, so uploading a file from the browser would need a new
-  upload endpoint.
+- **Source shapes:** a round imports one flat table per source. Files from a dropped folder
+  are stored flat under their own names, so a later file with the same name replaces an earlier one.
+- **`source-draft-store`** was written for an earlier plan and isn't used by the new-round form.
 - **Run reports** render each metric's `details` as raw JSON for now. Saturation
   curves and breadth coverage still need proper charts.

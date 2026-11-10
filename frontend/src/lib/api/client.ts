@@ -19,7 +19,9 @@ import {
   proposalReviewReportSchema,
   reviewQueueSchema,
   roundConfigTextSchema,
+  roundFileSchema,
   roundOptionsSchema,
+  type RoundSettings,
   roundStateSchema,
   runComparisonSchema,
   runReportSchema,
@@ -81,7 +83,7 @@ export type TaxonomySource = { runId: string; dataset: string };
 /** One side of a comparison: a stored run, and which of its taxonomies (dataset name) when it scored several. */
 export type RunSubject = { runId: string; subject?: string | null };
 
-export type ReviewQuery = { state: "undecided" | "decided" | "all"; q?: string; offset: number; limit: number };
+export type ReviewQuery = { state: "undecided" | "decided" | "held" | "all"; q?: string; offset: number; limit: number };
 
 export type DecisionSubmission = {
   reviewer: string;
@@ -108,6 +110,23 @@ export const api = {
   getRoundConfigText: (roundId: string) => request(`${roundPath(roundId)}/config`, roundConfigTextSchema),
   runRound: (roundId: string) => request(`${roundPath(roundId)}/run`, roundStateSchema, { method: "POST" }),
   deleteRound: (roundId: string) => requestNoContent(roundPath(roundId), { method: "DELETE" }),
+  createRound: (body: { round_id: string; baseline_snapshot: string }) =>
+    request("/rounds", roundStateSchema, { method: "POST", body: JSON.stringify(body) }),
+  listRoundFiles: (roundId: string) => request(`${roundPath(roundId)}/files`, roundFileSchema.array()),
+  getRoundFile: (roundId: string, name: string, sheet: string | null) => {
+    const query = sheet ? `?${new URLSearchParams({ sheet })}` : "";
+    return request(`${roundPath(roundId)}/files/${encodeURIComponent(name)}${query}`, roundFileSchema);
+  },
+  /** The file's bytes as the whole body, so the proxy and API receive it unchanged. */
+  uploadRoundFile: (roundId: string, file: File) => request(
+    `${roundPath(roundId)}/files/${encodeURIComponent(file.name)}`, roundFileSchema,
+    { method: "PUT", body: file, headers: { "Content-Type": "application/octet-stream" } },
+  ),
+  removeRoundFile: (roundId: string, name: string) =>
+    requestNoContent(`${roundPath(roundId)}/files/${encodeURIComponent(name)}`, { method: "DELETE" }),
+  configureRound: (roundId: string, body: { mapping: Record<string, unknown>; settings: RoundSettings }) => request(
+    `${roundPath(roundId)}/config`, roundStateSchema, { method: "PUT", body: JSON.stringify(body) },
+  ),
   getReview: (roundId: string, options: ReviewQuery) => {
     const params = new URLSearchParams({
       state: options.state, offset: String(options.offset), limit: String(options.limit),

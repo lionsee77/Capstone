@@ -106,6 +106,7 @@ backend/taxonomy_pipeline/golden_runs/
 # Generated SkillsFuture classification outputs
 backend/skillsfuture/classification_proposals*.json
 backend/skillsfuture/classification_proposals*.csv
+backend/skillsfuture/*_tag_context.json
 
 judge_cache.json
 

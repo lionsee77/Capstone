@@ -2,6 +2,7 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 
+import { ProposalCard } from "@/app/rounds/[roundId]/review-items";
 import { ReviewPanel } from "@/app/rounds/[roundId]/review-panel";
 import { reviewQueueSchema, roundStateSchema } from "@/lib/api/schemas";
 
@@ -18,19 +19,30 @@ const round = roundStateSchema.parse({
   round_id: "r1", baseline_snapshot: "base", created_at: "2026-11-09T00:00:00Z", source_name: "demo",
   settings: { judge: false, case_b: false, threshold: null, semantic_threshold: null,
     add_candidate_lexical_threshold: null, add_candidate_semantic_threshold: null },
-  stages: [], warnings: [], import_counts: {}, merge_counts: {}, pending_sources: 0,
+  mapping: null, stages: [], warnings: [], import_counts: {}, merge_counts: {}, pending_sources: 0,
   decisions_applied: true, reviewer: "Reviewer", score_run_id: null, enriched_run_id: null,
   status: "ready_to_integrate",
 });
 const queue = {
-  tags: [], total: 0, offset: 0, limit: 50, undecided: 0, decided: 0, proposals_undecided: 0,
+  tags: [], total: 0, offset: 0, limit: 50, undecided: 0, decided: 0, held: 0, proposals_undecided: 0,
   proposals: ["Marine", "Retail"].map((category) => ({
     proposal_id: category, level: "speciality", name: "Navigation", path: ["Industry", category, "Navigation"],
-    status: "new", reason: "No baseline match", blocks_creation: false, source_tags: 1, matches: [], decision: null,
+    status: "new", reason: "No baseline match", blocks_creation: false, source_tags: 1, create_blocked_reason: null, matches: [], decision: null,
   })),
 };
 
 describe("repeated names in the round review panel", () => {
+  it("keeps the advisory reminder and the incoming creation guard on proposal cards", () => {
+    const parsed = reviewQueueSchema.parse(queue);
+    const html = renderToStaticMarkup(createElement(ProposalCard, {
+      proposal: { ...parsed.proposals[0], create_blocked_reason: "Resolve its parent first" },
+      repeatedNames: ["navigation"], disabled: false, onDecide: vi.fn(), onClear: vi.fn(),
+    }));
+    expect(html).toContain("See the parent groups above");
+    expect(html).toContain("Resolve its parent first");
+    expect(html).not.toContain(">Add as new</button>");
+  });
+
   it("renders the shared cluster and affected paths even when integration is available", () => {
     state.queue = reviewQueueSchema.parse({ ...queue, repeated_names: [{
       code: "warning.repeated_speciality_name", name: "navigation", proposal_ids: ["Marine", "Retail"],
@@ -38,10 +50,9 @@ describe("repeated names in the round review panel", () => {
     }] });
     const html = renderToStaticMarkup(createElement(ReviewPanel, { round }));
     expect(html).toContain("Navigation appears under Marine and Retail");
-    expect(html.match(/See the parent groups above/g)).toHaveLength(2);
     expect(html).toContain("Generate enriched snapshot");
-    expect(html).toContain("Create new");
-    expect(html).toContain("0 to decide");
+    expect(html).toContain("All");
+    expect(html).toContain("0 of 0 tags settled");
     expect(html).not.toContain("Select pending tags on this page");
   });
 
@@ -54,7 +65,7 @@ describe("repeated names in the round review panel", () => {
     expect(html).toMatch(/<input[^>]*aria-label="Select Accepted skill"[^>]*disabled=""/);
     expect(html).not.toContain("Select pending tags on this page");
     expect(html).toContain("Automatically accepted; review individually if needed.");
-    expect(html).toMatch(/<button(?![^>]*\sdisabled=)[^>]*>Exclude<\/button>/);
+    expect(html).toMatch(/<button(?![^>]*\sdisabled=)[^>]*>Leave out<\/button>/);
   });
 
   it("offers bulk selection only for pending undecided tags on a mixed page", () => {

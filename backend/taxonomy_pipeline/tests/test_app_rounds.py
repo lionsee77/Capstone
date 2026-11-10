@@ -3,13 +3,17 @@ from __future__ import annotations
 
 import json
 import shutil
+from io import BytesIO
 from pathlib import Path
 
 import pytest
 import yaml
+from openpyxl import Workbook
 
 from taxonomy_pipeline.app import rounds
+from taxonomy_pipeline.app.lineage import taxonomy_lineage
 from taxonomy_pipeline.config import load_config
+from taxonomy_pipeline.enrichment import case_b
 from taxonomy_pipeline.enrichment.models import PlacementPath, ReviewDecision, SourceTagRef
 from taxonomy_pipeline.models import RoundSettings
 from taxonomy_pipeline.taxonomy.flat_import import SourceMapping
@@ -60,9 +64,12 @@ def roots(tmp_path: Path) -> rounds.RoundRoots:
             }},
         ],
     }), "utf-8")
+    original = tmp_path / "sql-files"
+    original.mkdir()
+    (original / "mini.sql").write_text(baseline, "utf-8")
     return rounds.RoundRoots(
         rounds=tmp_path / "rounds", integrations=tmp_path / "integrations", merge_runs=tmp_path / "merge_runs",
-        template=template,
+        template=template, original=original,
     )
 
 
@@ -129,10 +136,101 @@ def test_a_name_already_used_by_any_output_is_refused(roots: rounds.RoundRoots, 
 def test_options_offer_the_snapshots_services_and_template_defaults(roots: rounds.RoundRoots) -> None:
     options = rounds.round_options(roots)
 
-    assert options.snapshots == ["base"]
+    assert options.snapshots == ["base", "@original"]
     assert [(service.id, service.name) for service in options.services] == [(1, "Industry")]
     assert options.saturation_defaults == {"threshold": 90}
     assert not options.llm_allowed
+
+
+def test_the_original_taxonomy_is_offered_after_the_newest_snapshot_so_the_default_stays(
+    roots: rounds.RoundRoots,
+) -> None:
+    assert rounds.round_options(roots).snapshots[0] == "base"
+
+
+def test_with_no_snapshots_the_original_is_offered_with_its_services(roots: rounds.RoundRoots) -> None:
+    shutil.rmtree(roots.integrations / "base")
+
+    options = rounds.round_options(roots)
+
+    assert options.snapshots == ["@original"]
+    assert [service.name for service in options.services] == ["Industry"]
+
+
+def test_the_original_is_not_offered_when_its_dumps_are_missing(roots: rounds.RoundRoots) -> None:
+    shutil.rmtree(roots.original)
+
+    assert rounds.round_options(roots).snapshots == ["base"]
+    with pytest.raises(ValueError, match="no integrated snapshot"):
+        rounds.create_round(roots, "r1", "@original")
+
+
+def test_a_snapshot_named_original_is_never_confused_with_the_clients_dumps(
+    roots: rounds.RoundRoots, isolated_db: Path,
+) -> None:
+    shutil.copytree(roots.integrations / "base", roots.integrations / "original")
+
+    assert rounds.round_options(roots).snapshots[-1] == "@original"
+    assert "original" in rounds.round_options(roots).snapshots
+    rounds.create_round(roots, "on-snapshot", "original")
+    rounds.add_file(roots, "on-snapshot", "flat.csv", CSV.encode())
+    rounds.configure_round(roots, "on-snapshot", _mapping(), RoundSettings())
+
+    baseline = next(d for d in load_config(roots.rounds / "on-snapshot" / "config.yaml").datasets
+                    if d.name == "round_baseline")
+    assert all(str(roots.integrations / "original") in str(path) for path in baseline.paths)
+
+
+def test_rounds_on_the_original_share_one_complete_config(roots: rounds.RoundRoots, isolated_db: Path) -> None:
+    for round_id in ("first", "second"):
+        rounds.create_round(roots, round_id, "@original")
+        rounds.add_file(roots, round_id, "flat.csv", CSV.encode())
+        rounds.configure_round(roots, round_id, _mapping(), RoundSettings())
+
+    shared = roots.rounds / ".original-baseline"
+    assert [path.name for path in shared.iterdir()] == ["enriched.yaml"]  # no half-written copies left behind
+    assert load_config(shared / "enriched.yaml").datasets[0].paths
+
+
+def test_a_round_on_the_original_only_reads_the_clients_dumps(roots: rounds.RoundRoots, isolated_db: Path) -> None:
+    rounds.create_round(roots, "from-original", "@original")
+    rounds.add_file(roots, "from-original", "flat.csv", CSV.encode())
+
+    state = rounds.configure_round(roots, "from-original", _mapping(), RoundSettings())
+
+    assert state.status == "ready"
+    baseline = next(d for d in load_config(roots.rounds / "from-original" / "config.yaml").datasets
+                    if d.name == "round_baseline")
+    assert [Path(path).name for path in baseline.paths] == ["mini.sql"]
+    assert rounds.list_rounds(roots)[0].round_id == "from-original"
+    assert len(rounds.list_rounds(roots)) == 1
+
+
+def test_a_round_on_the_original_finishes_as_a_snapshot_on_the_lineages_root(
+    roots: rounds.RoundRoots, isolated_db: Path,
+) -> None:
+    rounds.create_round(roots, "from-original", "@original")
+    rounds.add_file(roots, "from-original", "flat.csv", CSV.encode())
+    rounds.configure_round(roots, "from-original", _mapping(), RoundSettings())
+    state = _run(roots, "from-original")
+    assert state.status in {"review", "ready_to_integrate"}, [(s.id, s.error) for s in state.stages]
+    queue = rounds.get_review(roots, "from-original", limit=200)
+    if queue.tags:
+        rounds.save_decisions(roots, "from-original", "Pat", [_create(item) for item in queue.tags])
+        _, stages = rounds.start_apply(roots, "from-original")
+        rounds.run_stages(roots, "from-original", stages)
+
+    _, stages = rounds.start_integrate(roots, "from-original")
+    rounds.run_stages(roots, "from-original", stages)
+
+    assert rounds.get_round(roots, "from-original").status == "complete"
+    original = (roots.original / "mini.sql").read_bytes()
+    assert (roots.integrations / "from-original" / "baseline" / "mini.sql").read_bytes() == original
+    chain = next(c for c in taxonomy_lineage(roots.integrations, roots.merge_runs, original=roots.original).chains
+                 if "from-original" in c.stages)
+    assert chain.stages[0].startswith("baseline:")
+    assert chain.stages[-1] == "from-original"
+    assert "from-original" in rounds.round_options(roots).snapshots
 
 
 def test_an_uploaded_file_lists_its_columns_rows_and_samples(roots: rounds.RoundRoots) -> None:
@@ -161,6 +259,32 @@ def test_an_oversized_upload_is_refused(roots: rounds.RoundRoots, monkeypatch: p
 
     with pytest.raises(ValueError, match="larger"):
         rounds.add_file(roots, "r1", "flat.csv", b"12345")
+
+
+def test_an_uploaded_table_comes_with_its_first_rows(roots: rounds.RoundRoots) -> None:
+    rounds.create_round(roots, "r1", "base")
+
+    uploaded = rounds.add_file(roots, "r1", "flat.csv", CSV.encode())
+
+    assert uploaded.preview_rows[0] == {
+        "Sector": "Marketing", "Role": "Brand Strategy", "Skill": "Underwater Welding",
+        "Desc": "Joining metal below water",
+    }
+    assert uploaded.sheet_columns == {}
+
+
+def test_a_workbook_lists_the_columns_of_each_of_its_sheets(roots: rounds.RoundRoots) -> None:
+    workbook = Workbook()
+    workbook.active.title = "Legend"
+    workbook.active.append(["Notes"])
+    workbook.create_sheet("Data").append(["Sector", None, "Role", "Skill"])
+    buffer = BytesIO()
+    workbook.save(buffer)
+    rounds.create_round(roots, "r1", "base")
+
+    uploaded = rounds.add_file(roots, "r1", "book.xlsx", buffer.getvalue())
+
+    assert uploaded.sheet_columns == {"Legend": ["Notes"], "Data": ["Sector", "Role", "Skill"]}
 
 
 def test_an_unreadable_table_reports_why_instead_of_failing_the_listing(roots: rounds.RoundRoots) -> None:
@@ -198,6 +322,13 @@ def test_configuring_imports_the_source_and_writes_a_config_that_loads(
     assert "round_baseline" in rounds.round_config_text(roots, configured)
 
 
+def test_the_saved_mapping_comes_back_for_the_form(roots: rounds.RoundRoots, configured: str) -> None:
+    mapping = rounds.get_round(roots, configured).mapping
+
+    assert mapping["source"] == "flat.csv"
+    assert mapping["columns"]["tag"] == "Skill"
+
+
 def test_a_failed_mapping_keeps_the_last_good_import(roots: rounds.RoundRoots, configured: str) -> None:
     bad = _mapping(columns={"category": "Sector", "speciality": "Role", "tag": "Nope"})
 
@@ -207,6 +338,20 @@ def test_a_failed_mapping_keeps_the_last_good_import(roots: rounds.RoundRoots, c
     assert rounds.get_round(roots, configured).status == "ready"
     assert "Skill" in (roots.rounds / configured / "source" / "mapping.yaml").read_text("utf-8")
     load_config(roots.rounds / configured / "config.yaml")
+
+
+def test_a_source_cannot_take_the_finished_snapshots_name(roots: rounds.RoundRoots, configured: str) -> None:
+    with pytest.raises(ValueError, match="finished snapshot"):
+        rounds.configure_round(roots, configured, _mapping(name="enriched"), RoundSettings())
+
+    assert rounds.get_round(roots, configured).source_name == "demo"
+    assert not (roots.rounds / configured / "enriched_taxonomy.sql").exists()
+
+
+def test_a_source_name_merely_containing_enriched_is_fine(roots: rounds.RoundRoots, configured: str) -> None:
+    state = rounds.configure_round(roots, configured, _mapping(name="enriched_skills"), RoundSettings())
+
+    assert state.source_name == "enriched_skills"
 
 
 def test_a_mapping_can_only_name_files_in_this_round(roots: rounds.RoundRoots, configured: str, tmp_path: Path) -> None:
@@ -362,6 +507,56 @@ def test_new_parentless_tags_are_reported_when_llm_classification_is_off(
     assert case_b.status == "skipped"
     assert "Left out 1 new tag" in case_b.summary
     assert case_b.summary in state.warnings
+
+
+def test_llm_classification_reads_the_context_the_round_generated(
+    roots: rounds.RoundRoots, configured: str, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Case B checks a context file's titles against the imported tags; a round's own file must pass that check."""
+    monkeypatch.setenv("TAXONOMY_ALLOW_LLM", "true")
+    monkeypatch.setenv("OPENAI_API_KEY", "real-looking-key")
+    rounds.configure_round(roots, configured, _mapping(), RoundSettings(case_b=True))
+    sent: list[dict[str, str]] = []
+
+    async def classify(client: object, prompt: str, batch: list[dict[str, str]], model: str) -> list[dict[str, object]]:
+        sent.extend(batch)
+        return [{
+            "action": "classify", "tag_id": item["tag_id"], "tag": item["title"], "service": "Function",
+            "category": "Marketing", "speciality": "Brand Strategy", "confidence": 0.9, "reason": "Stubbed",
+            "needs_review": False,
+        } for item in batch]
+
+    monkeypatch.setattr(case_b, "_openai_client", lambda: object())
+    monkeypatch.setattr(case_b, "classify_batch", classify)
+
+    state = _run(roots, configured)
+
+    stage = next(stage for stage in state.stages if stage.id == "case_b")
+    assert stage.status == "done", stage.error
+    assert [item["title"] for item in sent] == ["Orphan Skill"]
+    context = json.loads((roots.rounds / configured / "demo_tag_context.json").read_text("utf-8"))
+    # #137 checks these titles against the imported tags; only described tags are in the file.
+    assert [tag["title"] for tag in context["tags"].values()] == ["Underwater Welding"]
+
+
+def test_a_running_round_never_reads_as_idle_between_stages(
+    roots: rounds.RoundRoots, configured: str, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A dashboard stops polling when a round isn't running, so a gap between stages would freeze its page."""
+    real_save = rounds._save
+    seen = []
+
+    def recording(roots_: rounds.RoundRoots, state: rounds.RoundState) -> None:
+        real_save(roots_, state)
+        seen.append(state.status)
+
+    monkeypatch.setattr(rounds, "_save", recording)
+
+    _run(roots, configured)
+
+    assert len(seen) > 4
+    assert set(seen[:-1]) == {"running"}
+    assert seen[-1] in {"review", "ready_to_integrate"}
 
 
 def test_a_failed_stage_records_why_and_stops_the_round(
@@ -691,6 +886,43 @@ def test_a_round_without_a_preview_has_no_queue(roots: rounds.RoundRoots) -> Non
         rounds.get_review(roots, "r1")
 
 
+def test_a_decision_counts_as_held_only_once_a_preview_applied_it_and_left_the_tag_pending(
+    roots: rounds.RoundRoots, in_review: str,
+) -> None:
+    item = rounds.get_review(roots, in_review).tags[0]
+    rounds.save_decisions(roots, in_review, "Pat", [_create(item)])
+
+    assert rounds.get_review(roots, in_review).held == 0
+    assert rounds.get_review(roots, in_review, state="held").total == 0
+
+    rounds._write_queue(roots, rounds.get_round(roots, in_review))
+
+    assert rounds.get_review(roots, in_review).held == 1
+    assert [tag.tag for tag in rounds.get_review(roots, in_review, state="held").tags] == [item.tag]
+
+
+def test_changing_one_held_tag_leaves_the_others_held(roots: rounds.RoundRoots, in_review: str) -> None:
+    first, second = rounds.get_review(roots, in_review).tags[:2]
+    rounds.save_decisions(roots, in_review, "Pat", [_create(first), _create(second)])
+    rounds._write_queue(roots, rounds.get_round(roots, in_review))
+
+    rounds.save_decisions(roots, in_review, "Pat", [], clear_tags=[first.source])
+
+    assert [tag.tag for tag in rounds.get_review(roots, in_review, state="held").tags] == [second.tag]
+
+
+def test_a_new_decision_on_a_held_tag_is_not_held_until_a_preview_tries_it(
+    roots: rounds.RoundRoots, in_review: str,
+) -> None:
+    item = rounds.get_review(roots, in_review).tags[0]
+    rounds.save_decisions(roots, in_review, "Pat", [_create(item)])
+    rounds._write_queue(roots, rounds.get_round(roots, in_review))
+
+    rounds.save_decisions(roots, in_review, "Pat", [_create(item, reason="Thought again")])
+
+    assert rounds.get_review(roots, in_review).held == 0
+
+
 def test_a_saved_decision_moves_the_tag_and_needs_applying(roots: rounds.RoundRoots, in_review: str) -> None:
     before = rounds.get_review(roots, in_review)
     item = before.tags[0]
@@ -838,6 +1070,40 @@ def test_integrating_writes_a_snapshot_scores_it_and_chains_into_the_next_round(
         rounds.start_integrate(roots, in_review)
     with pytest.raises(rounds.RoundConflict, match="already integrated"):
         rounds.save_decisions(roots, in_review, "Pat", [])
+
+
+def test_the_final_run_scores_baseline_and_snapshot_together_for_the_lineage(
+    roots: rounds.RoundRoots, in_review: str,
+) -> None:
+    _decide_all(roots, in_review)
+    _, stages = rounds.start_integrate(roots, in_review)
+    rounds.run_stages(roots, in_review, stages)
+    state = rounds.get_round(roots, in_review)
+
+    lineage = taxonomy_lineage(roots.integrations, roots.merge_runs)
+    chain = next(chain for chain in lineage.chains if in_review in chain.stages)
+    assert chain.runs == [state.enriched_run_id]
+    scored = next(run for run in lineage.runs if run.run_id == state.enriched_run_id).datasets
+    assert scored[in_review] == "enriched"
+    assert scored["base"] == "round_baseline"
+
+
+def test_a_labels_file_that_is_not_text_gets_a_readable_error(roots: rounds.RoundRoots, configured: str) -> None:
+    rounds.add_file(roots, configured, "labels.csv", b"\xff\xfe\x98 not utf-8")
+    mapping = _mapping(columns={
+        "category": {"column": "Sector", "prefix": 2, "labels": "labels.csv"}, "speciality": "Role", "tag": "Skill",
+    })
+
+    with pytest.raises(ValueError, match="CSV UTF-8"):
+        rounds.configure_round(roots, configured, mapping, RoundSettings())
+
+
+def test_a_table_that_is_not_utf8_says_how_to_fix_it_when_listed(roots: rounds.RoundRoots) -> None:
+    rounds.create_round(roots, "r1", "base")
+
+    uploaded = rounds.add_file(roots, "r1", "excel-export.csv", "Caf\u00e9,Tag\n".encode("latin-1"))
+
+    assert "CSV UTF-8" in uploaded.error
 
 
 def test_deferred_tags_stay_out_of_the_snapshot_without_holding_it_up(roots: rounds.RoundRoots, in_review: str) -> None:

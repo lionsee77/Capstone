@@ -443,6 +443,8 @@ class ReviewQueueProposal(BaseModel):
     reason: str
     blocks_creation: bool
     source_tags: int
+    # Why `create` would be refused right now, in words for the reviewer; None when it would be accepted.
+    create_blocked_reason: str | None = None
     matches: list[ReviewQueueProposalMatch] = Field(default_factory=list)
     decision: ReviewDecision | None = None
 
@@ -453,6 +455,9 @@ class ReviewQueueEvidence(BaseModel):
     tags: list[ReviewQueueTag] = Field(default_factory=list)
     proposals: list[ReviewQueueProposal] = Field(default_factory=list)
     repeated_names: list[RepeatedNameWarning] = Field(default_factory=list)
+    # Decisions this preview applied whose tags stayed pending. Kept here because saving any later decision makes the
+    # round "not applied", and these must stay visible while a reviewer works through them.
+    held_decisions: list[ReviewDecision] = Field(default_factory=list)
 
 
 class ReviewQueue(BaseModel):
@@ -466,6 +471,7 @@ class ReviewQueue(BaseModel):
     limit: int = 50
     undecided: int = 0
     decided: int = 0
+    held: int = 0
     proposals_undecided: int = 0
 
 

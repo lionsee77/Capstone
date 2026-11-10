@@ -25,6 +25,7 @@ import json
 import os
 import re
 import shutil
+import tempfile
 import threading
 import zipfile
 from collections.abc import Iterator
@@ -35,8 +36,8 @@ from typing import Any
 
 import yaml
 
-from .. import env
-from ..config import load_config
+from .. import db, env
+from ..config import PipelineConfig, load_config
 from ..enrichment.lineage import file_fingerprint, read_rounds
 from ..enrichment.models import ReviewDecision, ReviewQueue, ReviewQueueEvidence, SourceTagRef
 from ..enrichment.review_queue import build_review_queue
@@ -53,13 +54,21 @@ from ..models import (
     RoundState,
     utcnow,
 )
-from ..taxonomy.flat_import import SourceMapping, inspect_table, sheet_names
+from ..taxonomy.flat_import import SourceMapping, inspect_table, sheet_columns, sheet_names
 from . import enrichment as use_cases
-from .scoring import load_taxonomies, run_config, write_report
+from .scoring import load_taxonomies, run_config, run_pipeline, write_report
 from .sources import DEFAULT_TEMPLATE, ROUND_BASELINE, import_source
 
 ROUND_ID = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
+# What a round asks for to build on the client's dumps directly, rather than on an integrated snapshot.
+# What a round names the client's dumps as its baseline. The "@" keeps it apart from every snapshot: a snapshot is
+# named after its round, and a round ID can't contain "@", so a snapshot called "original" stays itself.
+ORIGINAL_BASELINE = "@original"
+ORIGINAL_DUMPS = Path(__file__).resolve().parents[4] / "sql-files-nus"
 RESERVED_ROUND_IDS = {"options"}
+# What `integrate` calls the finished snapshot, unless a source already has the name. The round's comparison asks
+# for the snapshot by this name, so a source using it would be compared in the snapshot's place.
+RESERVED_SOURCE_NAME = "enriched"
 UPLOAD_SUFFIXES = {".csv", ".tsv", ".xlsx", ".xlsm"}
 MAX_UPLOAD_BYTES = 50 * 1024 * 1024
 MAX_FILES = 20
@@ -92,6 +101,7 @@ class RoundRoots:
     integrations: Path
     merge_runs: Path
     template: Path = DEFAULT_TEMPLATE
+    original: Path = ORIGINAL_DUMPS
 
     def directory(self, round_id: str) -> Path:
         if not ROUND_ID.fullmatch(round_id):
@@ -118,9 +128,12 @@ def round_options(roots: RoundRoots) -> RoundOptions:
         key=lambda item: (item.created_at.isoformat() if item.created_at else "", item.name), reverse=True,
     )
     snapshots = [item.name for item in rounds]
+    # Last, because the form starts on the first: the default stays the newest snapshot.
+    if _original_dumps(roots):
+        snapshots.append(ORIGINAL_BASELINE)
     services = []
     if snapshots:
-        config_path = roots.integrations / snapshots[0] / "enriched.yaml"
+        config_path = _baseline_directory(roots, snapshots[0]) / "enriched.yaml"
         name = load_config(config_path).datasets[0].name
         dataset = load_taxonomies(config_path, name)[name]
         services = [RoundServiceOption(id=row["id"], name=str(row["name"])) for row in dataset.services]
@@ -139,8 +152,10 @@ def create_round(roots: RoundRoots, round_id: str, baseline_snapshot: str) -> Ro
         raise ValueError("round name must be lowercase letters, digits, '-' or '_', starting with a letter or digit")
     if round_id in RESERVED_ROUND_IDS:
         raise ValueError(f"{round_id!r} can't name a round: it is a route under /rounds")
-    if not (roots.integrations / baseline_snapshot / "enriched.yaml").is_file() or not ROUND_ID.fullmatch(
-        baseline_snapshot,
+    known = baseline_snapshot == ORIGINAL_BASELINE and _original_dumps(roots)
+    if not known and (
+        not ROUND_ID.fullmatch(baseline_snapshot)
+        or not (roots.integrations / baseline_snapshot / "enriched.yaml").is_file()
     ):
         raise ValueError(f"no integrated snapshot named {baseline_snapshot!r}")
     for parent in (roots.rounds, roots.merge_runs, roots.integrations):
@@ -154,6 +169,33 @@ def create_round(roots: RoundRoots, round_id: str, baseline_snapshot: str) -> Ro
     )
     _save(roots, state)
     return state
+
+
+def _original_dumps(roots: RoundRoots) -> list[Path]:
+    return sorted(roots.original.glob("*.sql")) if roots.original.is_dir() else []
+
+
+def _baseline_directory(roots: RoundRoots, baseline: str) -> Path:
+    """The folder holding `enriched.yaml` for what a round builds on.
+
+    The original taxonomy isn't a snapshot, so it gets a small config in the same shape, listing the client's
+    dumps. It sits in `rounds/`, not `integrations/`, because no round produced it. `integrate` copies the dumps
+    into the new snapshot as usual, and `/lineage` matches them by content to the same root as earlier rounds.
+    """
+    if baseline != ORIGINAL_BASELINE:
+        return roots.integrations / baseline
+    directory = roots.rounds / ".original-baseline"
+    directory.mkdir(parents=True, exist_ok=True)
+    paths = [str(path.resolve()) for path in _original_dumps(roots)]
+    dataset = {"name": "enriched", "type": "sql_dump", "paths": paths}
+    # Rounds share this file and can import at the same time, so each writes its own copy and swaps it in whole:
+    # a reader never sees one that's empty or half written.
+    with tempfile.NamedTemporaryFile(
+        "w", dir=directory, prefix="enriched.", suffix=".tmp", delete=False, encoding="utf-8",
+    ) as handle:
+        handle.write(yaml.safe_dump({"datasets": [dataset], "metrics": []}))
+    Path(handle.name).replace(directory / "enriched.yaml")
+    return directory
 
 
 def list_rounds(roots: RoundRoots) -> list[RoundState]:
@@ -293,10 +335,19 @@ def _describe(path: Path, sheet: str | None) -> RoundFile:
     described = RoundFile(name=path.name, size=path.stat().st_size)
     try:
         described.sheets = sheet_names(path)
-        described.columns, described.row_count, described.samples = inspect_table(path, sheet)
+        described.sheet_columns = sheet_columns(path)
+        described.columns, described.row_count, described.samples, described.preview_rows = inspect_table(path, sheet)
     except (OSError, ValueError, KeyError, zipfile.BadZipFile) as exc:
-        described.error = str(exc)
+        described.error = _read_error(path.name, exc)
     return described
+
+
+def _read_error(name: str, exc: Exception) -> str:
+    """Why a file can't be read, in the words of someone who has to fix it."""
+    if isinstance(exc, UnicodeDecodeError):
+        return (f"can't read a text file as UTF-8 ({name}, or the labels file it uses). Check it's the right file, "
+                "and save a spreadsheet export as \"CSV UTF-8\".")
+    return f"can't read {name}: {exc}"
 
 
 def configure_round(
@@ -316,6 +367,8 @@ def _configure(
     roots: RoundRoots, state: RoundState, mapping: SourceMapping, settings: RoundSettings,
 ) -> RoundState:
     _check_llm(settings)
+    if mapping.name == RESERVED_SOURCE_NAME:
+        raise ValueError(f"a source can't be named {RESERVED_SOURCE_NAME!r}: the finished snapshot uses that name")
     round_id = state.round_id
     directory = roots.directory(round_id)
     source = directory / SOURCE_DIR
@@ -343,7 +396,7 @@ def _configure(
         )
         try:
             imported = import_source(
-                mapping_path, out_dir=staging, baseline_snapshot=roots.integrations / state.baseline_snapshot,
+                mapping_path, out_dir=staging, baseline_snapshot=_baseline_directory(roots, state.baseline_snapshot),
                 template_config=roots.template, round_config=new_config,
             )
         except Exception as exc:
@@ -351,8 +404,9 @@ def _configure(
                 mapping_path.unlink(missing_ok=True)
             else:
                 mapping_path.write_bytes(previous_mapping)
-            if isinstance(exc, zipfile.BadZipFile | KeyError):  # a corrupt workbook, or a sheet it doesn't have
-                raise ValueError(f"can't read {mapping.source}: {exc}") from exc
+            # A corrupt workbook, a sheet it doesn't have, or a text file that isn't UTF-8.
+            if isinstance(exc, zipfile.BadZipFile | KeyError | UnicodeDecodeError):
+                raise ValueError(_read_error(mapping.source, exc)) from exc
             raise
         _discard_progress(roots, round_id)
         for path in staging.iterdir():
@@ -368,6 +422,7 @@ def _configure(
 
     state = _reset_stages(state)
     state.source_name, state.settings = imported.name, settings
+    state.mapping = mapping.model_dump(mode="json", exclude_none=True)
     state.import_counts, state.warnings = imported.counts, imported.warnings
     stage = _stage(state, "import")
     stage.status, stage.finished_at = "done", utcnow()
@@ -462,7 +517,7 @@ def _claim(roots: RoundRoots, state: RoundState, stages: list[RoundStageId]) -> 
 def run_stages(roots: RoundRoots, round_id: str, stages: list[RoundStageId]) -> None:
     """Run claimed stages in order, stopping at the first failure. Never raises: it runs in the background."""
     try:
-        for stage_id in stages:
+        for index, stage_id in enumerate(stages):
             state = RoundState.model_validate_json((roots.directory(round_id) / "round.json").read_text("utf-8"))
             stage = _stage(state, stage_id)
             stage.status, stage.started_at, stage.finished_at, stage.error = "running", utcnow(), None, None
@@ -473,6 +528,13 @@ def run_stages(roots: RoundRoots, round_id: str, stages: list[RoundStageId]) -> 
             except Exception as exc:  # recorded on the round: this is the only place a failure can be reported
                 stage.status, stage.error = "failed", f"{type(exc).__name__}: {exc}"
             stage.finished_at = utcnow()
+            # Start the next stage in the same save: with nothing running for an instant, the round would read as
+            # idle, and a dashboard polling at that moment would stop following it.
+            if stage.status != "failed" and index + 1 < len(stages):
+                following = _stage(state, stages[index + 1])
+                following.status, following.started_at, following.finished_at, following.error = (
+                    "running", utcnow(), None, None,
+                )
             _save(roots, state)
             if stage.status == "failed":
                 return
@@ -565,6 +627,8 @@ def _write_queue(roots: RoundRoots, state: RoundState) -> None:
         decided_sources={key for decision in decisions for key in _tag_keys(decision)},
         decided_proposals={decision.proposal_id for decision in decisions if decision.proposal_id},
     )
+    pending = {(tag.source.source_dataset, tag.source.tag_id) for tag in evidence.tags if tag.status == "pending"}
+    evidence.held_decisions = [decision for decision in decisions if _tag_keys(decision) & pending]
     (directory / QUEUE_FILE).write_text(evidence.model_dump_json(), encoding="utf-8")
 
 
@@ -573,10 +637,14 @@ def get_review(
     roots: RoundRoots, round_id: str, *, state: str = "undecided", query: str | None = None, offset: int = 0,
     limit: int = 50,
 ) -> ReviewQueue:
-    """One page of the review queue, with each item's saved decision; `state` is undecided, decided or all."""
+    """One page of the review queue, with each item's saved decision.
+
+    `state` is undecided, decided, held or all. Held tags have an applied decision that `merge-preview` still
+    can't act on, usually because their path sits under something deferred, so the reviewer has to choose again.
+    """
     get_round(roots, round_id)
-    if state not in {"undecided", "decided", "all"}:
-        raise ValueError("state must be undecided, decided or all")
+    if state not in {"undecided", "decided", "held", "all"}:
+        raise ValueError("state must be undecided, decided, held or all")
     if offset < 0 or not 1 <= limit <= 200:
         raise ValueError("offset must be nonnegative and limit must be between 1 and 200")
     directory = roots.directory(round_id)
@@ -590,12 +658,14 @@ def get_review(
         proposal.decision = by_proposal.get(proposal.proposal_id)
     undecided_tags = [tag for tag in evidence.tags if tag.status == "pending" and tag.decision is None]
     decided_tags = [tag for tag in evidence.tags if tag.decision is not None]
-    selected = {"all": evidence.tags, "undecided": undecided_tags, "decided": decided_tags}[state]
+    # Only decisions tried by the last preview count as held; new choices still need applying.
+    held = [tag for tag in evidence.tags if tag.status == "pending" and tag.decision in evidence.held_decisions]
+    selected = {"all": evidence.tags, "undecided": undecided_tags, "decided": decided_tags, "held": held}[state]
     if query:
         selected = [tag for tag in selected if query.casefold() in tag.tag.casefold()]
     return ReviewQueue(
         tags=selected[offset:offset + limit], proposals=evidence.proposals, total=len(selected), offset=offset,
-        limit=limit, decided=len(decided_tags), undecided=len(undecided_tags),
+        limit=limit, decided=len(decided_tags), undecided=len(undecided_tags), held=len(held),
         proposals_undecided=sum(item.status == "review" and item.decision is None for item in evidence.proposals),
         repeated_names=evidence.repeated_names,
     )
@@ -739,11 +809,24 @@ def _integrate(roots: RoundRoots, state: RoundState) -> tuple[str, str]:
 
 
 def _score_enriched(roots: RoundRoots, state: RoundState) -> tuple[str, str]:
-    _, report = run_config(roots.integrations / state.round_id / "enriched.yaml")
+    """Score the baseline and the snapshot in one run, so comparing them is like for like by construction.
+
+    It's also what `/lineage` needs to show this round on the Improvement page: a run scoring two of its stages.
+    """
+    before = load_config(_config_path(roots, state.round_id))
+    after = load_config(roots.integrations / state.round_id / "enriched.yaml")
+    known = {dataset.name for dataset in before.datasets}
+    config = PipelineConfig(
+        metric_definitions_version=before.metric_definitions_version,
+        datasets=[*before.datasets, *(dataset for dataset in after.datasets if dataset.name not in known)],
+        metrics=[*before.metrics, *(metric for metric in after.metrics if metric not in before.metrics)],
+    )
+    report = run_pipeline(config)
+    db.save_run(report, config_json=config.model_dump_json())
     state.enriched_run_id = report.run_id
     if report.status != "done":
         raise ValueError(report.error or "the scoring run failed")
-    return "done", "Scored the enriched taxonomy with the round's metrics"
+    return "done", "Scored the baseline and the enriched taxonomy together, like for like"
 
 
 _HANDLERS = {

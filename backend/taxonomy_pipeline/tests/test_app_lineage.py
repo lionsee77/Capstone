@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from collections.abc import Callable
 from pathlib import Path
 
@@ -143,3 +144,55 @@ def test_no_rounds_gives_an_empty_lineage(tmp_path: Path) -> None:
     lineage = taxonomy_lineage(tmp_path / "integrations", tmp_path / "merge_runs")
 
     assert lineage.stages == [] and lineage.chains == [] and lineage.runs == []
+
+
+def test_a_chain_with_scores_comes_before_a_longer_or_newer_one_without(
+    tmp_path: Path, integration_round: Callable[..., Path], isolated_db: Path,
+) -> None:
+    scored = integration_round("scored", BASELINE, "s", created_at="2026-10-01T00:00:00+00:00")
+    integration_round("newer", BASELINE, "n", created_at="2026-11-01T00:00:00+00:00")
+    report = RunReport(status="done")
+    paths = [str(scored / "baseline" / name) for name in BASELINE]
+    config = {
+        "datasets": [
+            {"name": "before", "paths": paths},
+            {"name": "after", "paths": [*paths, str(scored / "additions.sql")]},
+        ],
+        "metrics": [
+            {"id": "integrity", "params": {"dataset": "before"}}, {"id": "integrity", "params": {"dataset": "after"}},
+        ],
+    }
+    db.save_run(report, config_json=json.dumps(config))
+
+    chains = taxonomy_lineage(tmp_path / "integrations", tmp_path / "merge_runs").chains
+
+    assert [chain.stages[-1] for chain in chains] == ["scored", "newer"]
+    assert chains[0].runs == [report.run_id]
+
+
+def test_a_chain_started_from_the_clients_dumps_names_its_root_original(
+    tmp_path: Path, integration_round: Callable[..., Path],
+) -> None:
+    dumps = tmp_path / "sql-files"
+    dumps.mkdir()
+    (dumps / "tags.sql").write_text(BASELINE["tags.sql"], encoding="utf-8")
+    integration_round("first", BASELINE, "s", dataset="round_baseline")
+
+    stages = taxonomy_lineage(tmp_path / "integrations", tmp_path / "merge_runs", original=dumps).stages
+
+    assert (stages[0].id, stages[0].name) == ("baseline:original", "original")
+
+
+def test_an_enriched_baseline_a_round_built_on_is_not_called_original(
+    tmp_path: Path, integration_round: Callable[..., Path],
+) -> None:
+    """Every round calls its baseline `round_baseline`; one whose parent snapshot can't be read isn't the original."""
+    dumps = tmp_path / "sql-files"
+    dumps.mkdir()
+    (dumps / "tags.sql").write_text(BASELINE["tags.sql"], encoding="utf-8")
+    enriched = {"tags.sql": BASELINE["tags.sql"], "additions.sql": "INSERT INTO tags VALUES (2,'Rust');\n"}
+    integration_round("second", enriched, "s", dataset="round_baseline")
+
+    stages = taxonomy_lineage(tmp_path / "integrations", tmp_path / "merge_runs", original=dumps).stages
+
+    assert stages[0].name == "round_baseline"

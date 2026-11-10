@@ -13,6 +13,7 @@ from pydantic import BaseModel, Field
 
 from .references.ssic import SsicReference
 from .references.ssoc import SsocReference
+from .synonym_set import SynonymSet
 
 CONCEPTS = ("services", "categories", "specialities", "tags", "speciality_tags")
 
@@ -111,7 +112,7 @@ class Hierarchy:
         return paths
 
 
-LoadedDataset = TaxonomyDataset | SsicReference | SsocReference
+LoadedDataset = TaxonomyDataset | SsicReference | SsocReference | SynonymSet
 
 
 class TaxonomySource(Protocol):

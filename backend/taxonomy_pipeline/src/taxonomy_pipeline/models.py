@@ -311,13 +311,16 @@ class LookupMatch(TaxonomyConceptSummary):
 
     `lexical_score` is a 0-100 spelling ratio and `semantic_score` a -1 to 1 cosine,
     present only when meaning matching was requested. Both are uncalibrated review
-    evidence (#47). `active` is false for a retired row, which is still returned: the
-    term does exist, and proposing it again would duplicate that row.
+    evidence (#47). A `synonym` match names the approved synonym the term matched; its
+    `lexical_score` is 100 because the term is that synonym, spelled alike (#60).
+    `active` is false for a retired row, which is still returned: the term does exist,
+    and proposing it again would duplicate that row.
     """
 
-    match_type: Literal["exact", "variant", "lexical", "semantic"]
+    match_type: Literal["exact", "variant", "lexical", "semantic", "synonym"]
     lexical_score: float
     semantic_score: float | None = None
+    synonym: str | None = None
     active: bool = True
     paths: list[TaxonomyPath] = Field(default_factory=list)
 
@@ -390,6 +393,8 @@ class RoundState(BaseModel):
     created_at: datetime
     source_name: str | None = None
     settings: RoundSettings = Field(default_factory=RoundSettings)
+    # The saved mapping, so the form can show it again. The file names in it are this round's own uploads.
+    mapping: dict[str, Any] | None = None
     stages: list[RoundStage] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
     import_counts: dict[str, int] = Field(default_factory=dict)
@@ -426,6 +431,8 @@ class RoundFile(BaseModel):
     columns: list[str] = Field(default_factory=list)
     row_count: int = 0
     samples: dict[str, list[str]] = Field(default_factory=dict)
+    preview_rows: list[dict[str, str]] = Field(default_factory=list)
+    sheet_columns: dict[str, list[str]] = Field(default_factory=dict)
     error: str | None = None
 
 

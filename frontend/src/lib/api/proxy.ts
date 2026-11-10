@@ -79,7 +79,7 @@ function reviewUrl(path: string, searchParams: URLSearchParams): string | null {
   const forwarded = new URLSearchParams();
   const state = searchParams.get("state");
   if (state !== null) {
-    if (!["undecided", "decided", "all"].includes(state)) return null;
+    if (!["undecided", "decided", "held", "all"].includes(state)) return null;
     forwarded.set("state", state);
   }
   for (const key of ["offset", "limit"]) {

@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import type { ReviewQueueProposal, ReviewQueueTag, RoundState } from "@/lib/api/schemas";
 import {
-  bulkTagDecisions, clampOffset, hasReviewQueue, placementLabel, proposalDecision, reusableMatches, reuseCandidates, roundCompareHref, tagDecision,
+  actionLabel, bulkTagDecisions, canReuse, chosenReuseTag, clampOffset, closestMatchLabel, hasReviewQueue, heldExplanation, placementLabel, proposalDecision, reasonLabels, reusableMatches, reuseCandidateLabel, reuseCandidates, reviewNextStep, reviewProgress, reviewTab, roundCompareHref, savedMessage, stagesWorthShowing, tagDecision,
 } from "@/lib/review";
 
 const place = (category: string) => ({ service: "Function", category, speciality: "Analytics", confidence: 0.6, reason: "Fits" });
@@ -14,7 +14,7 @@ const tag = (overrides: Partial<ReviewQueueTag> = {}): ReviewQueueTag => ({
 });
 const proposal = (overrides: Partial<ReviewQueueProposal> = {}): ReviewQueueProposal => ({
   proposal_id: "p1", level: "speciality", name: "Tax", path: ["Function", "Finance", "Tax"], status: "review",
-  reason: "Exact match elsewhere", blocks_creation: true, source_tags: 2, decision: null,
+  reason: "Exact match elsewhere", blocks_creation: true, source_tags: 2, create_blocked_reason: null, decision: null,
   matches: [{
     id: 5, name: "Tax", level: "speciality", path: ["Function", "Finance", "Tax"], reusable: true, same_parent: true,
     match_types: ["normalized_name"], lexical_score: 1, semantic_score: null,
@@ -48,6 +48,7 @@ describe("tagDecision", () => {
   it("gives nothing when the choice is incomplete", () => {
     expect(tagDecision(tag({ placements: [] }), "create")).toBeNull();
     expect(tagDecision(tag(), "reuse", { reuseTagId: 9 })).toBeNull();
+    expect(tagDecision(tag({ closest: [match("Acrobat", 9)] }), "reuse")).toBeNull();
   });
 
   it("carries no placement on an exclude or a defer, which the contract forbids", () => {
@@ -59,7 +60,36 @@ describe("tagDecision", () => {
 describe("reuseCandidates", () => {
   it("lists only matches that are one baseline tag, once each", () => {
     const candidates = reuseCandidates(tag({ closest: [match("A", 1, 0.9), match("A", 1, 0.7), match("B", null)] }));
-    expect(candidates).toEqual([{ tag_id: 1, name: "A", score: 0.9 }]);
+    expect(candidates).toEqual([{ tag_id: 1, name: "A", score: 0.9, basis: "semantic" }]);
+  });
+
+  it("says how each one matched, so a close spelling isn't mistaken for the same concept", () => {
+    const [meaning, spelling] = reuseCandidates(tag({
+      closest: [match("aws", 1, 0.67), { ...match("cash", 2, 0.75), basis: "lexical" }],
+    }));
+    expect(reuseCandidateLabel(meaning)).toBe("aws (similar meaning, 0.67)");
+    expect(reuseCandidateLabel(spelling)).toBe("cash (similar spelling, 0.75)");
+  });
+});
+
+describe("choosing a tag to reuse", () => {
+  const withCandidates = tag({ closest: [match("Excel", 3)] });
+
+  it("starts with nothing chosen, so Reuse existing is disabled", () => {
+    expect(chosenReuseTag("")).toBeUndefined();
+    expect(canReuse(withCandidates, undefined)).toBe(false);
+  });
+
+  it("enables Reuse existing once a tag is chosen, and disables it again when the choice is cleared", () => {
+    const chosen = chosenReuseTag("3");
+    expect(chosen).toBe(3);
+    expect(canReuse(withCandidates, chosen)).toBe(true);
+    expect(canReuse(withCandidates, chosenReuseTag(""))).toBe(false);
+  });
+
+  it("stays disabled without a placement, or for a tag that isn't a candidate", () => {
+    expect(canReuse(tag({ closest: [match("Excel", 3)], placements: [] }), 3)).toBe(false);
+    expect(canReuse(withCandidates, 99)).toBe(false);
   });
 });
 
@@ -132,10 +162,10 @@ describe("clampOffset", () => {
 });
 
 describe("round links and panels", () => {
-  it("compares the round's baseline with its snapshot only once both are scored", () => {
+  it("compares the round's baseline with its snapshot within the run that scored both", () => {
     expect(roundCompareHref(round({ score_run_id: "a" }))).toBeNull();
     expect(roundCompareHref(round({ score_run_id: "a", enriched_run_id: "b" })))
-      .toBe("/compare?before=a&before_subject=round_baseline&after=b&after_subject=enriched");
+      .toBe("/compare?before=b&before_subject=round_baseline&after=b&after_subject=enriched");
   });
 
   it("offers review once a preview exists, and after one refused a decision", () => {
@@ -149,5 +179,69 @@ describe("round links and panels", () => {
 
   it("describes a placement in reading order", () => {
     expect(placementLabel(place("Finance"))).toBe("Function › Finance › Analytics");
+  });
+});
+
+describe("the review page's wording", () => {
+  it("says the API's actions in a reviewer's words, and passes on anything unknown", () => {
+    expect(actionLabel("create")).toBe("Add as new");
+    expect(actionLabel("exclude")).toBe("Leave out");
+    expect(actionLabel("something_new")).toBe("something_new");
+  });
+
+  it("turns reason codes into short plain labels without repeats", () => {
+    expect(reasonLabels(tag({ reason_codes: ["producer_flagged", "hierarchy_review", "producer_flagged"] }))).toEqual([
+      "Unsure where it goes", "New category or speciality",
+    ]);
+  });
+
+  it("says why a decision was held, and what to do about it", () => {
+    expect(heldExplanation(tag({ reason_codes: ["hierarchy_blocked"] }))).toContain("left out or isn't settled");
+    expect(heldExplanation(tag({ reason_codes: ["producer_flagged"] }))).toContain("couldn't be used");
+  });
+
+  it("says how a closest match matched", () => {
+    expect(closestMatchLabel(match("Excel", 3))).toBe("Excel (tags, similar meaning, 0.80)");
+    expect(closestMatchLabel({ score: 0.9, basis: "lexical", name: null, level: null, tag_id: null })).toBe("unnamed (unknown level, similar spelling, 0.90)");
+  });
+
+  it("explains what happened to a tag that just left the list", () => {
+    const decision = tagDecision(tag(), "exclude")!;
+    expect(savedMessage([decision], 0)).toContain("Saved: Leave out");
+    expect(savedMessage([decision, decision], 0)).toContain("Saved 2 decisions");
+    expect(savedMessage([], 1)).toContain("back in the list");
+    expect(savedMessage([], 0)).toBe("");
+  });
+});
+
+describe("review progress", () => {
+  it("doesn't count a decision that couldn't be used as settled", () => {
+    expect(reviewProgress({ undecided: 5, decided: 5, held: 1 })).toEqual({ done: 4, total: 10, percent: 40 });
+  });
+
+  it("treats an empty queue as finished", () => {
+    expect(reviewProgress({ undecided: 0, decided: 0, held: 0 }).percent).toBe(100);
+  });
+
+  it("names the one next step", () => {
+    const queue = { undecided: 0, proposals_undecided: 0 };
+    expect(reviewNextStep(round({ status: "running" }), queue)).toBe("working");
+    expect(reviewNextStep(round({ decisions_applied: false }), queue)).toBe("apply");
+    expect(reviewNextStep(round({ pending_sources: 3 }), queue)).toBe("decide");
+    expect(reviewNextStep(round({ pending_sources: 0 }), { ...queue, proposals_undecided: 1 })).toBe("decide");
+    expect(reviewNextStep(round({ pending_sources: 0 }), queue)).toBe("generate");
+  });
+
+  it("starts on the groups until they're settled, and respects a list someone picked", () => {
+    expect(reviewTab(null, { proposals_undecided: 2 })).toBe("proposals");
+    expect(reviewTab(null, { proposals_undecided: 0 })).toBe("undecided");
+    expect(reviewTab(null, undefined)).toBe("undecided");
+    expect(reviewTab("decided", { proposals_undecided: 2 })).toBe("decided");
+  });
+
+  it("folds the stages once they've finished their part", () => {
+    expect(stagesWorthShowing({ status: "review" })).toBe(false);
+    expect(stagesWorthShowing({ status: "failed" })).toBe(true);
+    expect(stagesWorthShowing({ status: "running" })).toBe(true);
   });
 });

@@ -8,7 +8,14 @@ import { isLookupTerm } from "@/lib/lookup";
 import { isRoundActive } from "@/lib/rounds";
 
 import { api, type DecisionSubmission, type ReviewQuery, type RunSubject, type TaxonomySource } from "./client";
-import { type ConceptLevel, isRunFinished, type PipelineConfig, type RoundState, type RunStatus } from "./schemas";
+import {
+  type ConceptLevel,
+  isRunFinished,
+  type PipelineConfig,
+  type RoundSettings,
+  type RoundState,
+  type RunStatus,
+} from "./schemas";
 
 export const RUN_POLL_INTERVAL_MS = 2_000;
 
@@ -48,6 +55,9 @@ export const queryKeys = {
   round: (roundId: string) => ["rounds", "detail", roundId] as const,
   roundConfig: (roundId: string) => ["rounds", "detail", roundId, "config"] as const,
   review: (roundId: string) => ["rounds", "detail", roundId, "review"] as const,
+  roundFiles: (roundId: string) => ["rounds", "detail", roundId, "files"] as const,
+  roundFile: (roundId: string, name: string | null, sheet: string | null) =>
+    ["rounds", "detail", roundId, "files", name, sheet] as const,
   health: ["health"] as const,
   taxonomySearch: (source: TaxonomySource | null, q: string, level: ConceptLevel | "") =>
     ["taxonomy", "search", source?.runId, source?.dataset, q, level] as const,
@@ -203,6 +213,52 @@ export function useRound(roundId: string) {
 
 export function useRoundConfigText(roundId: string, enabled: boolean) {
   return useQuery({ queryKey: queryKeys.roundConfig(roundId), queryFn: () => api.getRoundConfigText(roundId), enabled });
+}
+
+export function useCreateRound() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { round_id: string; baseline_snapshot: string }) => api.createRound(body),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: queryKeys.rounds, exact: true }),
+  });
+}
+
+export function useRoundFiles(roundId: string) {
+  return useQuery({ queryKey: queryKeys.roundFiles(roundId), queryFn: () => api.listRoundFiles(roundId) });
+}
+
+/** One uploaded file's columns for the chosen sheet; disabled until a file is chosen. */
+export function useRoundFile(roundId: string, name: string | null, sheet: string | null) {
+  return useQuery({
+    queryKey: queryKeys.roundFile(roundId, name, sheet),
+    queryFn: () => api.getRoundFile(roundId, name as string, sheet),
+    enabled: name !== null,
+  });
+}
+
+export function useUploadRoundFile(roundId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (file: File) => api.uploadRoundFile(roundId, file),
+    // The whole round, not just its files: changing an imported file sends the round back to setup.
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: queryKeys.round(roundId) }),
+  });
+}
+
+export function useRemoveRoundFile(roundId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (name: string) => api.removeRoundFile(roundId, name),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: queryKeys.round(roundId) }),
+  });
+}
+
+export function useConfigureRound(roundId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { mapping: Record<string, unknown>; settings: RoundSettings }) => api.configureRound(roundId, body),
+    onSuccess: (round) => queryClient.setQueryData(queryKeys.round(roundId), round),
+  });
 }
 
 export function useRunRound(roundId: string) {

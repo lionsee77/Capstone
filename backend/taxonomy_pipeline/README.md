@@ -37,6 +37,7 @@ taxonomy_pipeline/
 │   │   ├── __init__.py               #   source registry - register new `type:` values here
 │   │   ├── base.py                   #   TaxonomySource protocol, canonical TaxonomyDataset, its Hierarchy (parent lookups)
 │   │   ├── sql_dump.py               #   reads plain .sql dump files; sql_literal, the escaper every writer uses
+│   │   ├── synonym_set.py            #   `type: synonym_set`: a frozen export of approved synonyms (SynonymMapping)
 │   │   ├── flat_import.py            #   one mapped CSV/xlsx table -> 4-table dump + tag context (`import-source`)
 │   │   └── references/               #   classification references a taxonomy is measured against
 │   │       ├── workbook.py           #     the shared workbook loader and reference/record base models
@@ -50,6 +51,17 @@ taxonomy_pipeline/
 │   │   ├── preprocessing.py          #   breadth's label normalisation profiles
 │   │   ├── judge.py                  #   optional LLM judge (OpenAI Decisions API) for saturation's ambiguous concepts
 │   │   └── engine.py                 #   the comparison engine saturation and Case A share
+│   ├── synonyms/                     # PB07: other names for existing concepts, stored beside the taxonomy
+│   │   ├── models.py                 #   SynonymCreate, Synonym, SynonymQuery, SynonymList, Resolution contracts
+│   │   ├── resolver.py               #   SynonymIndex: what a term means (scopes, ambiguity) and check_new (#61)
+│   │   ├── store.py                  #   SQLite table + audit event per change; propose/review; concept_name check
+│   │   └── sources/                  #   suggestion sources - register new ones in registry.py
+│   │       ├── base.py               #     SynonymSource ABC and Suggestion
+│   │       ├── spelling.py           #     British/American spellings matching doesn't fold (the seed set)
+│   │       ├── labels.py             #     shared preferred-label -> alternative-labels matching, file reader
+│   │       ├── esco.py               #     ESCO altLabels (skills/occupations CSV)
+│   │       ├── onet.py               #     O*NET Alternate Titles (the Excel download)
+│   │       └── registry.py           #     SOURCES by id; `synonym-suggest --source`
 │   ├── quality/                      # pluggable quality checks that score one taxonomy
 │   │   ├── base.py                   #   Metric ABC (run; measures for comparisons)
 │   │   ├── integrity.py              #   duplicates, orphans, dead ends
@@ -62,7 +74,7 @@ taxonomy_pipeline/
 │   ├── providers/                    # what is specific to one external source
 │   │   ├── base.py                   #   SourceProvider ABC: per-tag context and display name for Case B
 │   │   ├── registry.py               #   PROVIDERS by name; `case-b --provider`
-│   │   ├── skillsfuture.py           #   SkillsFuture: tag-ID offset, unique-skills workbook context
+│   │   ├── models.py                 #   validated context snapshot and content hash
 │   │   └── tag_context.py            #   any `import-source` source: context from its <name>_tag_context.json
 │   ├── enrichment/                   # Case A/B producers and the merge stages (see "Classification workflow")
 │   │   ├── models.py                 #   ClassificationOutput contract + every stage's report model
@@ -96,6 +108,7 @@ taxonomy_pipeline/
 │   │   └── store.py                  #   append-only SQLite writer and read-only history queries
 │   ├── app/                          # use cases: what every CLI command and API route calls
 │   │   ├── changes.py                #   history queries and durable audit-event recovery
+│   │   ├── synonyms.py               #   add_synonym, remove_synonym, list_synonyms (/synonyms, synonym-* commands)
 │   │   ├── scoring.py                #   run_pipeline(config) -> RunReport; dataset/report I/O; check_runs; run history
 │   │   ├── comparison.py             #   compare / compare_runs; Markdown, CSV and JSON exports
 │   │   ├── lineage.py                #   taxonomy_lineage: stages, chains and the runs that scored them
@@ -116,8 +129,9 @@ taxonomy_pipeline/
 │   │   ├── lineage.py                #   /lineage: which integrations and merge roots it reads, over app.lineage
 │   │   ├── lookup.py                 #   /lookup: which integrations root it reads, over app.lookup
 │   │   ├── changes.py                #   authenticated, read-only GET /changes over app.changes
+│   │   ├── synonyms.py               #   /synonyms: list, add and remove synonyms over app.synonyms
 │   │   └── security.py               #   API token and allowed data directories
-│   └── cli.py                        # `taxonomy-pipeline run|check-comparable|compare|serve|import-source|case-a|case-b|merge-preview|review-proposals|bulk-decide|integrate`
+│   └── cli.py                        # `taxonomy-pipeline run|check-comparable|compare|serve|import-source|case-a|case-b|merge-preview|review-proposals|bulk-decide|integrate|lookup|synonyms|synonym-add|synonym-remove`
 ├── schemas/
 │   └── classification_output.schema.json # JSON Schema for the producer contract
 └── tests/
@@ -160,7 +174,7 @@ field in `resolution.json`. Paths below are under `src/taxonomy_pipeline/`.
 | Loading `backend/.env` | three places | `env.py` only (via `llm.py` for the LLM) |
 | Service/category/speciality id lookups | rebuilt in saturation, Case A, `/taxonomy`, Case B | `TaxonomyDataset.hierarchy()` in `taxonomy/base.py` |
 | Name normalisation | `integrity.normalize`, `saturation.match_key`, `integrate._collation_key` | `matching/names.py` (`normalize`, `match_key`, `collation_key`; its docstring says which stage uses which) |
-| SkillsFuture specifics (`TAG_ID_OFFSET`, unique-skills workbook) | `classification/case_b.py`, `cli.py` | `providers/skillsfuture.py`, behind `providers/base.py` + `registry.py` |
+| SkillsFuture workbook parsing and tag numbering | `classification/case_b.py`, `cli.py` | standalone SkillsFuture generator; Case B reads its JSON through `providers/tag_context.py` |
 | `InputLocation`, `SourceTagRef`, `HierarchyGroup` | root `models.py` | `enrichment/models.py` |
 | Classification placement path | `TaxonomyPath` in `classification/models.py` | `PlacementPath` in `enrichment/models.py` (the API's `TaxonomyPath` keeps its name) |
 | Why a tag is pending | text prefix "Producer requested review" | `SourceDisposition.reason_codes` |
@@ -196,7 +210,7 @@ taxonomy_pipeline.pipeline            -> taxonomy_pipeline.app.scoring
 
 **Changed calls**
 
-- `case-b` takes `--provider` (default: the `--incoming` dataset name) and
+- `case-b` takes `--provider` (default: `tag_context`) and
   `--context` (`--unique` still works); `run_case_b(provider=..., context=...)`
   replaces `unique_skills=...`.
 - `experiments/evaluate_case_b.py` takes `--config` and `--baseline <dataset
@@ -243,7 +257,8 @@ Run from `backend/taxonomy_pipeline/` (the commands default to
 ```bash
 taxonomy-pipeline run --config configs/original_vs_skillsfuture.yaml --output judged_report.json  # needs .[llm] + key
 taxonomy-pipeline case-a --report judged_report.json
-taxonomy-pipeline case-b --report judged_report.json        # needs .[llm] and OPENAI_API_KEY
+taxonomy-pipeline case-b --report judged_report.json --provider tag_context \
+    --context ../skillsfuture/skillsfuture_tag_context.json  # needs .[llm] and OPENAI_API_KEY
 taxonomy-pipeline merge-preview --input case_a_output.json --input case_b_output.json
 # optionally draft decisions for the clear-cut ambiguous tags, then review the rest:
 taxonomy-pipeline bulk-decide --merge-run merge_runs/<timestamp> --report judged_report.json \
@@ -296,20 +311,27 @@ stages' rules and the review-decision format are in the
 
 ### Case B (LLM classification)
 
-Case B's SkillsFuture provider mirrors the standalone generator's tag numbering.
-An end-to-end regression test checks the generated IDs and titles against the
-provider's contexts, including blank titles and whitespace normalization.
+SkillsFuture and generic imports both use the JSON-based `tag_context` reader.
+The standalone SkillsFuture generator writes SQL and context JSON together,
+using the exact same tag IDs. There is no separate SkillsFuture provider;
+all sources use the same JSON reader without reconstructing IDs.
+Regenerate SkillsFuture once with `python skillsfuture/generate_skillsfuture_taxonomy.py`
+from `backend/` to create `skillsfuture_tag_context.json`. Run Case B with
+`--provider tag_context --context ../skillsfuture/skillsfuture_tag_context.json`.
 
 `case-b` asks an OpenAI model to place each parentless new tag into the
 baseline's existing categories and specialities, or to propose a new one,
 using the incoming source's context for each tag. That comes from the source's
-provider (`--provider`, defaulting to the `--incoming` dataset name; see
-`providers/`): for SkillsFuture, the unique-skills workbook's skill
-descriptions (`--context`, or the older `--unique`, defaulting to the one in
-`backend/skillsfuture/`); for a source added with `import-source`, the
+provider (`--provider`, defaulting to `tag_context`; see
+`providers/`): for SkillsFuture, the generator's `skillsfuture_tag_context.json`
+in `backend/skillsfuture/` supplies skill ID, title, description and type;
+explicit workbook paths passed through `--context` or `--unique` must now point
+to this JSON instead. For a source added with `import-source`, use the
 `tag_context` provider and the `<name>_tag_context.json` it wrote
 (`--provider tag_context --context <file>`; the prompt names the source by the
-file's `display_name`). Both taxonomies come from
+file's `display_name`). SkillsFuture also supports this explicit generic form:
+`--provider tag_context --context ../skillsfuture/skillsfuture_tag_context.json`.
+Keep the SQL and context file from the same generator/import run. Both taxonomies come from
 the pipeline config, the same datasets saturation and Case A use. Install the
 optional dependencies and set the key in `backend/.env` (copy
 `backend/.env.example`):
@@ -322,6 +344,14 @@ pip install -e ".[dev,llm]"
 OPENAI_API_KEY=your-openai-api-key
 OPENAI_MODEL=gpt-4o-mini
 ```
+
+`--context` is required and checked before loading datasets. Its `source` must
+equal `--incoming`; both supported generators write that metadata. Any context
+title supplied for an incoming tag must match its taxonomy title (ignoring
+case and whitespace), otherwise the run stops before API calls. Missing context
+coverage warns and falls back to tag names. Description-only legacy context
+also warns when titles cannot be checked; it cannot establish ID/title alignment.
+The provider reads one snapshot so validation, prompt data and hashing agree.
 
 Options: `--batch-size` (default 5), `--model`, `--debug-response` (also
 shows the endpoint, model and each raw response; Case B logs its progress to
@@ -338,6 +368,10 @@ to reclassify those tags. Each record also carries an `action`:
 `assign_existing`, `propose_new_speciality` or `propose_new_category`.
 The checkpoint also records `context_schema_version`; checkpoints made before
 the corrected skill-context mapping are rejected instead of reusing old proposals.
+It additionally records the exact context file's SHA-256, provider and source
+display name. Editing the context (including metadata) rejects an old checkpoint
+before model initialization. Older checkpoints lacking these fields must be
+restarted with a new checkpoint path or deliberately removed after inspection.
 
 Each batch makes at most three API attempts, with SDK retries disabled on the
 Case B client built by the pipeline. Injected clients keep their own settings;
@@ -600,8 +634,8 @@ src/taxonomy_pipeline/enrichment/
 in the existing `taxonomy_pipeline.sqlite3`, pending migration to the client DB.
 The user confirmed that Ankit's `taxonomy_proposals` schema has **not been received**;
 use provisional pipeline proposal references until it arrives. Client-schema alignment
-is pending, not claimed complete. PB07/synonym matching is paused. The log accepts
-synonym actions without introducing a synonym matcher or management workflow.
+is pending, not claimed complete. Synonym storage and management (PB07, #59) now writes `synonym_add` and
+`synonym_remove` events (see [Synonyms](#synonyms-pb07)); matching through synonyms (#60) is not built yet.
 
 `audit/` has no dependency on enrichment. `enrichment/audit.py` translates workflow
 evidence into its contract; `app/changes.py` is the shared CLI/API use case. The
@@ -655,7 +689,11 @@ Connected operations:
   real assigned IDs, the enriched snapshot fingerprint, proposal/decision lineage
   and `scope=snapshot`. They do **not** claim a live MariaDB write. Creating another
   snapshot is another operation, even if it has identical content.
-- Removal, merge, synonym and deprecation operations can use the same writer when
+- `synonym-add` / `synonym-remove` (and `POST /synonyms`) write `synonym_add` /
+  `synonym_remove` events in the same SQLite transaction as the synonym row, with
+  `scope=live`: the change takes effect in the pipeline's synonym table at once, and
+  no taxonomy file or MariaDB row is written. See [Synonyms](#synonyms-pb07).
+- Removal, merge and deprecation operations can use the same writer when
   those workflows are implemented. Their storage contract is supported and tested;
   those operations are not implemented by this change. Individual actor identity is
   self-reported, with `unspecified` as the explicit default.
@@ -989,6 +1027,10 @@ taxonomy-pipeline import-source --mapping ../onet/onet_mapping.yaml \
 - It writes `<name>_taxonomy.sql` and `<name>_tag_context.json` next to the
   mapping (`--out-dir` to change), then reloads the dump through `sql_dump` and
   fails unless every row reads back unchanged.
+  Context entries include the generated tag's canonical title alongside its
+  description, allowing Case B to reject mismatched titles before model calls.
+  Regenerate older context files with `import-source` to include these titles;
+  keep the SQL and context JSON from the same import run.
 - Categories are unique per (service, name), specialities per name within a
   category, tags per name across the source; a tag under several specialities
   gets one row and several links. Tag names are compared the way the client
@@ -1348,6 +1390,7 @@ Defaults come from `SaturationMetric.default_params`
 | `add_candidate_semantic_threshold` | 0.50 | ...and (with a model) the best meaning score below this; otherwise `REVIEW_AMBIGUOUS` | 0.50 |
 | `cross_level` | true | Also search the other levels of the known taxonomy | true |
 | `judge` | none (off) | Optional LLM judge for `REVIEW_AMBIGUOUS` concepts; see [Decisions API judge](#decisions-api-judge) | on: `gpt-6-luna`, `[tags]`, cache `judge_cache.json` |
+| `synonyms` | none (off) | Name of a `synonym_set` dataset: the baseline's global synonyms count as names of their concepts. Not in `default_params`, so definitions v1 and `baseline_v1.yaml` are unchanged; see [Synonyms](#synonyms-pb07) | none |
 
 ### Decisions API judge
 
@@ -1780,12 +1823,12 @@ a hand-run round.
 | `GET /rounds`, `GET /rounds/{id}` | Round state: overall `status`, and each stage's status, summary and error |
 | `POST /rounds` | Create a round: `{round_id, baseline_snapshot}` |
 | `PUT /rounds/{id}/files/{name}` | Upload a `.csv`, `.tsv`, `.xlsx` or `.xlsm` as the raw body, up to 50 MB |
-| `GET /rounds/{id}/files`, `GET /rounds/{id}/files/{name}?sheet=` | Each file's sheets, columns, row count and sample values |
+| `GET /rounds/{id}/files`, `GET /rounds/{id}/files/{name}?sheet=` | Each file's sheets and their columns, row count, sample values and first rows |
 | `DELETE /rounds/{id}/files/{name}` | Remove an uploaded file |
 | `PUT /rounds/{id}/config` | Save `{mapping, settings}`: imports the source and writes the round config |
 | `GET /rounds/{id}/config` | The generated round config, as text |
 | `POST /rounds/{id}/run` | Run or resume the stages before review, in the background |
-| `GET /rounds/{id}/review?state=&q=&offset=&limit=` | The review queue: `undecided`, `decided` or `all` tags, plus proposals |
+| `GET /rounds/{id}/review?state=&q=&offset=&limit=` | The review queue: `undecided`, `decided`, `held` or `all` tags, plus proposals |
 | `POST /rounds/{id}/decisions` | Save `{reviewer, decisions, clear_tags, clear_proposals}` |
 | `POST /rounds/{id}/bulk-decide` | Draft clear-cut decisions: `{reviewer, create_below, reuse_above}` |
 | `POST /rounds/{id}/apply` | Rebuild the merge preview with the saved decisions, in the background |
@@ -1796,6 +1839,12 @@ a hand-run round.
   `labels` must name files uploaded to this round. A mapping that fails (422 with the
   reason) leaves the last good import in place. Saving a new one discards later progress,
   including decisions, because they described the old source.
+- **`baseline_snapshot`** is an integrated snapshot, or `@original` for the client's dumps in `sql-files-nus`.
+  The `@` keeps it apart from any snapshot, since a round ID can't contain one, so a snapshot named `original`
+  stays itself. `GET /rounds/options` lists `@original` last. A source is read from one flat table, so SkillsFuture imported this
+  way gives framework skill titles (sheet `Job Role_TSC_CCS`), not the Unique Skills in `skillsfuture_taxonomy.sql`,
+  which needs its generator's join. Expect a much longer review queue than O*NET's.
+- A source can't be named `enriched`, because that names the finished snapshot in the round's comparison.
 - **`settings`** has `judge`, `case_b` and saturation's `threshold`, `semantic_threshold`,
   `add_candidate_lexical_threshold` and `add_candidate_semantic_threshold`. Unset values keep the
   template's (`configs/original_vs_skillsfuture.yaml`). Nothing else can be set, so a
@@ -1811,13 +1860,14 @@ a hand-run round.
   earlier one on that tag or proposal. Saving only writes `rounds/<id>/decisions.json`. `apply`
   runs them through `merge-preview`, which has the last word: a decision it refuses fails the
   stage with the reason, and the saved decisions stay to be corrected. A `create` on a path
-  screening still blocks leaves the tag pending. `reviewer` is self-reported, like `--actor`, and
+  screening still blocks leaves the tag pending, listed under `held` until it gets another decision. A proposal's `create_blocked_reason` says when `create` would be refused. `reviewer` is self-reported, like `--actor`, and
   is what the audit history records. `bulk-decide` is the CLI's, and only drafts: its decisions are
   saved and can be changed before applying. It reads saved decisions, so apply yours first.
 - **Integrate** is refused while a tag is pending or decisions are unapplied. Deferred and
-  excluded tags don't hold it up, and they aren't in the snapshot. It then scores the snapshot with
-  the round's metrics, so `score_run_id` and `enriched_run_id` can be compared through
-  `GET /runs/{before}/compare/{after}?before_subject=round_baseline&after_subject=enriched`.
+  excluded tags don't hold it up, and they aren't in the snapshot. It then scores the baseline and
+  the snapshot in one run (`enriched_run_id`), so they compare like for like through
+  `GET /runs/{id}/compare/{id}?before_subject=round_baseline&after_subject=enriched`, and the round
+  appears on the dashboard's Improvement page. With the judge on, that scoring uses it again.
 - **Changing files:** replacing or removing a file the imported mapping reads, with different
   contents, sends the round back to `setup` and discards what was built from it, including saved
   decisions. Import it again to continue; the saved mapping stays. Uploading the same bytes again, or a
@@ -1919,6 +1969,7 @@ taxonomy-pipeline lookup "Tax Advisory"    # run from backend/taxonomy_pipeline,
 | `variant` | `exact` | Same `match_key`: also `&`/`and`, `-isation`/`-ization` and a trailing plural |
 | `lexical` | `near` | RapidFuzz ratio on `match_key` of at least `min_score` |
 | `semantic` | `near` | Only with `semantic=true`: cosine of at least 0.7 |
+| `synonym` | `exact` | The term is an approved global synonym of the concept; `synonym` names it (#60) |
 
 | Param | Default | Meaning |
 |---|---|---|
@@ -1950,7 +2001,223 @@ Worth knowing when reading a result:
 - **Duplicate rows all come back:** a name held by several rows returns each one, and their
   `paths` show where each sits.
 - **Retired rows count as existing:** a row with `status` 0 is returned with `active: false`.
-  Synonyms (#60) and deprecation replacements (#64) aren't applied.
+  Deprecation replacements (#64) aren't applied.
+- **Synonyms:** approved *global* synonyms recorded against `TAXONOMY_SYNONYM_DATASET`
+  (default `original`; CLI `--synonym-dataset`, `''` to leave them out) count as exact
+  matches. A synonym only applies where the snapshot still has its concept ID with the
+  name it was recorded against. Scoped synonyms need the branch a term is used in, so
+  they don't apply here: use `synonym-resolve --within-level/--within-id`.
+
+### Synonyms (PB07)
+
+Records other names for existing concepts, such as "Assurance review" for the tag *audit*, so
+lookups and scoring can later resolve them (#60). A synonym never becomes a taxonomy
+row: it lives in its own `taxonomy_synonyms` table in `taxonomy_pipeline.sqlite3` and
+points at one concept by dataset, level and ID (#59). The commands and routes call the
+same use cases (`app/synonyms.py`):
+
+```bash
+taxonomy-pipeline synonym-add --level tags --concept-id 136 --term "Assurance review" \
+    --reason "Used in gig posts for audit work" --actor david   # tag 136 is "audit" in configs/baseline_v1.yaml
+taxonomy-pipeline synonyms --level tags --concept-id 136        # approved synonyms as JSON
+taxonomy-pipeline synonym-remove <synonym_id> --reason "Too ambiguous" --actor david
+```
+
+```bash
+curl -H "Authorization: Bearer $TAXONOMY_API_TOKEN" -H "Content-Type: application/json" \
+    -d '{"run_id": "<run>", "dataset": "original", "concept_level": "tags", "concept_id": "136",
+         "term": "Assurance review", "reason": "Used in gig posts", "actor": "david"}' http://localhost:8000/synonyms
+curl -H "Authorization: Bearer $TAXONOMY_API_TOKEN" "http://localhost:8000/synonyms?concept_id=136"
+curl -H "Authorization: Bearer $TAXONOMY_API_TOKEN" -H "Content-Type: application/json" \
+    -d '{"reason": "Too ambiguous", "actor": "david"}' http://localhost:8000/synonyms/<synonym_id>/remove
+```
+
+`synonym-add` finds the concept through `--config` (default `configs/baseline_v1.yaml`)
+and `--dataset` (default `original`). `POST /synonyms` takes a past run's `run_id`
+instead, the way `/taxonomy` finds a dataset, because the API doesn't read callers'
+config files. Levels are `categories`, `specialities` and `tags`. Add
+`--scope-level`/`--scope-id` (or `scope_level`/`scope_id` in the body) for a scoped
+synonym, below.
+
+Rules:
+
+- **One concept, many synonyms.** Each is stored with its own `term` and the concept's
+  canonical `concept_name`, so a synonym is always distinguishable from the real name.
+- **No duplicates.** Terms are compared by `match_key` (stored as `term_key`): case,
+  spacing, trailing punctuation, `&`/`and`, `-isation`/`-ization` and a trailing plural,
+  so "JS tag", "js tags" and " JS tag. " are one synonym. Adding one already approved for
+  that concept in the same scope is refused (409 over HTTP); so is the concept's own name
+  or a spelling of it ("Audits" for *audit*), and a term with no letters or digits or a
+  placeholder ("test", "new") (422).
+- **A global synonym can't have two meanings** (#61). It is refused (409) when the term
+  is already another concept's name, or another concept's global synonym. A word that
+  means different things in different branches must be scoped instead.
+- **The concept must exist and be active.** An unknown run, dataset or concept ID is
+  refused (404) before anything is written, and so is a dataset whose config can't be
+  read or whose files can't be loaded (404, with the loading error). A retired concept
+  (status 0) is refused (422): new terms shouldn't resolve to it.
+- **One dataset name, one taxonomy.** Synonyms belong to a dataset name such as
+  `original`, so they survive enrichment (`integrate` keeps the baseline's IDs). Each
+  records its concept's name; adding to an ID whose synonyms were recorded under a
+  different name is refused (422), because that dataset name now points at another
+  taxonomy. Give it its own name in the config.
+- **Removing keeps history.** `synonym-remove` marks the row `removed` with who and why;
+  `synonyms --include-removed` (or `include_removed=true`) shows it. The same term can be
+  added again later as a new row.
+- **Every change is audited.** Each add or remove commits together with its
+  `synonym_add` / `synonym_remove` event in `taxonomy_change_log`, carrying the
+  synonym before and after, the reason, the actor and the fingerprint of the taxonomy
+  the concept was checked against. Read them with `taxonomy-pipeline changes
+  --action synonym_add`.
+
+#### Scopes and ambiguity (#61)
+
+A synonym is **global**, or **scoped** to one category or speciality the concept sits
+in: "pitch" can mean the tag *Sales Pitch* only inside the *Sales* category, while
+elsewhere it still means the tag *Pitch*.
+
+```bash
+# illustrative IDs: tag 100 "Sales Pitch" sits under category 1 "Sales"
+taxonomy-pipeline synonym-add --level tags --concept-id 100 --term Pitch \
+    --scope-level categories --scope-id 1 --reason "Sales jargon" --actor david
+```
+
+The scope must be a branch the concept sits in: for a tag, a speciality it is linked
+to or that speciality's category; for a speciality, its category. A category can't be
+scoped. Two concepts can't share a synonym in the same scope (409).
+
+`SynonymIndex.resolve(term, level=..., within=...)` (`synonyms/resolver.py`) says what a
+term means for a lookup made inside branch `within`. Candidates come in tiers, most
+specific first, and the first tier with any candidate decides:
+
+1. synonyms scoped to the lookup's branch (a speciality's scope before its category's);
+2. concept names;
+3. global synonyms.
+
+Terms compare by `match_key`, like stored synonyms. The result is `resolved` (one
+concept), `ambiguous` (several in the deciding tier, all listed once, none chosen: two
+rows sharing a name are ambiguous too) or `unknown`. Each match says whether it came
+`via` the concept's name or a synonym, and which synonym. Removed synonyms never
+resolve. `within` may be a category, speciality or tag (its branches), given as a string
+or integer ID; an unknown one is refused rather than treated as "no branch".
+
+A stored synonym only applies where it still fits the taxonomy: its concept exists with
+the name the synonym was recorded against, and a scoped one's concept still sits in its
+scope. One that doesn't fit (renamed, removed, moved) is set aside instead of resolving
+to the wrong concept, and doesn't block new synonyms. Synonyms from before these rules
+(#59 allowed one term on two concepts) can also be shadowed by a name or ambiguous.
+`synonym-check` (or `GET /synonyms/problems?run_id=...&dataset=...`) lists every such
+synonym with the reason, and exits 1 when there is any:
+
+```bash
+taxonomy-pipeline synonym-check            # configs/baseline_v1.yaml, dataset original
+```
+
+The table's schema is now version 2 (scope columns). A version 1 table from #59 is
+migrated on the next write, and its synonyms become global.
+
+#### Where synonyms are used (#60)
+
+| Where | How | Synonyms |
+|---|---|---|
+| `synonym-resolve` / `GET /synonyms/resolve` | "What does this term mean here?": the resolver above, with `within_level`/`within_id` for the branch | live, global and scoped |
+| Tag lookup (`lookup`, `GET /lookup`) | a `synonym` match among the exact ones | live, global only |
+| Hierarchy screening (`merge-preview --synonyms`) | a proposal whose name is an approved synonym gets a `synonym` match, which counts as exact: within the same parent it is reused | live when screened; saved in `resolution.json`'s screening settings, so a replay uses the same ones |
+| Saturation (`synonyms:` param) | an incoming concept whose name is a global synonym is an exact match of that concept | frozen `synonym_set` file |
+
+```bash
+taxonomy-pipeline synonym-resolve "Assurance review"                    # live, against configs/baseline_v1.yaml
+curl -H "Authorization: Bearer $TAXONOMY_API_TOKEN" \
+    "http://localhost:8000/synonyms/resolve?run_id=<run>&dataset=original&term=Assurance%20review"
+taxonomy-pipeline merge-preview --input case_a_output.json --input case_b_output.json --synonyms
+taxonomy-pipeline synonyms --export configs/synonyms/synonyms_v1.json --dataset original   # freeze for scoring
+```
+
+**Why scoring reads a frozen file.** Live synonyms change whenever a reviewer approves
+one, so a config reading them would score differently next week. Saturation instead
+names a `synonym_set` dataset. Its `paths` resolve against the config's own directory,
+so a config in `configs/` reads the file exported to `configs/synonyms/` above:
+
+```yaml
+datasets:
+  - {name: synonyms_v1, type: synonym_set, paths: [synonyms/synonyms_v1.json]}
+metrics:
+  - id: saturation
+    params: {baseline: original, incoming: [skillsfuture], synonyms: synonyms_v1}
+```
+
+`--export` refuses to overwrite a file, so export each new set under a new name, and
+refuses a dataset with no approved synonyms (a mistyped name would otherwise pin an empty
+set); it can't be combined with the list filters. A synonym only applies where the
+baseline has its concept with the same ID and name: any other is dropped and listed in
+`details.synonyms.dropped` (with `exported_from`, the set's dataset), and the summary
+counts them, so a set exported from another taxonomy can't attach terms to a
+same-named but different concept. The
+`synonyms` param is part of the recorded settings, and `check-comparable` compares the
+synonym set's row counts (total, global, scoped) between two runs like any reference
+dataset, so a run with synonyms and one without are flagged as scored differently.
+Without the param, saturation is unchanged: `baseline_v1.yaml` and definitions v1 don't
+use synonyms. `integrate` copies the `synonyms` param and its dataset into
+`enriched.yaml` like any other dataset a round's metric reads. Only global synonyms
+apply to saturation, because an incoming concept's branch belongs to another taxonomy.
+
+The `synonyms` context sits between `quality` and `matching`: matching receives
+`SynonymMapping`s as data (`KnownPool.add_aliases`) and never imports it. The dashboard's
+zod schemas mirror the new `synonym` match types, screening settings and `synonym_set`
+dataset type; it doesn't call `/synonyms` yet, so the proxy allowlist is unchanged.
+
+#### Suggested synonyms: sources propose, a reviewer decides
+
+A **source** suggests synonyms; it never approves them. Suggestions are stored as
+`proposed`, which never resolve, and a reviewer approves or rejects each one:
+
+```bash
+taxonomy-pipeline synonym-suggest --source spelling --actor david          # no file needed
+taxonomy-pipeline synonym-suggest --source esco --file ~/Downloads/skills_en.csv
+taxonomy-pipeline synonym-suggest --source onet --file "../onet/raw/Alternate Titles.xlsx"
+taxonomy-pipeline synonyms --status proposed                               # the review queue
+taxonomy-pipeline synonym-review <synonym_id> --approve --reason "US spelling" --actor david
+taxonomy-pipeline synonym-review <synonym_id> --reject --reason "Different meaning" --actor david
+```
+
+| Source | Suggests | Needs |
+|---|---|---|
+| `spelling` | British/American respellings that `match_key` doesn't already fold: a curated word list (*colour/color*, *centre/center*, *modelling/modeling*) and an allowlist of `-ise`/`-ize` stems (*organise/organize*). Both are allowlists: a rule would misspell *advertising* or *paradise*, and American words with another British sense (*check*, *program*, *tire*, *license*) are never respelled | nothing; on `configs/baseline_v1.yaml` it proposes 11 (*Defence/Defense*, *Modelling/Modeling*, *Centre/Center*, ...) |
+| `esco` | ESCO `altLabels` of each skill/occupation whose `preferredLabel` is a concept name | an ESCO CSV, e.g. `skills_en.csv` (CC BY 4.0) |
+| `onet` | O*NET alternate titles of each occupation whose `Title` is a concept name (in practice, specialities an O*NET round added) | O*NET **Alternate Titles**, the **Excel** download (CC BY 4.0): the text download has no `Title` column, so it is refused |
+
+Rules:
+
+- A suggestion that is the concept's own name or a spelling of it (`match_key`), or that
+  was already proposed, approved, **rejected** or **removed** for that concept, isn't
+  proposed again, so rerunning a source only adds what's new, and a rejection or a
+  removal sticks (add it by hand with `synonym-add` to bring it back). Suggestions for
+  retired or unknown concepts are skipped; `skipped` in the report counts each reason.
+- Labels are matched to concept names by `match_key`, like every other stage. Files are
+  read without CSV quoting for `.txt`/`.tsv`, closed after reading, and a file that can't
+  be parsed (a corrupt `.xlsx`, a bad CSV) is refused with its name (422 over HTTP).
+- A source label naming several of our concepts (duplicate rows) is skipped rather than
+  guessed.
+- **Approving** runs the same checks as `synonym-add` against the current taxonomy (the
+  concept still exists and is active; the term isn't its current name; a global synonym
+  can't already mean another concept, #61). The approved row and its `synonym_add` event
+  record the concept's *current* name and snapshot, not the proposal's, and the reviewer
+  as actor. **Rejecting** logs a `review_decision`. Proposing logs nothing,
+  because nothing has changed yet.
+- Over HTTP: `POST /synonyms/suggest` (`run_id`, `dataset`, `source`, optional `path`,
+  which must sit under `TAXONOMY_DATA_ROOTS`), `GET /synonyms?status=proposed`,
+  `POST /synonyms/{id}/approve` (with `run_id`) and `POST /synonyms/{id}/reject`.
+
+Why not query a thesaurus at match time? A general one maps "Python" to a snake and
+"Java" to coffee, and its answers can change between runs. As suggestions, its mistakes
+cost one rejection, and matching only ever sees what a person approved.
+
+The table's schema is now version 3 (who reviewed a suggestion); older tables are
+migrated on the next write.
+
+If the synonym store can't be used (an unreadable database, or a table written by another
+version) the routes answer 503. Every write recreates a missing table or index, and reads
+work on older tables before anything has migrated them.
 
 ## Plugging in a taxonomy dataset
 

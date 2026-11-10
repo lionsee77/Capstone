@@ -179,11 +179,12 @@ export const metricCatalogueSchema = z.record(
 export type MetricCatalogue = z.infer<typeof metricCatalogueSchema>;
 
 /** Source types registered in `taxonomy/__init__.py`. */
-export const datasetTypeSchema = z.enum(["sql_dump", "ssic", "ssoc"]);
+export const datasetTypeSchema = z.enum(["sql_dump", "ssic", "ssoc", "synonym_set"]);
 export type DatasetType = z.infer<typeof datasetTypeSchema>;
 
-/** Reference classifications load from a single workbook (`taxonomy/__init__.py`). */
-const SINGLE_PATH_TYPES: ReadonlySet<DatasetType> = new Set(["ssic", "ssoc"]);
+/** Reference classifications load from a single workbook, and a synonym set from one exported file
+ * (`taxonomy/__init__.py`). */
+const SINGLE_PATH_TYPES: ReadonlySet<DatasetType> = new Set(["ssic", "ssoc", "synonym_set"]);
 
 export const datasetConfigSchema = z
   .object({
@@ -238,7 +239,7 @@ export const existingConceptSchema = z.object({
 
 export const conceptMatchSchema = z.object({
   concept: existingConceptSchema,
-  match_types: z.array(z.enum(["normalized_name", "match_key", "lexical", "semantic"])),
+  match_types: z.array(z.enum(["normalized_name", "match_key", "synonym", "lexical", "semantic"])),
   lexical_score: z.number().min(0).max(1),
   semantic_score: z.number().min(-1).max(1).nullable().default(null),
   same_parent: z.boolean(),
@@ -260,9 +261,24 @@ export const screenedProposalSchema = z.object({
   reason: z.string(),
 });
 
+/** Mirrors `SynonymMapping` (`taxonomy/synonym_set.py`): the part of an approved synonym matching uses. */
+export const synonymMappingSchema = z.object({
+  synonym_id: z.string(),
+  term: z.string(),
+  normalized_term: z.string(),
+  term_key: z.string(), // match_key(term): what every stage compares
+  concept_level: z.enum(["categories", "specialities", "tags"]),
+  concept_id: z.string(),
+  concept_name: z.string(),
+  scope_level: z.enum(["categories", "specialities"]).nullable().default(null),
+  scope_id: z.string().nullable().default(null),
+}).strict();
+
 export const screeningSettingsSchema = z.object({
   lexical_threshold: z.number().min(0).max(1).default(0.9),
   semantic_threshold: z.number().min(0).max(1).default(0.7),
+  // The approved synonyms screening applied (`merge-preview --synonyms`); absent in older saved reports.
+  synonyms: z.array(synonymMappingSchema).default([]),
 }).strict();
 
 export const repeatedNameWarningSchema = z.object({
@@ -487,6 +503,7 @@ export const roundStateSchema = z.object({
   created_at: z.string(),
   source_name: z.string().nullable(),
   settings: roundSettingsSchema,
+  mapping: z.record(z.string(), z.unknown()).nullable(),
   stages: z.array(roundStageSchema),
   warnings: z.array(z.string()),
   import_counts: z.record(z.string(), z.number()),
@@ -546,6 +563,7 @@ export const reviewQueueProposalSchema = z.object({
   reason: z.string(),
   blocks_creation: z.boolean(),
   source_tags: z.number(),
+  create_blocked_reason: z.string().nullable(),
   matches: z.array(z.object({
     id: z.union([z.number(), z.string()]).nullable(),
     name: z.string(),
@@ -571,6 +589,7 @@ export const reviewQueueSchema = z.object({
   limit: z.number(),
   undecided: z.number(),
   decided: z.number(),
+  held: z.number(),
   proposals_undecided: z.number(),
 });
 export type ReviewQueue = z.infer<typeof reviewQueueSchema>;
@@ -589,6 +608,8 @@ export const roundFileSchema = z.object({
   columns: z.array(z.string()),
   row_count: z.number(),
   samples: z.record(z.string(), z.array(z.string())),
+  preview_rows: z.array(z.record(z.string(), z.string())),
+  sheet_columns: z.record(z.string(), z.array(z.string())),
   error: z.string().nullable(),
 });
 export type RoundFile = z.infer<typeof roundFileSchema>;
@@ -605,9 +626,10 @@ export type RoundOptions = z.infer<typeof roundOptionsSchema>;
 
 /** Mirrors `LookupMatch`: an existing concept a looked-up term matched. Scores are uncalibrated review evidence. */
 export const lookupMatchSchema = taxonomyConceptSummarySchema.extend({
-  match_type: z.enum(["exact", "variant", "lexical", "semantic"]),
+  match_type: z.enum(["exact", "variant", "lexical", "semantic", "synonym"]),
   lexical_score: z.number(),
   semantic_score: z.number().nullable(),
+  synonym: z.string().nullish(), // the approved synonym a `synonym` match came through
   active: z.boolean(),
   paths: z.array(taxonomyPathSchema),
 });

@@ -38,15 +38,18 @@ def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, isolated_db: Path) -
     template = tmp_path / "template.yaml"
     template.write_text(yaml.safe_dump({
         "datasets": [{"name": "original", "paths": ["o.sql"]}, {"name": "incoming", "paths": ["i.sql"]}],
-        "metrics": [{"id": "saturation", "params": {
-            "baseline": "original", "incoming": ["incoming"], "threshold": 90,
-        }}],
+        "metrics": [
+            {"id": "integrity", "params": {"dataset": "original"}},
+            {"id": "depth", "params": {"dataset": "original"}},
+            {"id": "saturation", "params": {"baseline": "original", "incoming": ["incoming"], "threshold": 90}},
+        ],
     }), "utf-8")
     monkeypatch.setenv("TAXONOMY_ROUNDS_ROOT", str(tmp_path / "rounds"))
     monkeypatch.setenv("TAXONOMY_INTEGRATIONS_ROOT", str(tmp_path / "integrations"))
     monkeypatch.setenv("TAXONOMY_MERGE_ROOT", str(tmp_path / "merge_runs"))
     monkeypatch.setattr(rounds, "SEMANTIC_MODEL", "")
     monkeypatch.setattr(rounds, "DEFAULT_TEMPLATE", template)
+    monkeypatch.setattr(rounds, "ORIGINAL_DUMPS", tmp_path / "sql-files")
     return TestClient(app)
 
 
@@ -74,6 +77,18 @@ def test_options_list_snapshots_and_say_llm_is_off_by_default(
 
     assert body["snapshots"] == ["base"]
     assert body["llm_allowed"] is False
+
+
+def test_the_original_taxonomy_is_offered_and_accepted_when_its_dumps_exist(
+    client: TestClient, tmp_path: Path,
+) -> None:
+    assert client.post("/rounds", json={"round_id": "r1", "baseline_snapshot": "@original"}).status_code == 422
+
+    (tmp_path / "sql-files").mkdir()
+    (tmp_path / "sql-files" / "mini.sql").write_text((FIXTURES / "mini_original.sql").read_text("utf-8"), "utf-8")
+
+    assert client.get("/rounds/options").json()["snapshots"] == ["base", "@original"]
+    assert client.post("/rounds", json={"round_id": "r1", "baseline_snapshot": "@original"}).status_code == 201
 
 
 def test_uploading_stores_the_raw_bytes_and_reports_the_columns(client: TestClient) -> None:
@@ -149,6 +164,16 @@ def test_a_bad_mapping_is_422_with_the_reason(client: TestClient) -> None:
 
     assert response.status_code == 422
     assert "Nope" in response.json()["detail"]
+
+
+def test_a_source_named_enriched_is_422_with_the_reason(client: TestClient) -> None:
+    _created(client)
+    client.put("/rounds/r1/files/flat.csv", content=CSV)
+
+    response = client.put("/rounds/r1/config", json={"mapping": {**MAPPING, "name": "enriched"}})
+
+    assert response.status_code == 422
+    assert "finished snapshot" in response.json()["detail"]
 
 
 def test_settings_turning_on_the_judge_are_refused_when_the_server_forbids_it(
@@ -227,10 +252,11 @@ def test_the_whole_review_flow_works_over_http(client: TestClient) -> None:
     body = client.get("/rounds/r1").json()
     assert body["status"] == "complete"
     compared = client.get(
-        f"/runs/{body['score_run_id']}/compare/{body['enriched_run_id']}",
+        f"/runs/{body['enriched_run_id']}/compare/{body['enriched_run_id']}",
         params={"before_subject": "round_baseline", "after_subject": "enriched"},
     )
     assert compared.status_code == 200
+    assert compared.json()["comparability"]["comparable"] is True
 
 
 def test_a_bad_decision_shape_is_422(client: TestClient) -> None:

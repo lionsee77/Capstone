@@ -5,11 +5,21 @@ import {
   HEALTH_POLL_INTERVAL_MS,
   hasOlderRuns,
   pollWhileActive,
+  queryKeys,
   RUN_POLL_INTERVAL_MS,
   RUNS_PAGE_SIZE,
   runQuery,
   runSummaryQuery,
 } from "@/lib/api/queries";
+
+describe("round query keys", () => {
+  it("refreshes a round's state and its files together after a file changes", () => {
+    const round = queryKeys.round("r1");
+    expect(queryKeys.roundFiles("r1").slice(0, round.length)).toEqual(round);
+    expect(queryKeys.roundFile("r1", "a.csv", null).slice(0, round.length)).toEqual(round);
+    expect(queryKeys.round("r2")).not.toEqual(round);
+  });
+});
 
 describe("pollWhileActive", () => {
   it("keeps polling while any run is queued or running", () => {

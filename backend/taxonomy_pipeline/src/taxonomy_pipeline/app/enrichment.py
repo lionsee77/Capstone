@@ -18,7 +18,7 @@ from ..config import load_config
 from ..enrichment.audit import EVENTS
 from ..enrichment.bulk_decisions import BulkDraft, draft_decisions
 from ..enrichment.case_a import run_case_a
-from ..enrichment.case_b import run_case_b
+from ..enrichment.case_b import run_case_b, validate_context_argument
 from ..enrichment.integrate import Integration, IntegrationError
 from ..enrichment.integrate import integrate as integrate_snapshot
 from ..enrichment.models import ProposalReviewReport
@@ -26,6 +26,7 @@ from ..enrichment.proposals.models import ScreeningSettings
 from ..enrichment.review_view import load_review_view
 from ..enrichment.routing import load_saturation
 from ..enrichment.runner import REVIEW_DECISIONS, MergeRun, load_decisions, load_merge_run, run_merge_preview
+from ..synonyms import approved_synonyms
 from .scoring import load_taxonomies
 
 # merge-preview's hierarchy screening thresholds when the caller gives none; adapters show these as defaults.
@@ -62,10 +63,11 @@ def case_b(
     provider: str | None = None, context: str | Path | None = None, checkpoint: str | Path | None = None,
     batch_size: int = 5, model: str | None = None,
 ) -> list[dict[str, Any]]:
-    """Classify the tags saturation routed to Case B; `provider` defaults to the incoming dataset's name."""
+    """Classify routed tags with the generic JSON context provider unless another is selected."""
+    validate_context_argument(context)
     datasets = load_taxonomies(config_path, baseline, incoming)
     return asyncio.run(run_case_b(
-        datasets, report, baseline=baseline, incoming=incoming, provider=provider or incoming, context=context,
+        datasets, report, baseline=baseline, incoming=incoming, provider=provider or "tag_context", context=context,
         output=output,
         checkpoint=checkpoint, batch_size=batch_size, model=model,
     ))
@@ -78,8 +80,12 @@ def merge_preview(
     screening_lexical: float | None = None, screening_semantic: float | None = None,
     change_log: str | Path | None = None,
     actor: str = "unspecified",
+    synonyms: bool = False,
 ) -> MergeRun:
-    """Validate, deduplicate and resolve producer outputs into `out_dir` (default `merge_runs/<timestamp>`)."""
+    """Validate, deduplicate and resolve producer outputs into `out_dir` (default `merge_runs/<timestamp>`).
+
+    With `synonyms`, hierarchy screening also treats the baseline dataset's approved synonyms
+    as exact matches; they are saved in the screening settings, so a replay uses the same ones."""
     actor = _validated_actor(actor)
     from ..matching.semantic import SemanticMatcher
 
@@ -88,6 +94,7 @@ def merge_preview(
     screening_settings = ScreeningSettings(
         lexical_threshold=SCREENING_DEFAULTS.lexical_threshold if screening_lexical is None else screening_lexical,
         semantic_threshold=SCREENING_DEFAULTS.semantic_threshold if screening_semantic is None else screening_semantic,
+        synonyms=[synonym.mapping() for synonym in approved_synonyms(baseline)] if synonyms else [],
     )
     taxonomy = load_taxonomies(config_path, baseline)[baseline]
     result = run_merge_preview(

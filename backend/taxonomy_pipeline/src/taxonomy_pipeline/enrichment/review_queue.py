@@ -17,6 +17,7 @@ from ..taxonomy.base import TaxonomyDataset
 from .bulk_decisions import closest_matches
 from .models import (
     ResolutionReport,
+    ReviewDecision,
     ReviewQueueDuplicate,
     ReviewQueueEvidence,
     ReviewQueueMatch,
@@ -27,8 +28,10 @@ from .models import (
     TagProposal,
 )
 from .proposals.models import ProposalScreeningReport
+from .proposals.screening import hold_incoming_variants
 from .repeated_names import live_placements
 from .resolution import resolve_outputs
+from .review import create_blocker
 from .routing import SaturationReport
 
 
@@ -82,7 +85,7 @@ def build_review_queue(
         ))
     return ReviewQueueEvidence(
         tags=sorted(items, key=lambda item: (normalize(item.tag), item.source.tag_id)),
-        proposals=_proposals(effective, decided_proposals),
+        proposals=_proposals(effective, decided_proposals, resolution.decisions),
         repeated_names=effective.repeated_names if effective else [],
     )
 
@@ -125,23 +128,47 @@ def _duplicates(
     return found
 
 
+_CREATE_BLOCKED = {
+    "exact_match": "This name already exists in the taxonomy, so it can't be added again.",
+    "spelling_variant": "Another proposal is a spelling variant of this one. Leave one of them out first.",
+    "semantic_failed": "The similarity check failed, so the round has to run again before this can be added.",
+}
+
+
 # Include advisory collisions even when screening has accepted their proposals automatically.
 def _proposals(
-    effective: ProposalScreeningReport | None, decided: set[str],
+    effective: ProposalScreeningReport | None, decided: set[str], decisions: list[ReviewDecision],
 ) -> list[ReviewQueueProposal]:
     """Held, warned, or previously decided proposals, without turning advisories into review holds."""
     if effective is None:
         return []
     warned = {identifier for warning in effective.repeated_names for identifier in warning.proposal_ids}
     visible = decided | warned
+    by_path = {tuple(proposal.path): proposal for proposal in effective.proposals}
+    semantic_failed = effective.semantic_status == "failed"
+    excluded = {decision.proposal_id for decision in decisions if decision.action == "exclude"}
+    set_aside = {decision.proposal_id for decision in decisions if decision.action in {"exclude", "defer"}}
+    # On copies, because this marks the proposals it holds and the queue only wants to know which ones.
+    held = hold_incoming_variants(
+        [proposal.model_copy(deep=True) for proposal in effective.proposals if proposal.proposal_id not in excluded],
+    )
     items = []
     for proposal in effective.proposals:
         if proposal.status != "review" and proposal.proposal_id not in visible:
             continue
+        parent = by_path.get(tuple(proposal.path[:2])) if proposal.level == "speciality" else None
+        if parent is not None and parent.blocks_creation:
+            blocked = (
+                "Its category was left out or put off, so this can't be added."
+                if parent.proposal_id in set_aside
+                else "Its category isn't settled. Decide the category and apply, then come back to this."
+            )
+        else:
+            blocked = _CREATE_BLOCKED.get(create_blocker(proposal, held, semantic_failed))
         items.append(ReviewQueueProposal(
             proposal_id=proposal.proposal_id, level=proposal.level, name=proposal.name, path=proposal.path,
             status=proposal.status, reason=proposal.reason, blocks_creation=proposal.blocks_creation,
-            source_tags=len(proposal.source_tags),
+            source_tags=len(proposal.source_tags), create_blocked_reason=blocked,
             matches=[
                 ReviewQueueProposalMatch(
                     id=match.concept.id, name=match.concept.name, level=match.concept.level,
