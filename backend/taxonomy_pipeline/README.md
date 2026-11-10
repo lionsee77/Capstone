@@ -1928,10 +1928,24 @@ specific first, and the first tier with any candidate decides:
 2. concept names;
 3. global synonyms.
 
-The result is `resolved` (one concept), `ambiguous` (several in the deciding tier, all
-listed, none chosen: two rows sharing a name are ambiguous too) or `unknown`. Each match
-says whether it came `via` the concept's name or a synonym, and which synonym. Removed
-synonyms never resolve. Lookups start using this in #60.
+Terms compare by `match_key`, like stored synonyms. The result is `resolved` (one
+concept), `ambiguous` (several in the deciding tier, all listed once, none chosen: two
+rows sharing a name are ambiguous too) or `unknown`. Each match says whether it came
+`via` the concept's name or a synonym, and which synonym. Removed synonyms never
+resolve. `within` may be a category, speciality or tag (its branches), given as a string
+or integer ID; an unknown one is refused rather than treated as "no branch".
+
+A stored synonym only applies where it still fits the taxonomy: its concept exists with
+the name the synonym was recorded against, and a scoped one's concept still sits in its
+scope. One that doesn't fit (renamed, removed, moved) is set aside instead of resolving
+to the wrong concept, and doesn't block new synonyms. Synonyms from before these rules
+(#59 allowed one term on two concepts) can also be shadowed by a name or ambiguous.
+`synonym-check` (or `GET /synonyms/problems?run_id=...&dataset=...`) lists every such
+synonym with the reason, and exits 1 when there is any:
+
+```bash
+taxonomy-pipeline synonym-check            # configs/baseline_v1.yaml, dataset original
+``` Lookups start using this in #60.
 
 The table's schema is now version 2 (scope columns). A version 1 table from #59 is
 migrated on the next write, and its synonyms become global.

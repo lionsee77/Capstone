@@ -134,3 +134,61 @@ def test_a_scope_needs_both_its_level_and_id() -> None:
     with pytest.raises(ValueError, match="both scope_level and scope_id"):
         SynonymCreate(dataset="original", concept_level="tags", concept_id="100", term="x", reason="r",
                       scope_level="categories")
+
+
+def test_synonyms_that_no_longer_fit_the_taxonomy_are_set_aside_not_resolved() -> None:
+    tags = [*TAXONOMY.tags[:1], {"id": 200, "name": "Turf"}, *TAXONOMY.tags[2:]]  # tag 200 was "Pitch"
+    renamed = TAXONOMY.model_copy(update={"tags": tags})
+    moved = synonym("Pitch deck", "tags", "100", ("categories", "2"))  # tag 100 sits in category 1
+    index = SynonymIndex(renamed, [synonym("Soccer pitch", "tags", "200"), moved])
+    assert index.resolve("soccer pitch").status == "unknown"
+    assert {p.problem for p in index.stale} == {"stale: its concept is now named 'Turf'",
+                                                "stale: its concept no longer sits in its scope"}
+    index.check_new(request("Soccer pitch", "tags", "201"))  # the stale synonym doesn't block a live concept
+
+
+def test_a_synonym_whose_concept_is_gone_is_stale() -> None:
+    gone = synonym("Old term", "tags", "201")
+    without = TAXONOMY.model_copy(update={"tags": [t for t in TAXONOMY.tags if t["id"] != 201]})
+    index = SynonymIndex(without, [gone])
+    assert index.resolve("old term").status == "unknown"
+    assert [p.problem for p in index.stale] == ["stale: its concept is no longer in this taxonomy"]
+
+
+def test_a_lookup_branch_may_be_an_integer_id_but_an_unknown_one_is_refused() -> None:
+    index = SynonymIndex(TAXONOMY, [synonym("Pitch", "tags", "100", ("categories", "1"))])
+    assert concepts(index.resolve("pitch", within=("specialities", 10))) == [("tags", "100", "synonym")]
+    with pytest.raises(InvalidScope, match="no speciality with ID 99 to look inside"):
+        index.resolve("pitch", within=("specialities", "99"))
+
+
+def test_resolved_has_one_match_per_concept() -> None:
+    linked_twice = TAXONOMY.model_copy(update={
+        "specialities": [*TAXONOMY.specialities, {"id": 11, "name": "Sales Coaching", "category_id": 1}],
+        "speciality_tags": [*TAXONOMY.speciality_tags, {"id": 5, "speciality_id": 11, "tag_id": 100}],
+    })
+    index = SynonymIndex(linked_twice, [synonym("Deck", "tags", "100", ("specialities", "10")),
+                                        synonym("Deck", "tags", "100", ("specialities", "11"))])
+    resolution = index.resolve("deck", within=("tags", "100"))
+    assert resolution.status == "resolved" and len(resolution.matches) == 1
+
+
+def test_an_unnamed_speciality_is_still_a_branch_and_repeated_ids_use_their_last_row() -> None:
+    odd = TAXONOMY.model_copy(update={
+        "specialities": [{"id": 10, "name": None, "category_id": 2}, {"id": 10, "name": None, "category_id": 1},
+                         *TAXONOMY.specialities[1:]],
+    })
+    index = SynonymIndex(odd)
+    assert index.branches("specialities", "10") == {("specialities", "10"), ("categories", "1")}
+    assert index.branches("tags", "100") == {("specialities", "10"), ("categories", "1")}
+    index.check_new(request("Deck", "tags", "100", ("specialities", "10")))
+
+
+def test_problems_lists_shadowed_ambiguous_and_stale_synonyms() -> None:
+    # Synonyms stored before #61's checks: one equals another concept's name, one term on two concepts.
+    index = SynonymIndex(TAXONOMY, [
+        synonym("Pitch", "tags", "100"), synonym("Field", "tags", "200"), synonym("Field", "tags", "201"),
+        synonym("Soccer", "specialities", "20"),
+    ])
+    found = {(p.term, p.concept_id, p.problem.split(":")[0]) for p in index.problems()}
+    assert found == {("Pitch", "100", "shadowed"), ("Field", "200", "ambiguous"), ("Field", "201", "ambiguous")}

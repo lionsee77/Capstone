@@ -110,3 +110,14 @@ def test_remove_and_list_map_store_errors_instead_of_500(run_id: str, isolated_d
             connection.execute("UPDATE taxonomy_synonym_schema SET version = 99")
         assert client.post("/synonyms", json=_body(run_id, term="GST levy")).status_code == 503
         assert client.post("/synonyms/x/remove", json={"reason": "x"}).status_code == 503
+
+
+def test_problems_lists_stale_or_ambiguous_synonyms_of_a_runs_dataset(run_id: str) -> None:
+    from taxonomy_pipeline.synonyms import SynonymCreate, add_synonym
+
+    add_synonym(SynonymCreate(dataset="original", concept_level="tags", concept_id="101", term="Levy",
+                              reason="old"), canonical_name="renamed since", snapshot_id="s")
+    with TestClient(app) as client:
+        body = client.get("/synonyms/problems", params={"run_id": run_id, "dataset": "original"}).json()
+        assert [p["problem"] for p in body] == ["stale: its concept is now named 'gst'"]
+        assert client.get("/synonyms/problems", params={"run_id": "missing", "dataset": "original"}).status_code == 404

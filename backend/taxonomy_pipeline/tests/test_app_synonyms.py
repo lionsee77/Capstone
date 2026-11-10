@@ -135,3 +135,26 @@ def test_a_dataset_whose_file_is_gone_is_unavailable(isolated_db: Path, tmp_path
                                       "metrics": [{"id": "integrity", "params": {"dataset": "original"}}]}))
     with pytest.raises(TaxonomyUnavailable, match="couldn't be loaded"):
         use_cases.add_synonym(_request(), config_path=config)
+
+
+def test_synonym_check_lists_synonyms_stored_before_the_ambiguity_rules(
+    isolated_db: Path, config: Path, capsys: pytest.CaptureFixture[str],
+) -> None:
+    from taxonomy_pipeline.synonyms import add_synonym as store_add
+
+    for concept_id, name in (("101", "gst"), ("102", "unused-tag")):  # what #59 allowed: one term, two concepts
+        store_add(_request(concept_id=concept_id, term="Levy"), canonical_name=name, snapshot_id="s")
+    problems = use_cases.synonym_problems("original", config_path=config)
+    assert sorted((p.concept_id, p.problem) for p in problems) == [
+        ("101", "ambiguous: a global synonym of 2 concepts"), ("102", "ambiguous: a global synonym of 2 concepts"),
+    ]
+    assert main(["synonym-check", "--config", str(config)]) == 1
+    assert "[FLAGGED] 2 synonym problem(s)" in capsys.readouterr().out
+
+
+def test_adding_checks_only_against_synonyms_that_still_fit(isolated_db: Path, config: Path) -> None:
+    from taxonomy_pipeline.synonyms import add_synonym as store_add
+
+    # A synonym recorded for tag 102 under a name it no longer has doesn't block "Levy" for tag 101.
+    store_add(_request(concept_id="102", term="Levy"), canonical_name="old name", snapshot_id="s")
+    assert use_cases.add_synonym(_request(term="Levy"), config_path=config).concept_id == "101"
