@@ -201,7 +201,7 @@ def test_a_round_on_the_original_finishes_as_a_snapshot_on_the_lineages_root(
     assert rounds.get_round(roots, "from-original").status == "complete"
     original = (roots.original / "mini.sql").read_bytes()
     assert (roots.integrations / "from-original" / "baseline" / "mini.sql").read_bytes() == original
-    chain = next(c for c in taxonomy_lineage(roots.integrations, roots.merge_runs).chains
+    chain = next(c for c in taxonomy_lineage(roots.integrations, roots.merge_runs, original=roots.original).chains
                  if "from-original" in c.stages)
     assert chain.stages[0].startswith("baseline:")
     assert chain.stages[-1] == "from-original"
