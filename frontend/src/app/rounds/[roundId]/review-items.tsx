@@ -12,6 +12,8 @@ import type { ReviewQueueProposal, ReviewQueueTag } from "@/lib/api/schemas";
 import {
   ACTION_LABELS,
   actionLabel,
+  canReuse,
+  chosenReuseTag,
   closestMatchLabel,
   type DecisionInput,
   heldExplanation,
@@ -95,7 +97,7 @@ export function TagRow({
                 <NativeSelect
                   id={`reuse-${tag.source.tag_id}`}
                   value={reuseTagId ?? ""}
-                  onChange={(e) => setReuseTagId(e.target.value ? Number(e.target.value) : undefined)}
+                  onChange={(e) => setReuseTagId(chosenReuseTag(e.target.value))}
                 >
                   <option value="">No, or not sure</option>
                   {candidates.map((candidate) => (
@@ -111,7 +113,7 @@ export function TagRow({
             {reuseTagId === undefined ? (
               <Button size="sm" disabled={disabled || tag.placements.length === 0} onClick={() => decide("create")}>{ACTION_LABELS.create}</Button>
             ) : (
-              <Button size="sm" disabled={disabled} onClick={() => decide("reuse")}>{ACTION_LABELS.reuse}</Button>
+              <Button size="sm" disabled={disabled || !canReuse(tag, reuseTagId)} onClick={() => decide("reuse")}>{ACTION_LABELS.reuse}</Button>
             )}
             <Button size="sm" variant="ghost" disabled={disabled} onClick={() => decide("exclude")}>{ACTION_LABELS.exclude}</Button>
             <Button size="sm" variant="ghost" disabled={disabled} onClick={() => decide("defer")}>{ACTION_LABELS.defer}</Button>
