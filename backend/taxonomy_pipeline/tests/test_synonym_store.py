@@ -211,6 +211,60 @@ def test_a_version_1_table_is_migrated_on_write_and_its_synonyms_become_global(i
         assert connection.execute("SELECT version FROM taxonomy_synonym_schema").fetchone() == (store.SCHEMA_VERSION,)
 
 
+def _propose(*terms: str) -> tuple[list[Synonym], dict[str, int]]:
+    from taxonomy_pipeline.synonyms import propose_synonyms
+
+    return propose_synonyms("original", [(_request(term), "JavaScript") for term in terms], snapshot_id="s")
+
+
+def _approve(synonym_id: str, *, name: str = "JavaScript", snapshot: str = "s", **kwargs: str) -> Synonym:
+    from taxonomy_pipeline.synonyms import review_synonym
+
+    return review_synonym(synonym_id, approve=True, reason=kwargs.get("reason", "Common abbreviation"),
+                          actor=kwargs.get("actor", "lead"), canonical_name=name, snapshot_id=snapshot)
+
+
+def test_suggestions_are_stored_as_proposed_without_resolving_or_auditing(isolated_db: Path) -> None:
+    proposed, skipped = _propose("JS", "javascript", "JS", "ECMAScript", "#", "JS.")
+    assert [s.term for s in proposed] == ["JS", "ECMAScript"] and all(s.status == "proposed" for s in proposed)
+    assert skipped == {"same_as_name_or_invalid": 2, "already_known": 2}
+    assert list_synonyms(SynonymQuery()).total == 0
+    assert list_synonyms(SynonymQuery(status="proposed")).total == 2
+    assert read_changes(ChangeQuery()).total == 0
+
+
+def test_approving_a_suggestion_makes_it_resolve_and_logs_it_as_an_addition(isolated_db: Path) -> None:
+    [js] = _propose("JS")[0]
+    approved = _approve(js.synonym_id)
+    assert (approved.status, approved.reviewed_by, approved.review_reason) == (
+        "approved", "lead", "Common abbreviation")
+    assert list_synonyms(SynonymQuery()).synonyms == [approved]
+    [event] = read_changes(ChangeQuery()).changes
+    assert (event.action, event.actor, event.reason, event.before["status"]) == (
+        "synonym_add", "lead", "Common abbreviation", "proposed")
+
+
+def test_rejecting_a_suggestion_keeps_it_and_stops_it_being_proposed_again(isolated_db: Path) -> None:
+    from taxonomy_pipeline.synonyms import review_synonym
+
+    [js] = _propose("JS")[0]
+    rejected = review_synonym(js.synonym_id, approve=False, reason="Too vague", actor="lead")
+    assert rejected.status == "rejected"
+    [event] = read_changes(ChangeQuery()).changes
+    assert (event.action, event.scope, event.decision["action"]) == ("review_decision", "review", "reject")
+    assert _propose("JS") == ([], {"already_known": 1})
+    with pytest.raises(SynonymNotFound, match="no proposed synonym"):
+        _approve(js.synonym_id, reason="Changed my mind")
+
+
+def test_approving_a_suggestion_already_added_by_hand_is_refused(isolated_db: Path) -> None:
+    [js] = _propose("JS")[0]
+    _add("JS")
+    with pytest.raises(DuplicateSynonym):
+        _approve(js.synonym_id)
+    assert list_synonyms(SynonymQuery(status="proposed")).total == 1
+
+
 @pytest.mark.parametrize("term", ["#", "--", "()", "...-", "test", "New"])
 def test_symbol_only_and_placeholder_terms_are_refused(isolated_db: Path, term: str) -> None:
     with pytest.raises(SynonymError, match="no letters or digits, or is a placeholder"):
@@ -259,3 +313,32 @@ def test_a_dropped_table_or_index_is_recreated_on_the_next_write(isolated_db: Pa
     with closing(sqlite3.connect(isolated_db)) as connection:
         indexes = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type='index'")}
     assert "synonym_approved_mapping" in indexes
+
+
+def test_approval_records_the_concepts_current_name_and_snapshot_and_refuses_its_own_name(isolated_db: Path) -> None:
+    [js, ecma] = _propose("JS", "ECMAScript")[0]
+    approved = _approve(js.synonym_id, name="JavaScript (ECMAScript)", snapshot="sha256:now")
+    assert (approved.concept_name, approved.snapshot_id) == ("JavaScript (ECMAScript)", "sha256:now")
+    [event] = read_changes(ChangeQuery()).changes
+    assert (event.concept_name, event.snapshot_id) == ("JavaScript (ECMAScript)", "sha256:now")
+    with pytest.raises(SynonymError, match="own name"):
+        _approve(ecma.synonym_id, name="ecmascript")  # the concept was renamed to the suggested term
+
+
+def test_a_removed_synonym_is_not_proposed_again(isolated_db: Path) -> None:
+    [js] = _propose("JS")[0]
+    remove_synonym(_approve(js.synonym_id).synonym_id, reason="Wrong", actor="lead")
+    assert _propose("JS") == ([], {"already_known": 1})
+
+
+def test_a_version_2_table_reads_before_anything_migrates_it(isolated_db: Path) -> None:
+    _version_1_table(isolated_db)
+    with closing(sqlite3.connect(isolated_db)) as connection, connection:  # what #134's migration leaves
+        connection.execute("ALTER TABLE taxonomy_synonyms ADD COLUMN scope_level TEXT NOT NULL DEFAULT ''")
+        connection.execute("ALTER TABLE taxonomy_synonyms ADD COLUMN scope_id TEXT NOT NULL DEFAULT ''")
+        connection.execute("UPDATE taxonomy_synonym_schema SET version = 2")
+    from taxonomy_pipeline.synonyms import approved_synonyms, get_synonym
+
+    assert [s.synonym_id for s in list_synonyms(SynonymQuery()).synonyms] == ["old"]
+    assert get_synonym("old").reviewed_by is None
+    assert [s.synonym_id for s in approved_synonyms("original")] == ["old"]

@@ -1,5 +1,5 @@
 """Synonym use cases shared by the CLI (`synonym-add`, `synonym-remove`, `synonyms`, `synonym-check`,
-`synonym-resolve`) and the `/synonyms` routes.
+`synonym-resolve`, `synonym-suggest`, `synonym-review`) and the `/synonyms` routes.
 
 Adding a synonym first checks the concept exists in the named taxonomy, found either
 through a config file (the CLI) or through a past run's config (the API, the same
@@ -15,9 +15,14 @@ TaxonomyUnavailable (the config can't be read, or the dataset's files can't be l
 `resolve_term` answers "what does this term mean here?" from the live approved
 synonyms (#60). `export_synonyms` freezes them into a `synonym_set` file, which is
 what a scoring config names: scores must not move when a reviewer approves a synonym.
+
+`suggest_synonyms` runs one source (`synonyms/sources/`) and stores what it suggests as
+`proposed`; `review_synonym` approves (with the same checks as adding by hand) or
+rejects one. Nothing a source suggests resolves until a person approves it.
 """
 from __future__ import annotations
 
+from collections import Counter
 from pathlib import Path
 
 import yaml
@@ -27,11 +32,14 @@ from ..enrichment.resolution import taxonomy_snapshot_id
 from ..synonyms import (
     InvalidScope,
     Resolution,
+    SuggestionReport,
     Synonym,
     SynonymCreate,
+    SynonymError,
     SynonymIndex,
     SynonymLevel,
     SynonymList,
+    SynonymNotFound,
     SynonymProblem,
     SynonymQuery,
     SynonymSet,
@@ -39,10 +47,14 @@ from ..synonyms import (
     UnknownConcept,
     approved_synonyms,
     concept_name,
+    get_synonym,
+    propose_synonyms,
 )
 from ..synonyms import add_synonym as store_add
 from ..synonyms import list_synonyms as store_list
 from ..synonyms import remove_synonym as store_remove
+from ..synonyms import review_synonym as store_review
+from ..synonyms.sources import get_source
 from ..taxonomy import load_dataset
 from ..taxonomy.base import TaxonomyDataset
 from . import browse
@@ -130,6 +142,68 @@ def export_synonyms(dataset: str, path: str | Path) -> SynonymSet:
     with path.open("x", encoding="utf-8") as stream:
         stream.write(exported.model_dump_json(indent=2))
     return exported
+
+
+def suggest_synonyms(
+    source_id: str, *, dataset: str, config_path: str | Path | None = None, run_id: str | None = None,
+    path: str | Path | None = None, actor: str = "unspecified",
+) -> SuggestionReport:
+    """Run one synonym source over `dataset` and store its suggestions as `proposed` for review.
+
+    `path` is the downloaded file a source like ESCO or O*NET reads; built-in sources
+    (spelling) take none. Suggestions for retired concepts, and ones already proposed,
+    approved, rejected or removed, are skipped and counted.
+    """
+    source = get_source(source_id)
+    if not actor.strip():
+        raise ValueError("actor must not be blank")
+    if source.needs_file and path is None:
+        raise ValueError(f"the {source.id} source needs a file to read")
+    if not source.needs_file and path is not None:
+        raise ValueError(f"the {source.id} source doesn't read a file")
+    taxonomy = _taxonomy(dataset, config_path=config_path, run_id=run_id)
+    requests, skipped = [], Counter()
+    for suggestion in source.suggest(taxonomy, Path(path) if path is not None else None):
+        try:
+            name = concept_name(taxonomy, suggestion.concept_level, suggestion.concept_id)
+        except SynonymError:  # unknown or retired concept
+            skipped["retired_or_unknown_concept"] += 1
+            continue
+        requests.append((SynonymCreate(
+            dataset=dataset, concept_level=suggestion.concept_level, concept_id=suggestion.concept_id,
+            term=suggestion.term, reason=suggestion.evidence, actor=actor, source=source.id,
+        ), name))
+    proposed, refused = propose_synonyms(dataset, requests, snapshot_id=taxonomy_snapshot_id(taxonomy))
+    return SuggestionReport(source=source.id, dataset=dataset, proposed=proposed, skipped=dict(skipped + refused))
+
+
+def review_synonym(
+    synonym_id: str, *, approve: bool, reason: str, actor: str = "unspecified",
+    config_path: str | Path | None = None, run_id: str | None = None,
+) -> Synonym:
+    """Approve or reject one proposed synonym; rejecting needs no taxonomy.
+
+    Approving checks it against the taxonomy (found as for `add_synonym`) exactly like
+    adding it by hand: the concept must still exist and be active, the term may not be
+    its current name, and it may not already mean another concept. The approved row and
+    its audit event record the concept's current name and snapshot, not the proposal's.
+    """
+    synonym = get_synonym(synonym_id)
+    if synonym is None or synonym.status != "proposed":
+        raise SynonymNotFound(f"no proposed synonym with ID {synonym_id!r}")
+    if not approve:
+        return store_review(synonym.synonym_id, approve=False, reason=reason, actor=actor)
+    taxonomy = _taxonomy(synonym.dataset, config_path=config_path, run_id=run_id)
+    name = concept_name(taxonomy, synonym.concept_level, synonym.concept_id)
+    request = SynonymCreate(dataset=synonym.dataset, concept_level=synonym.concept_level,
+                            concept_id=synonym.concept_id, term=synonym.term, reason=reason, actor=actor)
+    index = SynonymIndex(taxonomy)  # built before the store takes its write lock
+
+    def check(same_term: list[Synonym]) -> None:
+        index.check_new(request, same_term)
+
+    return store_review(synonym.synonym_id, approve=True, reason=reason, actor=actor, canonical_name=name,
+                        snapshot_id=taxonomy_snapshot_id(taxonomy), check=check)
 
 
 def _taxonomy(dataset: str, *, config_path: str | Path | None, run_id: str | None) -> TaxonomyDataset:

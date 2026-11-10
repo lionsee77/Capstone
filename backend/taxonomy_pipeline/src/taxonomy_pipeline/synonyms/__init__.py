@@ -12,6 +12,7 @@ from .models import (
     Resolution,
     ResolvedConcept,
     ScopeLevel,
+    SuggestionReport,
     Synonym,
     SynonymCreate,
     SynonymLevel,
@@ -30,14 +31,17 @@ from .store import (
     add_synonym,
     approved_synonyms,
     concept_name,
+    get_synonym,
     list_synonyms,
+    propose_synonyms,
     remove_synonym,
+    review_synonym,
 )
 
 __all__ = [
     "ConflictingSynonym", "DuplicateSynonym", "InvalidScope", "Resolution", "ResolvedConcept", "RetiredConcept",
-    "ScopeLevel", "Synonym", "SynonymCreate", "SynonymError", "SynonymIndex", "SynonymLevel", "SynonymList",
-    "SynonymMapping", "SynonymNotFound", "SynonymProblem", "SynonymQuery", "SynonymSet", "TaxonomyUnavailable",
-    "UnknownConcept", "UnsupportedSchema", "add_synonym", "approved_synonyms", "concept_name", "list_synonyms",
-    "remove_synonym",
+    "ScopeLevel", "SuggestionReport", "Synonym", "SynonymCreate", "SynonymError", "SynonymIndex", "SynonymLevel",
+    "SynonymList", "SynonymMapping", "SynonymNotFound", "SynonymProblem", "SynonymQuery", "SynonymSet",
+    "TaxonomyUnavailable", "UnknownConcept", "UnsupportedSchema", "add_synonym", "approved_synonyms",
+    "concept_name", "get_synonym", "list_synonyms", "propose_synonyms", "remove_synonym", "review_synonym",
 ]

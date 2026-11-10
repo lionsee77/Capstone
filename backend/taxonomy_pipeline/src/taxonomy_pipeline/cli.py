@@ -1,5 +1,6 @@
 """`taxonomy-pipeline run|check-comparable|compare|serve|import-source|case-a|case-b|merge-preview|
-review-proposals|bulk-decide|integrate|lookup|synonyms|synonym-add|synonym-remove|synonym-check|synonym-resolve`
+review-proposals|bulk-decide|integrate|lookup|synonyms|synonym-add|synonym-remove|synonym-check|synonym-resolve|
+synonym-suggest|synonym-review`
 
 A thin adapter over `app/`: each command parses its flags, calls the one use
 case behind it (`app.scoring` for `run` and `check-comparable`, `app.comparison` for `compare`,
@@ -28,6 +29,7 @@ from .app.sources import import_source
 from .audit.models import ChangeQuery
 from .matching.lookup import DEFAULT_MIN_SCORE
 from .synonyms import SynonymCreate, SynonymQuery
+from .synonyms.sources import SOURCES as SYNONYM_SOURCES
 
 
 def _cmd_run(args: argparse.Namespace) -> int:
@@ -303,7 +305,7 @@ def _cmd_synonyms(args: argparse.Namespace) -> int:
             return 0
         query = SynonymQuery(
             dataset=args.dataset, concept_level=args.level, concept_id=args.concept_id, term=args.term,
-            include_removed=args.include_removed, offset=args.offset, limit=args.limit,
+            include_removed=args.include_removed, offset=args.offset, limit=args.limit, status=args.status,
         )
         print(synonym_cases.list_synonyms(query).model_dump_json(indent=2))
     except (OSError, ValueError, sqlite3.Error) as exc:
@@ -354,6 +356,35 @@ def _cmd_synonym_resolve(args: argparse.Namespace) -> int:
     except (OSError, ValueError, sqlite3.Error) as exc:
         print(f"[FAILED] synonym-resolve: {exc}", file=sys.stderr)
         return 1
+    return 0
+
+
+# Store a source's suggestions as proposed synonyms, through the same use case as POST /synonyms/suggest.
+def _cmd_synonym_suggest(args: argparse.Namespace) -> int:
+    try:
+        report = synonym_cases.suggest_synonyms(
+            args.source, dataset=args.dataset, config_path=args.config, path=args.file, actor=args.actor,
+        )
+    except (OSError, ValueError, sqlite3.Error) as exc:
+        print(f"[FAILED] synonym-suggest: {exc}", file=sys.stderr)
+        return 1
+    skipped = ", ".join(f"{count} {why.replace('_', ' ')}" for why, count in sorted(report.skipped.items()))
+    print(f"[OK] {report.source}: proposed {len(report.proposed)} synonyms for review"
+          + (f" (skipped {skipped})" if skipped else "")
+          + "; list them with `taxonomy-pipeline synonyms --status proposed`")
+    return 0
+
+
+# Approve or reject one proposed synonym, through the same use case as POST /synonyms/{id}/approve|reject.
+def _cmd_synonym_review(args: argparse.Namespace) -> int:
+    try:
+        synonym = synonym_cases.review_synonym(
+            args.synonym_id, approve=args.approve, reason=args.reason, actor=args.actor, config_path=args.config,
+        )
+    except (OSError, ValueError, sqlite3.Error) as exc:
+        print(f"[FAILED] synonym-review: {exc}", file=sys.stderr)
+        return 1
+    print(f"[OK] {synonym.status} {synonym.term!r} -> {synonym.concept_name!r}")
     return 0
 
 
@@ -520,6 +551,8 @@ def build_parser() -> argparse.ArgumentParser:
     synonym_list.add_argument("--concept-id")
     synonym_list.add_argument("--term", help="match this term after normalising it")
     synonym_list.add_argument("--include-removed", action="store_true")
+    synonym_list.add_argument("--status", choices=["proposed", "approved", "rejected", "removed"],
+                              help="only this status, e.g. proposed for the review queue")
     synonym_list.add_argument("--offset", type=int, default=0)
     synonym_list.add_argument("--limit", type=int, default=50, help="page size, 1-200")
     synonym_list.add_argument("--export", metavar="PATH",
@@ -555,6 +588,23 @@ def build_parser() -> argparse.ArgumentParser:
                                  help="the branch the lookup is made in, so scoped synonyms apply")
     synonym_resolve.add_argument("--within-id")
     synonym_resolve.set_defaults(func=_cmd_synonym_resolve)
+    synonym_suggest = subparsers.add_parser("synonym-suggest", help="propose synonyms from a source for review")
+    synonym_suggest.add_argument("--source", required=True, choices=sorted(SYNONYM_SOURCES))
+    synonym_suggest.add_argument("--file", help="the downloaded file a source reads (esco, onet)")
+    synonym_suggest.add_argument("--config", default="configs/baseline_v1.yaml", help="config declaring --dataset")
+    synonym_suggest.add_argument("--dataset", default="original")
+    synonym_suggest.add_argument("--actor", default="unspecified", help="self-reported identity, kept on each row")
+    synonym_suggest.set_defaults(func=_cmd_synonym_suggest)
+    synonym_review = subparsers.add_parser("synonym-review", help="approve or reject a proposed synonym")
+    synonym_review.add_argument("synonym_id")
+    decision = synonym_review.add_mutually_exclusive_group(required=True)
+    decision.add_argument("--approve", action="store_true")
+    decision.add_argument("--reject", action="store_true")
+    synonym_review.add_argument("--reason", required=True, help="kept in the audit log")
+    synonym_review.add_argument("--actor", default="unspecified", help="self-reported identity for the audit log")
+    synonym_review.add_argument("--config", default="configs/baseline_v1.yaml",
+                                help="config declaring the synonym's dataset (approval checks it)")
+    synonym_review.set_defaults(func=_cmd_synonym_review)
 
     # check whether a term already exists before proposing it
     lookup = subparsers.add_parser("lookup", help="check a term against the newest integrated snapshot")

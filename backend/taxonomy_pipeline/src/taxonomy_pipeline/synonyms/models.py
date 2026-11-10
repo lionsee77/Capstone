@@ -9,9 +9,11 @@ A synonym is global, or scoped to one category or speciality branch (#61): a sco
 synonym only resolves for lookups made inside that branch, which is how one word can
 mean different things in different parts of the taxonomy ("pitch" in Sales vs. Sports).
 
-Only `approved` and `removed` exist today: a person adding a synonym is the
-approval. Suggested synonyms from external sources (ESCO, O*NET, spelling
-variants) will add a `proposed` state when that workflow is built (PB07, #25).
+Statuses: a person adding a synonym approves it directly (`approved`). A source
+(spelling variants, ESCO, O*NET; `synonyms/sources/`) only suggests: its rows start
+`proposed`, and a reviewer approves or rejects each one. `rejected` rows are kept so
+the same suggestion isn't offered again, and `removed` keeps a retired synonym's
+history. Only `approved` synonyms ever resolve.
 """
 from __future__ import annotations
 
@@ -26,9 +28,11 @@ from ..taxonomy.synonym_set import SynonymMapping
 SynonymLevel = Literal["categories", "specialities", "tags"]
 # A scope is a branch a concept sits in: a category, or a speciality (for a tag).
 ScopeLevel = Literal["categories", "specialities"]
-SynonymStatus = Literal["approved", "removed"]
+SynonymStatus = Literal["proposed", "approved", "rejected", "removed"]
 # The audit log names levels in the singular.
 AUDIT_LEVELS: dict[str, str] = {"categories": "category", "specialities": "speciality", "tags": "tag"}
+# The levels a synonym can name, in hierarchy order: the one list every synonym module uses.
+LEVELS: tuple[SynonymLevel, ...] = ("categories", "specialities", "tags")
 
 
 class _Scoped(BaseModel):
@@ -86,6 +90,10 @@ class Synonym(_Scoped):
     removed_at: datetime | None = None
     removed_by: Text | None = None
     removal_reason: Text | None = None
+    # Who approved or rejected a suggested (proposed) synonym; None for one a person added directly.
+    reviewed_at: datetime | None = None
+    reviewed_by: Text | None = None
+    review_reason: Text | None = None
 
     def mapping(self) -> SynonymMapping:
         """The part of this synonym matching uses, for screening settings and exported synonym sets."""
@@ -102,8 +110,19 @@ class SynonymQuery(BaseModel):
     concept_id: Text | None = None
     term: Text | None = None
     include_removed: bool = False
+    # One status only, e.g. "proposed" for the review queue; overrides include_removed.
+    status: SynonymStatus | None = None
     offset: int = Field(default=0, ge=0)
     limit: int = Field(default=50, ge=1, le=200)
+
+
+class SuggestionReport(BaseModel):
+    """What one run of a synonym source proposed, and how many suggestions it set aside and why."""
+
+    source: str
+    dataset: str
+    proposed: list[Synonym]
+    skipped: dict[str, int] = Field(default_factory=dict)
 
 
 class SynonymList(BaseModel):

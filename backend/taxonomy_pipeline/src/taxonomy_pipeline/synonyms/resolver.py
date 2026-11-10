@@ -36,10 +36,9 @@ from pydantic import BaseModel
 from ..matching.names import match_key
 from ..taxonomy.base import TaxonomyDataset
 from ..taxonomy.synonym_set import SynonymMapping
-from .models import AUDIT_LEVELS, Resolution, ResolvedConcept, Synonym, SynonymCreate
+from .models import AUDIT_LEVELS, LEVELS, Resolution, ResolvedConcept, Synonym, SynonymCreate
 from .store import SynonymError
 
-LEVELS = tuple(AUDIT_LEVELS)
 # Deeper scopes are more specific, so they're consulted first.
 SCOPE_DEPTH = {"specialities": 0, "categories": 1}
 
