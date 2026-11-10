@@ -15,7 +15,10 @@ TEXT_PROFILE = "semantic_labels_v1"
 # full id score with the same weights as breadth.
 PINNED_REVISIONS = {MODEL_ID: MODEL_REVISION, MODEL_ID.removeprefix("sentence-transformers/"): MODEL_REVISION}
 _model = None
-_model_lock = threading.Lock()
+# Loading or running a sentence model from two threads at once kills the process (abort or segfault, nothing
+# Python can catch), and the API runs requests and background stages on threads. Every model in this package,
+# here and in `semantic.py`, takes this one lock to load or encode.
+MODEL_LOCK = threading.RLock()
 
 
 def semantic_text(label: str | None) -> str:
@@ -29,7 +32,7 @@ def pinned_revision(model_name: str) -> str | None:
 
 def _get_model():
     global _model
-    with _model_lock:
+    with MODEL_LOCK:
         if _model is None:
             try:
                 from sentence_transformers import SentenceTransformer
@@ -49,10 +52,11 @@ def encode_labels(texts: list[str]) -> dict[str, np.ndarray]:
     if not unique:
         return {}
     try:
-        vectors = np.asarray(_get_model().encode(
-            unique, batch_size=32, normalize_embeddings=True,
-            convert_to_numpy=True, show_progress_bar=False,
-        ))
+        with MODEL_LOCK:
+            vectors = np.asarray(_get_model().encode(
+                unique, batch_size=32, normalize_embeddings=True,
+                convert_to_numpy=True, show_progress_bar=False,
+            ))
         if vectors.ndim != 2 or vectors.shape[0] != len(unique) or not np.isfinite(vectors).all():
             raise ValueError("model returned invalid embeddings")
         norms = np.linalg.norm(vectors, axis=1, keepdims=True)

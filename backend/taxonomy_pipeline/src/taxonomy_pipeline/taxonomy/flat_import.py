@@ -182,6 +182,30 @@ def read_rows(mapping: SourceMapping) -> list[dict[str, str]]:
     return kept
 
 
+def sheet_names(path: Path) -> list[str]:
+    """A workbook's sheets, in tab order; a CSV or TSV has none."""
+    if path.suffix.lower() not in (".xlsx", ".xlsm"):
+        return []
+    workbook = load_workbook(path, read_only=True, data_only=True)
+    try:
+        return list(workbook.sheetnames)
+    finally:
+        workbook.close()
+
+
+def inspect_table(
+    path: Path, sheet: str | None = None, *, sample_size: int = 5,
+) -> tuple[list[str], int, dict[str, list[str]]]:
+    """A table's headers, row count and a few distinct values per column, for choosing a mapping."""
+    headers, rows = _read_table(path, sheet)
+    samples: dict[str, list[str]] = {}
+    for header in headers:
+        if header:
+            values = dict.fromkeys(row[header] for row in rows if row[header])
+            samples[header] = list(values)[:sample_size]
+    return [header for header in headers if header], len(rows), samples
+
+
 def _read_table(path: Path, sheet: str | None) -> tuple[list[str], list[dict[str, str]]]:
     if path.suffix.lower() in (".xlsx", ".xlsm"):
         workbook = load_workbook(path, read_only=True, data_only=True)
@@ -289,7 +313,10 @@ def build_flat_taxonomy(rows: list[dict[str, str]], mapping: SourceMapping) -> F
             for i, (sid, tid) in enumerate(link_ids)
         ],
     }
-    context = {str(tag_id[key]): {"description": descriptions[key]} for key in tag_keys if key in descriptions}
+    context = {
+        str(tag_id[key]): {"title": spelling[key], "description": descriptions[key]}
+        for key in tag_keys if key in descriptions
+    }
     return FlatTaxonomy(tables=tables, tag_context=context, skipped_rows=skipped, merged_tags=merged)
 
 
