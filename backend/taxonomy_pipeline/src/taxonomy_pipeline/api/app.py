@@ -1,6 +1,7 @@
 """FastAPI app: a thin HTTP layer over the `app/` use cases (`app.scoring` for metrics and runs,
 `app.comparison` for comparing two runs, `app.browse` for taxonomy search, `app.enrichment` for proposals,
-`app.lineage` for the enrichment lineage, `app.lookup` for the tag lookup, `app.synonyms` for synonyms).
+`app.lineage` for the enrichment lineage, `app.lookup` for the tag lookup, `app.rounds` for running a whole
+enrichment round, `app.synonyms` for synonyms).
 
 A run is a batch job, not a request/response - `POST /runs` validates the
 config, schedules the work as a background task, and returns immediately
@@ -32,6 +33,7 @@ from .changes import router as changes_router
 from .lineage import router as lineage_router
 from .lookup import router as lookup_router
 from .proposals import router as proposals_router
+from .rounds import router as rounds_router
 from .security import disallowed_paths, require_token
 from .synonyms import router as synonyms_router
 
@@ -44,6 +46,7 @@ app = FastAPI(
 app.include_router(proposals_router)
 app.include_router(changes_router)
 app.include_router(lineage_router)
+app.include_router(rounds_router)
 app.include_router(lookup_router)
 app.include_router(synonyms_router)
 

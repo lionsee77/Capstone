@@ -18,7 +18,7 @@ from ..config import load_config
 from ..enrichment.audit import EVENTS
 from ..enrichment.bulk_decisions import BulkDraft, draft_decisions
 from ..enrichment.case_a import run_case_a
-from ..enrichment.case_b import run_case_b
+from ..enrichment.case_b import run_case_b, validate_context_argument
 from ..enrichment.integrate import Integration, IntegrationError
 from ..enrichment.integrate import integrate as integrate_snapshot
 from ..enrichment.models import ProposalReviewReport
@@ -63,10 +63,11 @@ def case_b(
     provider: str | None = None, context: str | Path | None = None, checkpoint: str | Path | None = None,
     batch_size: int = 5, model: str | None = None,
 ) -> list[dict[str, Any]]:
-    """Classify the tags saturation routed to Case B; `provider` defaults to the incoming dataset's name."""
+    """Classify routed tags with the generic JSON context provider unless another is selected."""
+    validate_context_argument(context)
     datasets = load_taxonomies(config_path, baseline, incoming)
     return asyncio.run(run_case_b(
-        datasets, report, baseline=baseline, incoming=incoming, provider=provider or incoming, context=context,
+        datasets, report, baseline=baseline, incoming=incoming, provider=provider or "tag_context", context=context,
         output=output,
         checkpoint=checkpoint, batch_size=batch_size, model=model,
     ))

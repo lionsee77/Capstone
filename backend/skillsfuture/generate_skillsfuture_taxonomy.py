@@ -8,7 +8,11 @@ The source workbooks are read-only inputs. No database is contacted or changed.
 from __future__ import annotations
 
 import argparse
+import json
+import os
 import re
+import stat
+import tempfile
 from pathlib import Path
 
 from openpyxl import load_workbook
@@ -38,14 +42,74 @@ def sql(value: str) -> str:
     return "'" + text(value).replace("\\", "\\\\").replace("'", "''") + "'"
 
 
-def unique_records(path: Path):
-    result = {}
+def skill_records(path: Path) -> dict[str, dict[str, str]]:
+    """Read eligible skills once for both SQL names and the Case B context file."""
+    result: dict[str, dict[str, str]] = {}
     for row in rows(path, "Unique Skills List"):
         skill_id = text(row.get("skill_id"))
         title = text(row.get("skill_title"))
         if skill_id and title:
-            result[skill_id] = title
+            result[skill_id] = {
+                "title": title, "description": text(row.get("skill_description")), "type": text(row.get("skill_type")),
+            }
     return result
+
+
+def write_output_pair(outputs: dict[Path, str]) -> None:
+    """Stage both files before replacing either, and roll back handled replacement failures.
+
+    Filesystem renames cannot make two paths atomic together. Backups support
+    rollback on ordinary errors; they are retained if rollback itself fails.
+    """
+    staged: dict[Path, Path] = {}
+    backups: dict[Path, Path] = {}
+    replaced: list[Path] = []
+    preserve_backups = False
+
+    def stage(path: Path, data: bytes) -> Path:
+        with tempfile.NamedTemporaryFile(dir=path.parent, prefix=f".{path.name}.", delete=False) as stream:
+            temporary = Path(stream.name)
+            try:
+                try:
+                    mode = stat.S_IMODE(path.stat().st_mode)
+                except FileNotFoundError:
+                    mode = 0o644
+                stream.write(data)
+                stream.flush()
+                os.fchmod(stream.fileno(), mode)
+                os.fsync(stream.fileno())
+            except BaseException:
+                temporary.unlink(missing_ok=True)
+                raise
+        return temporary
+
+    try:
+        for path, content in outputs.items():
+            path.parent.mkdir(parents=True, exist_ok=True)
+            staged[path] = stage(path, content.encode("utf-8"))
+            if path.exists():
+                backups[path] = stage(path, path.read_bytes())
+        try:
+            for path, temporary in staged.items():
+                os.replace(temporary, path)
+                replaced.append(path)
+        except OSError:
+            try:
+                for path in reversed(replaced):
+                    if path in backups:
+                        os.replace(backups[path], path)
+                    else:
+                        path.unlink(missing_ok=True)
+            except OSError as exc:
+                preserve_backups = True
+                raise RuntimeError(f"Output rollback failed; recovery backups: {backups}") from exc
+            raise
+    finally:
+        for temporary in staged.values():
+            temporary.unlink(missing_ok=True)
+        if not preserve_backups:
+            for temporary in backups.values():
+                temporary.unlink(missing_ok=True)
 
 
 def main() -> None:
@@ -54,9 +118,18 @@ def main() -> None:
     parser.add_argument("--framework", type=Path, default=DEFAULT_FRAMEWORK)
     parser.add_argument("--mapping", type=Path, default=DEFAULT_MAPPING)
     parser.add_argument("--output", type=Path, default=ROOT / "skillsfuture_taxonomy.sql")
+    parser.add_argument(
+        "--context-output", type=Path, help="tag context JSON (default: beside SQL, <source>_tag_context.json)",
+    )
     args = parser.parse_args()
+    context_path = args.context_output or args.output.with_name(
+        args.output.stem.removesuffix("_taxonomy") + "_tag_context.json"
+    )
+    if context_path.resolve() == args.output.resolve():
+        parser.error("--context-output must differ from the SQL --output path")
 
-    unique = unique_records(args.unique)
+    skills = skill_records(args.unique)
+    unique = {skill_id: skill["title"] for skill_id, skill in skills.items()}
     skill_title_to_id = {title.casefold(): skill_id for skill_id, title in unique.items()}
 
     roles = {}
@@ -108,8 +181,15 @@ def main() -> None:
     link_items = sorted(links)
     lines += [f"({4000+i}, {rid}, {tid})" + ("," if i < len(link_items)-1 else ";") for i, (rid, tid) in enumerate(link_items)]
     lines += ["", "COMMIT;", ""]
-    args.output.write_text("\n".join(lines), encoding="utf-8")
+    payload = {
+        "source": "skillsfuture", "display_name": "SkillsFuture",
+        "tags": {str(tid): {"skill_id": sid, **skills[sid]} for sid, tid in tag_items},
+    }
+    write_output_pair({
+        args.output: "\n".join(lines), context_path: json.dumps(payload, indent=2, ensure_ascii=False) + "\n",
+    })
     print(f"Generated {args.output}")
+    print(f"Generated {context_path}")
     print(f"categories={len(sectors)} specialities={len(role_id)} tags={len(tag_id)} links={len(links)}")
 
 

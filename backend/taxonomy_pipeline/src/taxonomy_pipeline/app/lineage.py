@@ -35,6 +35,8 @@ def taxonomy_lineage(integrations_root: Path, merge_root: Path, *, run_limit: in
     stages, fingerprints = _stages(rounds)
     runs = _runs(fingerprints, run_limit)
     chains = [LineageChain(stages=path, runs=_best_runs(path, runs)) for path in _chains(stages)]
+    # A chain with scores first (the sort keeps the rest in order), so a new unscored round can't replace a report.
+    chains.sort(key=lambda chain: not chain.runs)
     return TaxonomyLineage(stages=stages, chains=chains, runs=runs)
 
 
