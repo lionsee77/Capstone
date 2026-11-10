@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import csv
+import hashlib
 import json
 import logging
 from collections.abc import Callable
@@ -13,7 +14,6 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
-from openpyxl import Workbook
 
 from taxonomy_pipeline.enrichment import case_b
 from taxonomy_pipeline.enrichment.case_b import (
@@ -25,7 +25,7 @@ from taxonomy_pipeline.enrichment.case_b import (
     to_contract_records,
 )
 from taxonomy_pipeline.enrichment.models import CLASSIFICATION_OUTPUTS
-from taxonomy_pipeline.providers.skillsfuture import SkillsFutureProvider
+from taxonomy_pipeline.providers.tag_context import TagContextProvider
 from taxonomy_pipeline.taxonomy.base import TaxonomyDataset
 
 PROPOSAL = {
@@ -75,16 +75,14 @@ def _response(*proposals):
 
 @pytest.fixture
 def workbook(tmp_path):
-    book = Workbook()
-    sheet = book.active
-    sheet.title = "Unique Skills List"
-    sheet.append(["skill_id", "skill_title", "skill_description", "skill_type"])
-    sheet.append(["SK-B", "Loan Processing", "Processes loans", "Technical"])
-    sheet.append(["SK-A", "Unrelated Skill", "Not a Case B tag", "Technical"])
-    # An untitled row sorts before real skills but must not consume a generated tag ID.
-    sheet.append(["SK-0", None, "Must never shift the description lookup", "Technical"])
-    path = tmp_path / "unique.xlsx"
-    book.save(path)
+    """Generated SkillsFuture context; fixture name retained for existing run helpers."""
+    path = tmp_path / "skillsfuture_tag_context.json"
+    path.write_text(json.dumps({
+        "source": "skillsfuture", "display_name": "SkillsFuture", "tags": {
+            "3000": {"skill_id": "SK-A", "title": "Unrelated Skill", "description": "Not a Case B tag"},
+            "3001": {"skill_id": "SK-B", "title": "Loan Processing", "description": "Processes loans"},
+        },
+    }), encoding="utf-8")
     return path
 
 
@@ -93,6 +91,43 @@ def test_proposal_check_rejects_invalid_actions_and_confidence():
     assert not proposal_is_well_formed({**PROPOSAL, "action": "unknown"})
     assert not proposal_is_well_formed({**PROPOSAL, "confidence": 80})
     assert not proposal_is_well_formed({key: value for key, value in PROPOSAL.items() if key != "reason"})
+
+
+@pytest.mark.parametrize("mutation", ["source", "title"])
+def test_context_mismatches_fail_before_model_calls(tmp_path, workbook, saturation_report, mutation):
+    data = json.loads(workbook.read_text())
+    if mutation == "source":
+        data["source"] = "onet"
+    else:
+        data["tags"]["3001"]["title"] = "Another skill"
+    workbook.write_text(json.dumps(data))
+    client = StubClient()
+    with pytest.raises(CaseBError, match="does not match incoming|titles do not match"):
+        _run(saturation_report(CONCEPTS), tmp_path / "out.json", client, workbook=workbook)
+    assert client.prompts == []
+
+
+def test_empty_context_warns_before_using_tag_names_only(tmp_path, workbook, saturation_report, caplog):
+    workbook.write_text(json.dumps({"source": "skillsfuture", "tags": {}}))
+    client = StubClient(_answers(3001, 3002))
+    _run(saturation_report(CONCEPTS), tmp_path / "out.json", client, workbook=workbook)
+    assert "Missing context for 2/2" in caplog.text
+
+
+def test_changed_context_cannot_resume_paid_proposals(tmp_path, workbook, saturation_report):
+    report, output = saturation_report(SIX_TAGS), tmp_path / "out.json"
+    with pytest.raises(CaseBError):
+        _run(report, output, CrashAfter(_answers(3001, 3002, 3003)), workbook=workbook, batch_size=3)
+    saved = json.loads(output.with_name(".out.checkpoint.json").read_text())
+    assert saved["source_name"] == "SkillsFuture"
+    assert "context_sha256" in saved
+    context = json.loads(workbook.read_text())
+    context["tags"]["3001"]["description"] = "Updated description"
+    workbook.write_text(json.dumps(context))
+    client = StubClient()
+    with pytest.raises(CaseBError, match="context_sha256"):
+        _run(report, output, client, workbook=workbook)
+    assert client.prompts == []
 
 
 def test_contract_preserves_model_selected_service():
@@ -149,7 +184,7 @@ def test_run_classifies_only_case_b_tags_and_writes_contract_records(tmp_path, w
 
     records = asyncio.run(run_case_b(
         _datasets(), saturation_report(CONCEPTS, run_id="sat-9"), baseline="original", incoming="skillsfuture",
-        provider=SkillsFutureProvider(), context=workbook, output=output, client=client,
+        provider=TagContextProvider(), context=workbook, output=output, client=client,
     ))
 
     assert [record["tag_id"] for record in records] == ["3001", "3002"]
@@ -166,13 +201,15 @@ def test_run_classifies_only_case_b_tags_and_writes_contract_records(tmp_path, w
     # Like the generator, tag IDs are 3000 + position in the sorted skill_ids, so 3001 is SK-B.
     assert '"skill_id": "SK-B"' in client.prompts[0] and "Processes loans" in client.prompts[0]
     assert "Has A Parent" not in client.prompts[0]
-    assert '"Industry"' in client.prompts[0] and "Allowed Ankit services" in client.prompts[0]
+    assert '"Industry"' in client.prompts[0] and "Allowed services" in client.prompts[0]
 
 
 def _six_tag_datasets() -> dict[str, TaxonomyDataset]:
     datasets = _datasets()
     datasets["skillsfuture"] = TaxonomyDataset(
-        name="skillsfuture", tags=[{"id": 3000 + n, "name": f"Skill {n}"} for n in range(1, 7)],
+        name="skillsfuture", tags=[
+            {"id": 3000 + n, "name": "Loan Processing" if n == 1 else f"Skill {n}"} for n in range(1, 7)
+        ],
     )
     return datasets
 
@@ -188,7 +225,7 @@ def _answers(*tag_ids):
 def _run(report, output, client, **kwargs):
     return asyncio.run(run_case_b(
         _six_tag_datasets(), report, baseline="original", incoming="skillsfuture",
-        provider=SkillsFutureProvider(), context=kwargs.pop("workbook"), output=output, client=client, **kwargs,
+        provider=TagContextProvider(), context=kwargs.pop("workbook"), output=output, client=client, **kwargs,
     ))
 
 
@@ -205,7 +242,7 @@ class CrashAfter(StubClient):
 def test_run_accepts_a_registered_provider_by_name(tmp_path, workbook, saturation_report):
     records = asyncio.run(run_case_b(
         _datasets(), saturation_report(CONCEPTS), baseline="original", incoming="skillsfuture",
-        provider="skillsfuture", context=workbook, output=tmp_path / "out.json",
+        provider="tag_context", context=workbook, output=tmp_path / "out.json",
         client=StubClient(_response(PROPOSAL, {**PROPOSAL, "tag_id": "3002"})),
     ))
     assert [record["tag_id"] for record in records] == ["3001", "3002"]
@@ -215,7 +252,9 @@ def test_run_names_an_imported_source_and_adds_its_descriptions_to_the_prompt(
     tmp_path: Path, saturation_report: Callable[..., Path],
 ) -> None:
     context = tmp_path / "esco_tag_context.json"
-    context.write_text(json.dumps({"display_name": "ESCO", "tags": {"3001": {"description": "Approves loans"}}}),
+    context.write_text(json.dumps({
+        "source": "skillsfuture", "display_name": "ESCO", "tags": {"3001": {"description": "Approves loans"}},
+    }),
                        encoding="utf-8")
     client = StubClient(_response(PROPOSAL, {**PROPOSAL, "tag_id": "3002"}))
     asyncio.run(run_case_b(
@@ -309,6 +348,8 @@ def test_refuses_a_checkpoint_without_service_before_calling_the_model(tmp_path,
     checkpoint.write_text(json.dumps({
         "saturation_run_id": "run-1", "incoming": "skillsfuture", "model": "gpt-4o-mini",
         "context_schema_version": case_b.CONTEXT_SCHEMA_VERSION,
+        "context_sha256": hashlib.sha256(workbook.read_bytes()).hexdigest(),
+        "source_name": "SkillsFuture", "provider": "tag_context",
         "proposals": [{key: value for key, value in PROPOSAL.items() if key != "service"}],
     }), encoding="utf-8")
     client = StubClient()
@@ -324,7 +365,7 @@ def test_run_rejects_report_tags_missing_from_the_incoming_dataset(tmp_path, wor
     with pytest.raises(CaseBError, match="exist in dataset 'skillsfuture'"):
         asyncio.run(run_case_b(
             _datasets(), saturation_report(concepts), baseline="original", incoming="skillsfuture",
-            provider=SkillsFutureProvider(), context=workbook, output=tmp_path / "out.json", client=StubClient(),
+            provider=TagContextProvider(), context=workbook, output=tmp_path / "out.json", client=StubClient(),
         ))
 
 
@@ -356,7 +397,7 @@ def test_flags_ambiguous_tags_for_review_in_the_json_and_csv(tmp_path, workbook,
 
     records = asyncio.run(run_case_b(
         _datasets(), saturation_report(concepts), baseline="original", incoming="skillsfuture",
-        provider=SkillsFutureProvider(), context=workbook, output=output, client=client,
+        provider=TagContextProvider(), context=workbook, output=output, client=client,
     ))
 
     assert "needs_review" not in records[0]

@@ -3,531 +3,707 @@
   "display_name": "O*NET",
   "tags": {
     "3000": {
+      "title": "AJAX",
       "description": "Web platform development software"
     },
     "3001": {
+      "title": "Adobe Acrobat",
       "description": "Document management software"
     },
     "3002": {
+      "title": "Adobe After Effects",
       "description": "Video creation and editing software"
     },
     "3003": {
+      "title": "Adobe Creative Cloud software",
       "description": "Graphics or photo imaging software"
     },
     "3004": {
+      "title": "Adobe Illustrator",
       "description": "Graphics or photo imaging software"
     },
     "3005": {
+      "title": "Adobe InDesign",
       "description": "Desktop publishing software"
     },
     "3006": {
+      "title": "Adobe Photoshop",
       "description": "Graphics or photo imaging software"
     },
     "3007": {
+      "title": "Alteryx software",
       "description": "Business intelligence and data analysis software"
     },
     "3008": {
+      "title": "Amazon DynamoDB",
       "description": "Data base management system software"
     },
     "3009": {
+      "title": "Amazon Elastic Compute Cloud EC2",
       "description": "Data base user interface and query software"
     },
     "3010": {
+      "title": "Amazon Redshift",
       "description": "Data base user interface and query software"
     },
     "3011": {
+      "title": "Amazon Web Services AWS CloudFormation",
       "description": "Cloud-based management software"
     },
     "3012": {
+      "title": "Amazon Web Services AWS software",
       "description": "Data base user interface and query software"
     },
     "3013": {
+      "title": "Ansible software",
       "description": "Expert system software"
     },
     "3014": {
+      "title": "Apache Airflow",
       "description": "Procedure management software"
     },
     "3015": {
+      "title": "Apache Cassandra",
       "description": "Data base management system software"
     },
     "3016": {
+      "title": "Apache Hadoop",
       "description": "Data base management system software"
     },
     "3017": {
+      "title": "Apache Hive",
       "description": "Data base management system software"
     },
     "3018": {
+      "title": "Apache Kafka",
       "description": "Development environment software"
     },
     "3019": {
+      "title": "Apache Maven",
       "description": "Development environment software"
     },
     "3020": {
+      "title": "Apache Spark",
       "description": "Business intelligence and data analysis software"
     },
     "3021": {
+      "title": "Apache Subversion SVN",
       "description": "File versioning software"
     },
     "3022": {
+      "title": "Apache Tomcat",
       "description": "Web platform development software"
     },
     "3023": {
+      "title": "Apple Safari",
       "description": "Internet browser software"
     },
     "3024": {
+      "title": "Apple iOS",
       "description": "Operating system software"
     },
     "3025": {
+      "title": "Apple macOS",
       "description": "Operating system software"
     },
     "3026": {
+      "title": "Asana",
       "description": "Cloud-based data access and sharing software"
     },
     "3027": {
+      "title": "Atlassian Bitbucket",
       "description": "Application server software"
     },
     "3028": {
+      "title": "Atlassian Confluence",
       "description": "Project management software"
     },
     "3029": {
+      "title": "Atlassian JIRA",
       "description": "Content workflow software"
     },
     "3030": {
+      "title": "Autodesk AutoCAD",
       "description": "Computer aided design CAD software"
     },
     "3031": {
+      "title": "Autodesk AutoCAD Civil 3D",
       "description": "Computer aided design CAD software"
     },
     "3032": {
+      "title": "Autodesk Revit",
       "description": "Computer aided design CAD software"
     },
     "3033": {
+      "title": "Bash",
       "description": "Operating system software"
     },
     "3034": {
+      "title": "Bentley MicroStation",
       "description": "Computer aided design CAD software"
     },
     "3035": {
+      "title": "Bootstrap",
       "description": "Web platform development software"
     },
     "3036": {
+      "title": "Border Gateway Protocol BGP",
       "description": "Switch or router software"
     },
     "3037": {
+      "title": "C",
       "description": "Development environment software"
     },
     "3038": {
+      "title": "C#",
       "description": "Object or component oriented development software"
     },
     "3039": {
+      "title": "C++",
       "description": "Object or component oriented development software"
     },
     "3040": {
+      "title": "Canva",
       "description": "Graphics or photo imaging software"
     },
     "3041": {
+      "title": "Cascading style sheets CSS",
       "description": "Web platform development software"
     },
     "3042": {
+      "title": "Chef",
       "description": "Configuration management software"
     },
     "3043": {
+      "title": "Cisco Webex",
       "description": "Video conferencing software"
     },
     "3044": {
+      "title": "Dassault Systemes SolidWorks",
       "description": "Computer aided design CAD software"
     },
     "3045": {
+      "title": "Django",
       "description": "Web platform development software"
     },
     "3046": {
+      "title": "Docker",
       "description": "Application server software"
     },
     "3047": {
+      "title": "ESRI ArcGIS software",
       "description": "Geographic information system"
     },
     "3048": {
+      "title": "Eclipse IDE",
       "description": "Development environment software"
     },
     "3049": {
+      "title": "Elasticsearch",
       "description": "Data base management system software"
     },
     "3050": {
+      "title": "Epic Systems",
       "description": "Medical software"
     },
     "3051": {
+      "title": "Extensible markup language XML",
       "description": "Enterprise application integration software"
     },
     "3052": {
+      "title": "Facebook",
       "description": "Web page creation and editing software"
     },
     "3053": {
+      "title": "Figma",
       "description": "Graphical user interface development software"
     },
     "3054": {
+      "title": "Git",
       "description": "File versioning software"
     },
     "3055": {
+      "title": "GitHub",
       "description": "Application server software"
     },
     "3056": {
+      "title": "GitLab",
       "description": "Application server software"
     },
     "3057": {
+      "title": "Go",
       "description": "Development environment software"
     },
     "3058": {
+      "title": "Google Analytics",
       "description": "Data mining software"
     },
     "3059": {
+      "title": "Google Android",
       "description": "Operating system software"
     },
     "3060": {
+      "title": "Google Angular",
       "description": "Web platform development software"
     },
     "3061": {
+      "title": "Google Docs",
       "description": "Word processing software"
     },
     "3062": {
+      "title": "Google Looker Analytics",
       "description": "Business intelligence and data analysis software"
     },
     "3063": {
+      "title": "Google Sheets",
       "description": "Spreadsheet software"
     },
     "3064": {
+      "title": "Google Workspace software",
       "description": "Office suite software"
     },
     "3065": {
+      "title": "Grafana Labs Grafana Cloud",
       "description": "Graphical user interface development software"
     },
     "3066": {
+      "title": "GraphQL",
       "description": "Data base user interface and query software"
     },
     "3067": {
+      "title": "Henry Schein Dentrix",
       "description": "Medical software"
     },
     "3068": {
+      "title": "Hibernate ORM",
       "description": "Object oriented data base management software"
     },
     "3069": {
+      "title": "HubSpot software",
       "description": "Sales and marketing software"
     },
     "3070": {
+      "title": "Hypertext markup language HTML",
       "description": "Web platform development software"
     },
     "3071": {
+      "title": "IBM DB2",
       "description": "Data base user interface and query software"
     },
     "3072": {
+      "title": "IBM SPSS Statistics",
       "description": "Analytical or scientific software"
     },
     "3073": {
+      "title": "IBM Terraform",
       "description": "Configuration management software"
     },
     "3074": {
+      "title": "IBM WebSphere MQ",
       "description": "Cloud-based management software"
     },
     "3075": {
+      "title": "Informatica software",
       "description": "Metadata management software"
     },
     "3076": {
+      "title": "Intuit QuickBooks",
       "description": "Accounting software"
     },
     "3077": {
+      "title": "Intuit TurboTax",
       "description": "Tax preparation software"
     },
     "3078": {
+      "title": "JUnit",
       "description": "Program testing software"
     },
     "3079": {
+      "title": "JavaScript",
       "description": "Web platform development software"
     },
     "3080": {
+      "title": "JavaScript Object Notation JSON",
       "description": "Web platform development software"
     },
     "3081": {
+      "title": "Jenkins CI",
       "description": "Enterprise application integration software"
     },
     "3082": {
+      "title": "Kronos Workforce Timekeeper",
       "description": "Time accounting software"
     },
     "3083": {
+      "title": "Kubernetes",
       "description": "Application server software"
     },
     "3084": {
+      "title": "Linux",
       "description": "Operating system software"
     },
     "3085": {
+      "title": "MEDITECH software",
       "description": "Medical software"
     },
     "3086": {
+      "title": "Marketo Marketing Automation",
       "description": "Sales and marketing software"
     },
     "3087": {
+      "title": "Microsoft .NET Framework",
       "description": "Development environment software"
     },
     "3088": {
+      "title": "Microsoft ASP.NET",
       "description": "Web platform development software"
     },
     "3089": {
+      "title": "Microsoft Access",
       "description": "Data base user interface and query software"
     },
     "3090": {
+      "title": "Microsoft Active Directory",
       "description": "Internet directory services software"
     },
     "3091": {
+      "title": "Microsoft Active Server Pages ASP",
       "description": "Web platform development software"
     },
     "3092": {
+      "title": "Microsoft Azure software",
       "description": "Development environment software"
     },
     "3093": {
+      "title": "Microsoft Edge",
       "description": "Internet browser software"
     },
     "3094": {
+      "title": "Microsoft Excel",
       "description": "Spreadsheet software"
     },
     "3095": {
+      "title": "Microsoft Office software",
       "description": "Office suite software"
     },
     "3096": {
+      "title": "Microsoft Outlook",
       "description": "Electronic mail software"
     },
     "3097": {
+      "title": "Microsoft Power Automate",
       "description": "Enterprise application integration software"
     },
     "3098": {
+      "title": "Microsoft Power BI",
       "description": "Business intelligence and data analysis software"
     },
     "3099": {
+      "title": "Microsoft Power Platform software",
       "description": "Enterprise application integration software"
     },
     "3100": {
+      "title": "Microsoft PowerPoint",
       "description": "Presentation software"
     },
     "3101": {
+      "title": "Microsoft PowerShell",
       "description": "Development environment software"
     },
     "3102": {
+      "title": "Microsoft Project",
       "description": "Project management software"
     },
     "3103": {
+      "title": "Microsoft SQL Server",
       "description": "Data base user interface and query software"
     },
     "3104": {
+      "title": "Microsoft SQL Server Integration Services SSIS",
       "description": "Enterprise application integration software"
     },
     "3105": {
+      "title": "Microsoft SQL Server Reporting Services SSRS",
       "description": "Object or component oriented development software"
     },
     "3106": {
+      "title": "Microsoft SharePoint",
       "description": "Document management software"
     },
     "3107": {
+      "title": "Microsoft Team Foundation Server",
       "description": "Project management software"
     },
     "3108": {
+      "title": "Microsoft Teams",
       "description": "Project management software"
     },
     "3109": {
+      "title": "Microsoft Visio",
       "description": "Process mapping and design software"
     },
     "3110": {
+      "title": "Microsoft Visual Basic",
       "description": "Development environment software"
     },
     "3111": {
+      "title": "Microsoft Visual Basic for Applications VBA",
       "description": "Development environment software"
     },
     "3112": {
+      "title": "Microsoft Visual Studio",
       "description": "Development environment software"
     },
     "3113": {
+      "title": "Microsoft Windows",
       "description": "Operating system software"
     },
     "3114": {
+      "title": "Microsoft Windows Server",
       "description": "Application server software"
     },
     "3115": {
+      "title": "Microsoft Word",
       "description": "Word processing software"
     },
     "3116": {
+      "title": "MongoDB",
       "description": "Data base management system software"
     },
     "3117": {
+      "title": "Mozilla Firefox",
       "description": "Internet browser software"
     },
     "3118": {
+      "title": "MySQL",
       "description": "Data base user interface and query software"
     },
     "3119": {
+      "title": "NoSQL",
       "description": "Data base management system software"
     },
     "3120": {
+      "title": "Node.js",
       "description": "Web platform development software"
     },
     "3121": {
+      "title": "Oracle Cloud software",
       "description": "Cloud-based management software"
     },
     "3122": {
+      "title": "Oracle Database",
       "description": "Data base user interface and query software"
     },
     "3123": {
+      "title": "Oracle Java",
       "description": "Object or component oriented development software"
     },
     "3124": {
+      "title": "Oracle Java 2 Platform Enterprise Edition J2EE",
       "description": "Development environment software"
     },
     "3125": {
+      "title": "Oracle PL/SQL",
       "description": "Data base management system software"
     },
     "3126": {
+      "title": "Oracle PeopleSoft",
       "description": "Enterprise resource planning ERP software"
     },
     "3127": {
+      "title": "Oracle Primavera Enterprise Project Portfolio Management",
       "description": "Project management software"
     },
     "3128": {
+      "title": "Oracle SQL Developer",
       "description": "Development environment software"
     },
     "3129": {
+      "title": "PHP",
       "description": "Web platform development software"
     },
     "3130": {
+      "title": "Perl",
       "description": "Object or component oriented development software"
     },
     "3131": {
+      "title": "PostgreSQL",
       "description": "Object oriented data base management software"
     },
     "3132": {
+      "title": "Procore software",
       "description": "Analytical or scientific software"
     },
     "3133": {
+      "title": "Prometheus",
       "description": "Data base user interface and query software"
     },
     "3134": {
+      "title": "Puppet",
       "description": "Configuration management software"
     },
     "3135": {
+      "title": "PyTorch",
       "description": "Data base user interface and query software"
     },
     "3136": {
+      "title": "Python",
       "description": "Object or component oriented development software"
     },
     "3137": {
+      "title": "R",
       "description": "Object or component oriented development software"
     },
     "3138": {
+      "title": "React",
       "description": "Web platform development software"
     },
     "3139": {
+      "title": "Red Hat Enterprise Linux",
       "description": "Operating system software"
     },
     "3140": {
+      "title": "Red Hat OpenShift",
       "description": "Application server software"
     },
     "3141": {
+      "title": "Redis",
       "description": "Data base management system software"
     },
     "3142": {
+      "title": "Ruby",
       "description": "Development environment software"
     },
     "3143": {
+      "title": "SAP Concur",
       "description": "Accounting software"
     },
     "3144": {
+      "title": "SAP ERP",
       "description": "Enterprise resource planning ERP software"
     },
     "3145": {
+      "title": "SAP software",
       "description": "Enterprise resource planning ERP software"
     },
     "3146": {
+      "title": "SAS",
       "description": "Analytical or scientific software"
     },
     "3147": {
+      "title": "Salesforce software",
       "description": "Customer relationship management CRM software"
     },
     "3148": {
+      "title": "Scala",
       "description": "Object or component oriented development software"
     },
     "3149": {
+      "title": "Selenium",
       "description": "Program testing software"
     },
     "3150": {
+      "title": "ServiceNow",
       "description": "Data base user interface and query software"
     },
     "3151": {
+      "title": "Shell script",
       "description": "Operating system software"
     },
     "3152": {
+      "title": "Slack",
       "description": "Cloud-based data access and sharing software"
     },
     "3153": {
+      "title": "Snowflake",
       "description": "Data mining software"
     },
     "3154": {
+      "title": "Splunk Enterprise",
       "description": "Cloud-based management software"
     },
     "3155": {
+      "title": "Spring Boot",
       "description": "Application server software"
     },
     "3156": {
+      "title": "Spring Framework",
       "description": "Web platform development software"
     },
     "3157": {
+      "title": "Structured query language SQL",
       "description": "Data base user interface and query software"
     },
     "3158": {
+      "title": "Swift",
       "description": "Object or component oriented development software"
     },
     "3159": {
+      "title": "Tableau",
       "description": "Business intelligence and data analysis software"
     },
     "3160": {
+      "title": "TensorFlow",
       "description": "Analytical or scientific software"
     },
     "3161": {
+      "title": "Teradata Database",
       "description": "Data base management system software"
     },
     "3162": {
+      "title": "The MathWorks MATLAB",
       "description": "Analytical or scientific software"
     },
     "3163": {
+      "title": "TikTok",
       "description": "Video creation and editing software"
     },
     "3164": {
+      "title": "Transact-SQL",
       "description": "Data base user interface and query software"
     },
     "3165": {
+      "title": "Trimble SketchUp Pro",
       "description": "Graphics or photo imaging software"
     },
     "3166": {
+      "title": "TypeScript",
       "description": "Object or component oriented development software"
     },
     "3167": {
+      "title": "UNIX",
       "description": "Operating system software"
     },
     "3168": {
+      "title": "UNIX Shell",
       "description": "Operating system software"
     },
     "3169": {
+      "title": "Vue.js",
       "description": "Web platform development software"
     },
     "3170": {
+      "title": "WordPress",
       "description": "Web page creation and editing software"
     },
     "3171": {
+      "title": "Workday software",
       "description": "Enterprise resource planning ERP software"
     },
     "3172": {
+      "title": "Yardi software",
       "description": "Data base user interface and query software"
     },
     "3173": {
+      "title": "Zoom",
       "description": "Video conferencing software"
     },
     "3174": {
+      "title": "eClinicalWorks EHR software",
       "description": "Medical software"
     },
     "3175": {
+      "title": "jQuery",
       "description": "Object or component oriented development software"
     }
   }

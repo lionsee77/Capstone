@@ -445,6 +445,156 @@ export const taxonomyConceptDetailSchema = z.object({
 });
 export type TaxonomyConceptDetail = z.infer<typeof taxonomyConceptDetailSchema>;
 
+export const roundStageIdSchema = z.enum(["import", "score", "case_a", "case_b", "merge", "integrate", "score_enriched"]);
+export type RoundStageId = z.infer<typeof roundStageIdSchema>;
+export const roundStageStatusSchema = z.enum(["pending", "running", "done", "failed", "skipped"]);
+export type RoundStageStatus = z.infer<typeof roundStageStatusSchema>;
+
+/** Mirrors `RoundStage`: one step of an enrichment round. */
+export const roundStageSchema = z.object({
+  id: roundStageIdSchema,
+  status: roundStageStatusSchema,
+  started_at: z.string().nullable(),
+  finished_at: z.string().nullable(),
+  summary: z.string().nullable(),
+  error: z.string().nullable(),
+});
+export type RoundStage = z.infer<typeof roundStageSchema>;
+
+/** Mirrors `RoundSettings`: the switches on a round. Thresholds left null keep the template's. */
+export const roundSettingsSchema = z.object({
+  judge: z.boolean(),
+  case_b: z.boolean(),
+  threshold: z.number().nullable(),
+  semantic_threshold: z.number().nullable(),
+  add_candidate_lexical_threshold: z.number().nullable(),
+  add_candidate_semantic_threshold: z.number().nullable(),
+});
+export type RoundSettings = z.infer<typeof roundSettingsSchema>;
+
+/** Mirrors `RoundState` (`GET /rounds/{id}`). */
+export const roundStateSchema = z.object({
+  round_id: z.string(),
+  baseline_snapshot: z.string(),
+  created_at: z.string(),
+  source_name: z.string().nullable(),
+  settings: roundSettingsSchema,
+  mapping: z.record(z.string(), z.unknown()).nullable(),
+  stages: z.array(roundStageSchema),
+  warnings: z.array(z.string()),
+  import_counts: z.record(z.string(), z.number()),
+  merge_counts: z.record(z.string(), z.number()),
+  pending_sources: z.number(),
+  decisions_applied: z.boolean(),
+  reviewer: z.string().nullable(),
+  score_run_id: z.string().nullable(),
+  enriched_run_id: z.string().nullable(),
+  status: z.enum(["setup", "ready", "running", "failed", "review", "ready_to_integrate", "complete"]),
+});
+export type RoundState = z.infer<typeof roundStateSchema>;
+
+const reviewSourceSchema = z.object({ source_dataset: z.string(), tag_id: z.string() });
+
+/** A saved decision as the queue returns it: what it did and why. `merge-preview` validates the rest. */
+const queueDecisionSchema = z.object({ action: z.string(), reason: z.string() });
+
+/** Mirrors `ReviewQueueTag`: one held tag and the evidence for deciding it. */
+export const reviewQueueTagSchema = z.object({
+  source: reviewSourceSchema,
+  tag: z.string(),
+  status: z.enum(["accepted", "excluded", "deferred", "pending"]),
+  reason: z.string(),
+  reason_codes: z.array(z.string()),
+  placements: z.array(z.object({
+    service: z.string(),
+    category: z.string(),
+    speciality: z.string(),
+    confidence: z.number().nullable(),
+    reason: z.string(),
+  })),
+  closest: z.array(z.object({
+    score: z.number(),
+    basis: z.string(),
+    name: z.string().nullable(),
+    level: z.string().nullable(),
+    tag_id: z.number().nullable(),
+  })),
+  duplicates: z.array(z.object({
+    source: reviewSourceSchema,
+    tag: z.string(),
+    reason: z.string(),
+    similarity: z.number().nullable(),
+  })),
+  decision: queueDecisionSchema.nullable(),
+});
+export type ReviewQueueTag = z.infer<typeof reviewQueueTagSchema>;
+
+/** Mirrors `ReviewQueueProposal`: a category or speciality that needs a decision before tags go under it. */
+export const reviewQueueProposalSchema = z.object({
+  proposal_id: z.string(),
+  level: z.enum(["category", "speciality"]),
+  name: z.string(),
+  path: z.array(z.string()),
+  status: z.enum(["new", "reuse", "review"]),
+  reason: z.string(),
+  blocks_creation: z.boolean(),
+  source_tags: z.number(),
+  matches: z.array(z.object({
+    id: z.union([z.number(), z.string()]).nullable(),
+    name: z.string(),
+    level: z.string(),
+    path: z.array(z.string()),
+    reusable: z.boolean(),
+    same_parent: z.boolean(),
+    match_types: z.array(z.string()),
+    lexical_score: z.number(),
+    semantic_score: z.number().nullable(),
+  })),
+  decision: queueDecisionSchema.nullable(),
+});
+export type ReviewQueueProposal = z.infer<typeof reviewQueueProposalSchema>;
+
+/** Mirrors `ReviewQueue` (`GET /rounds/{id}/review`). */
+export const reviewQueueSchema = z.object({
+  tags: z.array(reviewQueueTagSchema),
+  proposals: z.array(reviewQueueProposalSchema),
+  total: z.number(),
+  offset: z.number(),
+  limit: z.number(),
+  undecided: z.number(),
+  decided: z.number(),
+  proposals_undecided: z.number(),
+});
+export type ReviewQueue = z.infer<typeof reviewQueueSchema>;
+
+/** `POST /rounds/{id}/bulk-decide`: the round, and how the draft sorted its tags. */
+export const bulkDraftResultSchema = z.object({ round: roundStateSchema, counts: z.record(z.string(), z.number()) });
+
+/** `GET /rounds/{id}/config`: the generated round config, as text. */
+export const roundConfigTextSchema = z.object({ config: z.string() });
+
+/** Mirrors `RoundFile`: an uploaded file, read far enough to offer its columns. */
+export const roundFileSchema = z.object({
+  name: z.string(),
+  size: z.number(),
+  sheets: z.array(z.string()),
+  columns: z.array(z.string()),
+  row_count: z.number(),
+  samples: z.record(z.string(), z.array(z.string())),
+  error: z.string().nullable(),
+});
+export type RoundFile = z.infer<typeof roundFileSchema>;
+
+/** Mirrors `RoundOptions` (`GET /rounds/options`). */
+export const roundOptionsSchema = z.object({
+  snapshots: z.array(z.string()),
+  services: z.array(z.object({ id: z.number(), name: z.string() })),
+  llm_allowed: z.boolean(),
+  llm_key_configured: z.boolean(),
+  saturation_defaults: z.record(z.string(), z.number()),
+});
+export type RoundOptions = z.infer<typeof roundOptionsSchema>;
+
 /** Mirrors `LookupMatch`: an existing concept a looked-up term matched. Scores are uncalibrated review evidence. */
 export const lookupMatchSchema = taxonomyConceptSummarySchema.extend({
   match_type: z.enum(["exact", "variant", "lexical", "semantic"]),

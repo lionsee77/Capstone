@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from collections.abc import Callable
 from pathlib import Path
 
@@ -143,3 +144,28 @@ def test_no_rounds_gives_an_empty_lineage(tmp_path: Path) -> None:
     lineage = taxonomy_lineage(tmp_path / "integrations", tmp_path / "merge_runs")
 
     assert lineage.stages == [] and lineage.chains == [] and lineage.runs == []
+
+
+def test_a_chain_with_scores_comes_before_a_longer_or_newer_one_without(
+    tmp_path: Path, integration_round: Callable[..., Path], isolated_db: Path,
+) -> None:
+    scored = integration_round("scored", BASELINE, "s", created_at="2026-10-01T00:00:00+00:00")
+    integration_round("newer", BASELINE, "n", created_at="2026-11-01T00:00:00+00:00")
+    report = RunReport(status="done")
+    paths = [str(scored / "baseline" / name) for name in BASELINE]
+    config = {
+        "datasets": [
+            {"name": "before", "paths": paths},
+            {"name": "after", "paths": [*paths, str(scored / "additions.sql")]},
+        ],
+        "metrics": [
+            {"id": "integrity", "params": {"dataset": "before"}}, {"id": "integrity", "params": {"dataset": "after"}},
+        ],
+    }
+    db.save_run(report, config_json=json.dumps(config))
+
+    chains = taxonomy_lineage(tmp_path / "integrations", tmp_path / "merge_runs").chains
+
+    assert [chain.stages[-1] for chain in chains] == ["scored", "newer"]
+    assert chains[0].runs == [report.run_id]
+

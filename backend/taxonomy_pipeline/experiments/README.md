@@ -13,6 +13,8 @@ checkpoint for that version, and repeat for each prompt version. For example:
 
 ```bash
 taxonomy-pipeline case-b --report report.json \
+  --provider tag_context \
+  --context ../skillsfuture/skillsfuture_tag_context.json \
   --output experiments/results/case_b_v1.json \
   --checkpoint experiments/results/case_b_v1.checkpoint.json
 
@@ -59,7 +61,8 @@ It is free and deterministic:
   integrate gets a fully reviewed run.
 
 Run it from `backend/taxonomy_pipeline/`. A recording takes about two minutes
-and is about 300 MB. `golden_runs/` is git-ignored.
+and is about 300 MB. `golden_runs/` is git-ignored. Generate SkillsFuture's SQL
+and tag-context JSON together before recording; the stub uses that JSON for context.
 
 ```bash
 python experiments/golden_run.py record golden_runs/before    # on dev, before the change
