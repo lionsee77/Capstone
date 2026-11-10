@@ -25,6 +25,7 @@ import json
 import os
 import re
 import shutil
+import tempfile
 import threading
 import zipfile
 from collections.abc import Iterator
@@ -185,7 +186,13 @@ def _baseline_directory(roots: RoundRoots, baseline: str) -> Path:
     directory.mkdir(parents=True, exist_ok=True)
     paths = [str(path.resolve()) for path in _original_dumps(roots)]
     dataset = {"name": "enriched", "type": "sql_dump", "paths": paths}
-    (directory / "enriched.yaml").write_text(yaml.safe_dump({"datasets": [dataset], "metrics": []}), encoding="utf-8")
+    # Rounds share this file and can import at the same time, so each writes its own copy and swaps it in whole:
+    # a reader never sees one that's empty or half written.
+    with tempfile.NamedTemporaryFile(
+        "w", dir=directory, prefix="enriched.", suffix=".tmp", delete=False, encoding="utf-8",
+    ) as handle:
+        handle.write(yaml.safe_dump({"datasets": [dataset], "metrics": []}))
+    Path(handle.name).replace(directory / "enriched.yaml")
     return directory
 
 
