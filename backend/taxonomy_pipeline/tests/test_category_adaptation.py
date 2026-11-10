@@ -531,3 +531,138 @@ def test_one_category_per_tag_must_be_a_boolean():
 
     assert result.status == "error"
     assert "one_category_per_tag" in result.summary
+
+
+def _banking_tags_datasets(tag_names: dict[int, str]) -> dict[str, TaxonomyDataset]:
+    """Every tag in `tag_names` sits only in SkillsFuture's Banking sector, which
+    matches the baseline's Banking category, and matches no existing speciality."""
+    datasets = _datasets()
+    incoming = datasets["skillsfuture"]
+    incoming.tags = [{"id": tag_id, "name": name} for tag_id, name in tag_names.items()]
+    incoming.speciality_tags = [
+        {"id": 800 + index, "speciality_id": 601, "tag_id": tag_id} for index, tag_id in enumerate(tag_names)
+    ]
+    return datasets
+
+
+def _speciality_by_tag(result) -> dict[str, str]:
+    return {placement["tag_name"]: placement["target_speciality_name"] for placement in result.details["placements"]}
+
+
+def test_groups_new_specialities_close_in_meaning_under_the_most_central_tag(monkeypatch):
+    monkeypatch.setattr(category_adaptation, "SemanticMatcher", _ScopedMatcher)
+    datasets = _banking_tags_datasets({9001: "loan processing", 9004: "loan approval", 9005: "mortgage advice"})
+
+    result = _run_on(datasets, [9001, 9004, 9005], semantic_model="test-model",
+                     group_new_specialities_threshold=0.6)
+
+    # Both loan tags have one neighbour, so the tie goes to the name sorted first.
+    assert _speciality_by_tag(result) == {
+        "loan processing": "loan approval", "loan approval": "loan approval", "mortgage advice": "mortgage advice",
+    }
+    member = next(p for p in result.details["placements"] if p["tag_name"] == "loan processing")
+    assert member["speciality_group_size"] == 2 and member["speciality_group_leader"] is False
+    assert member["speciality_group_score"] == 0.7
+    assert member["target_speciality_id"] == "skillsfuture:tag:9004"
+    assert "1 new-speciality groups" in result.summary
+
+
+def test_grouping_never_chains_tags_that_are_only_close_through_another_tag(monkeypatch):
+    monkeypatch.setattr(category_adaptation, "SemanticMatcher", _ScopedMatcher)
+    datasets = _banking_tags_datasets({
+        9001: "alpha beta", 9004: "beta gamma", 9005: "gamma delta", 9006: "delta epsilon",
+    })
+
+    result = _run_on(datasets, [9001, 9004, 9005, 9006], semantic_model="test-model",
+                     group_new_specialities_threshold=0.6)
+
+    # "delta epsilon" is close to "gamma delta" but not to the leader, so it stays apart.
+    assert _speciality_by_tag(result) == {
+        "alpha beta": "beta gamma", "beta gamma": "beta gamma", "gamma delta": "beta gamma",
+        "delta epsilon": "delta epsilon",
+    }
+
+
+def test_leaves_new_specialities_apart_below_the_grouping_threshold(monkeypatch):
+    monkeypatch.setattr(category_adaptation, "SemanticMatcher", _ScopedMatcher)
+    datasets = _banking_tags_datasets({9001: "loan processing", 9004: "loan approval"})
+
+    result = _run_on(datasets, [9001, 9004], semantic_model="test-model", group_new_specialities_threshold=0.75)
+
+    assert _speciality_by_tag(result) == {"loan processing": "loan processing", "loan approval": "loan approval"}
+
+
+def test_never_groups_tags_proposed_under_different_categories(monkeypatch):
+    monkeypatch.setattr(category_adaptation, "SemanticMatcher", _ScopedMatcher)
+    datasets = _banking_tags_datasets({9001: "loan processing", 9004: "loan approval"})
+    datasets["original"].categories.append({"id": 2, "name": "Insurance", "service_id": 1})
+    datasets["skillsfuture"].categories.append({"id": 503, "name": "Insurance", "service_id": 1})
+    datasets["skillsfuture"].specialities.append({"id": 603, "name": "Claims Officer", "category_id": 503})
+    datasets["skillsfuture"].speciality_tags[1]["speciality_id"] = 603  # loan approval -> Insurance only
+
+    result = _run_on(datasets, [9001, 9004], semantic_model="test-model", group_new_specialities_threshold=0.6)
+
+    assert _speciality_by_tag(result) == {"loan processing": "loan processing", "loan approval": "loan approval"}
+
+
+def test_grouping_needs_a_semantic_model():
+    result = _run([9001], group_new_specialities_threshold=0.6)
+
+    assert result.status == "error"
+    assert "group_new_specialities_threshold needs a semantic_model" in result.summary
+
+
+def test_flags_only_the_new_specialities_left_holding_a_single_tag(monkeypatch):
+    monkeypatch.setattr(category_adaptation, "SemanticMatcher", _ScopedMatcher)
+    datasets = _banking_tags_datasets({9001: "loan processing", 9004: "loan approval", 9005: "mortgage advice"})
+
+    result = _run_on(datasets, [9001, 9004, 9005], semantic_model="test-model",
+                     group_new_specialities_threshold=0.6, flag_single_tag_specialities=True)
+
+    flagged = {p["tag_name"]: p["needs_review"] for p in result.details["placements"]}
+    assert flagged == {"loan processing": False, "loan approval": False, "mortgage advice": True}
+    assert "1 single-tag placements flagged" in result.summary
+
+
+def test_flagging_single_tag_specialities_leaves_matches_to_existing_ones_alone(monkeypatch):
+    monkeypatch.setattr(category_adaptation, "SemanticMatcher", _ScopedMatcher)
+    datasets = _banking_tags_datasets({9001: "loan processing"})
+    datasets["original"].specialities.append({"id": 3, "name": "Loan Servicing", "category_id": 1})
+
+    placement = _run_on(
+        datasets, [9001], semantic_model="test-model", category_scoped_semantic_threshold=0.55,
+        flag_single_tag_specialities=True,
+    ).details["placements"][0]
+
+    assert placement["speciality_action"] == "SKIP_CATEGORY_SCOPED_MATCH"
+    assert placement["needs_review"] is False and "single_tag_speciality" not in placement
+
+
+def test_flag_single_tag_specialities_must_be_a_boolean():
+    result = _run([9001], flag_single_tag_specialities="yes")
+
+    assert result.status == "error"
+    assert "flag_single_tag_specialities" in result.summary
+
+
+def test_groups_review_candidates_only_on_each_tags_first_candidate_category():
+    def candidate(tag_id, name, category_id, rank):
+        return {"tag_id": tag_id, "tag_name": name, "placement_basis": "review_candidate",
+                "speciality_action": "NEW_SPECIALITY", "candidate_category_id": category_id, "candidate_rank": rank,
+                "target_speciality_id": f"skillsfuture:tag:{tag_id}", "target_speciality_name": name}
+
+    placements = [
+        candidate(9001, "loan processing", 1, 1), candidate(9001, "loan processing", 2, 2),
+        candidate(9004, "loan approval", 1, 1), candidate(9004, "loan approval", 2, 2),
+    ]
+
+    groups = category_adaptation._group_new_specialities(
+        placements, _ScopedMatcher("test-model"), 0.6, "skillsfuture",
+    )
+
+    assert groups == 1
+    by_rank = {(p["tag_name"], p["candidate_rank"]): p["target_speciality_name"] for p in placements}
+    assert by_rank == {
+        ("loan processing", 1): "loan approval", ("loan approval", 1): "loan approval",
+        ("loan processing", 2): "loan processing", ("loan approval", 2): "loan approval",
+    }

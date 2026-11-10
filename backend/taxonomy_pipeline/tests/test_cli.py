@@ -702,3 +702,11 @@ def test_case_a_passes_its_placement_options_through_and_refuses_scoped_search_w
     assert main(["case-a", "--config", str(config_path), "--report", str(report), "--semantic-model", "",
                  "--category-scoped-semantic-threshold", "0.55", "--output", str(output)]) == 1
     assert "needs a semantic_model" in capsys.readouterr().err
+
+    assert main(["case-a", "--config", str(config_path), "--report", str(report), "--semantic-model", "",
+                 "--flag-single-tag-specialities", "--output", str(output)]) == 0
+    assert [record["needs_review"] for record in json.loads(output.read_text())] == [True]
+
+    assert main(["case-a", "--config", str(config_path), "--report", str(report), "--semantic-model", "",
+                 "--group-new-specialities-threshold", "0.6", "--output", str(output)]) == 1
+    assert "group_new_specialities_threshold needs a semantic_model" in capsys.readouterr().err

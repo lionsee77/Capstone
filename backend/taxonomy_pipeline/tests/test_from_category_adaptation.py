@@ -313,3 +313,37 @@ def test_source_categories_set_aside_by_one_category_per_tag_are_named_in_the_re
     assert record.speciality == "loan processing"
     assert "Also linked to source categories 'Insurance', 'Wealth'; placed via the one with the most evidence only." \
         in record.reason
+
+
+def _new_speciality(**overrides):
+    return _base(**{"placement_basis": "source_category", "speciality_action": "NEW_SPECIALITY",
+                    "target_speciality_id": "skillsfuture:tag:9001", "target_speciality_name": "loan processing",
+                    **overrides})
+
+
+def test_grouped_tag_joins_the_group_speciality_and_says_which_tag_names_it():
+    member = _new_speciality(
+        target_speciality_name="loan approval", speciality_group_size=3, speciality_group_leader=False,
+        speciality_group_score=0.72,
+    )
+    leader = _new_speciality(
+        tag_id=9004, tag_name="loan approval", target_speciality_name="loan approval", speciality_group_size=3,
+        speciality_group_leader=True, speciality_group_sample=["loan processing", "loan review"],
+    )
+
+    member_record, leader_record = build_classification_outputs([member, leader], source_dataset="skillsfuture")
+
+    assert member_record.speciality == "loan approval" and member_record.needs_review is False
+    assert "Grouped with 2 other new tags close in meaning under new speciality 'loan approval'" in member_record.reason
+    assert "(semantic 0.72 to it)" in member_record.reason
+    assert "Groups 3 new tags" in leader_record.reason and "'loan review'" in leader_record.reason
+
+
+def test_single_tag_speciality_flag_holds_the_record_for_review():
+    record, = build_classification_outputs(
+        [_new_speciality(needs_review=True, single_tag_speciality=True)], source_dataset="skillsfuture",
+    )
+
+    assert record.needs_review is True and record.speciality == "loan processing"
+    assert "would hold only this tag, so it is flagged for review" in record.reason
+    CLASSIFICATION_OUTPUTS.validate_python([record.model_dump()])

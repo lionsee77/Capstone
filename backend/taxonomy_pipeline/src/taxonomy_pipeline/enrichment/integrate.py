@@ -11,7 +11,8 @@ gives every new row a real integer ID, and writes a snapshot directory:
     ├── additions.sql         INSERT-only: the new categories, specialities, tags and links
     ├── enriched.yaml         pipeline config loading baseline + additions as dataset `enriched`,
     │                         with the round's metrics re-pointed at it (see `_scoring_metrics`)
-    └── manifest.json         provenance, counts, ID ranges, duplicate counts, temporary -> real IDs
+    └── manifest.json         provenance, counts, ID ranges, duplicate counts, tags per speciality
+                              (existing vs new), temporary -> real IDs
 
 Baseline rows are never rewritten, only copied, so "baseline unchanged" holds by
 construction; `additions.sql` is also what would be applied to a database that
@@ -40,6 +41,7 @@ import yaml
 from ..audit import ChangeEvent
 from ..config import DatasetConfig, PipelineConfig
 from ..matching.names import collation_key
+from ..quality.depth import speciality_tag_counts
 from ..quality.integrity import IntegrityMetric
 from ..quality.registry import METRICS
 from ..taxonomy.base import CONCEPTS, TaxonomyDataset
@@ -146,6 +148,7 @@ def integrate(
             resolution, baseline, copies, additions, id_map, enriched, provenance or {}, staging,
         )
         manifest["exact_duplicate_rows"] = duplicates
+        manifest["tags_per_speciality"] = _depth_split(taxonomy, enriched)
         operation_id = str(uuid4())
         events = integration_events(
             resolution, additions, id_map, manifest, operation_id=operation_id, actor=actor,
@@ -377,6 +380,28 @@ def _verify(
         for table in before["exact_duplicates"]
     }
     return enriched, duplicates
+
+
+def _depth_split(baseline: TaxonomyDataset, enriched: TaxonomyDataset) -> dict[str, Any]:
+    """Tags per speciality before and after, with the enriched figure split into
+    existing and new specialities, so a drop in depth's mean can be traced to
+    its cause (#132): new one-tag specialities, not shallower existing ones."""
+    existing_ids = {row.get("id") for row in baseline.specialities}
+    after = speciality_tag_counts(enriched)
+
+    def stats(counts: list[int]) -> dict[str, Any]:
+        return {
+            "specialities": len(counts),
+            "mean": round(sum(counts) / len(counts), 2) if counts else None,
+            "single_tag": sum(count == 1 for count in counts),
+        }
+
+    return {
+        "baseline": stats(list(speciality_tag_counts(baseline).values())),
+        "enriched": stats(list(after.values())),
+        "enriched_existing": stats([count for sid, count in after.items() if sid in existing_ids]),
+        "enriched_new": stats([count for sid, count in after.items() if sid not in existing_ids]),
+    }
 
 
 def _integrity(taxonomy: TaxonomyDataset) -> dict[str, Any]:

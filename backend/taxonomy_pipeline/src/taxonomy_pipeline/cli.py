@@ -149,6 +149,8 @@ def _cmd_case_a(args: argparse.Namespace) -> int:
             semantic_model=args.semantic_model,
             category_scoped_semantic_threshold=args.category_scoped_semantic_threshold,
             one_category_per_tag=args.one_category_per_tag,
+            group_new_specialities_threshold=args.group_new_specialities_threshold,
+            flag_single_tag_specialities=args.flag_single_tag_specialities,
         )
     except (OSError, ValueError, RuntimeError) as exc:
         print(f"[FAILED] case-a: {exc}", file=sys.stderr)
@@ -362,6 +364,11 @@ def build_parser() -> argparse.ArgumentParser:
                              "closest existing speciality at or above this cosine score (off by default; #132)")
     case_a.add_argument("--one-category-per-tag", action="store_true",
                         help="place a tag via its best-evidenced source category only, not one per category (#132)")
+    case_a.add_argument("--group-new-specialities-threshold", type=float, default=None,
+                        help="group tags proposed as new specialities under one category when within this cosine "
+                             "score of the group's most central tag, which names it (off by default; #132)")
+    case_a.add_argument("--flag-single-tag-specialities", action="store_true",
+                        help="flag for review every new speciality left holding only its own tag (#132)")
     case_a.set_defaults(func=_cmd_case_a)
 
     case_b = subparsers.add_parser("case-b", help="propose placements for parentless new tags with an LLM")

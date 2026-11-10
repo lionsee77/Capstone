@@ -126,6 +126,7 @@ def test_integrate_returns_its_warnings_and_records_the_merge_run_as_provenance(
             "counts": {}, "omitted_records": {"invalid": 2},
             "exact_duplicate_rows": {"tags": {"baseline": 1, "enriched": 3}, "categories": {"baseline": 2,
                                                                                             "enriched": 2}},
+            "tags_per_speciality": _depth(baseline=2.0, enriched=2.0),
         }, audit_delivery_error=delivery_error)
 
     monkeypatch.setattr(use_cases, "integrate_snapshot", fake_integrate)
@@ -142,6 +143,33 @@ def test_integrate_returns_its_warnings_and_records_the_merge_run_as_provenance(
         assert outcome.warnings[0] == f"Snapshot saved at {tmp_path / 'snapshot'}. {delivery_error}"
     assert outcome.warnings[-2].startswith("2 input record(s) were omitted before review")
     assert outcome.warnings[-1].startswith("tags: rows in exact-duplicate name clusters rose from 1 to 3")
+
+
+def _depth(*, baseline: float, enriched: float) -> dict[str, dict[str, float | int]]:
+    return {
+        "baseline": {"specialities": 10, "mean": baseline, "single_tag": 2},
+        "enriched": {"specialities": 14, "mean": enriched, "single_tag": 6},
+        "enriched_existing": {"specialities": 10, "mean": 2.3, "single_tag": 2},
+        "enriched_new": {"specialities": 4, "mean": 1.0, "single_tag": 4},
+    }
+
+
+def test_integrate_warns_when_tags_per_speciality_falls_and_says_whether_new_specialities_caused_it(
+    config_path: Path, merge_run: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fake_integrate(resolution, dataset, *, out_dir, **_):
+        return Integration(out_dir=Path(out_dir), manifest={
+            "counts": {}, "omitted_records": {}, "exact_duplicate_rows": {},
+            "tags_per_speciality": _depth(baseline=2.0, enriched=1.93),
+        })
+
+    monkeypatch.setattr(use_cases, "integrate_snapshot", fake_integrate)
+    outcome = use_cases.integrate(config_path, merge_run, baseline="original", out_dir=tmp_path / "snapshot")
+
+    assert outcome.warnings == [
+        "tags per speciality fell from 2.0 to 1.93: existing specialities average 2.3, the 4 new ones 1.0 "
+        "(4 hold a single tag)"
+    ]
 
 
 def test_integrate_names_a_missing_baseline_dataset(config_path: Path, merge_run: Path) -> None:
