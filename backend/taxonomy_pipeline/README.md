@@ -1772,8 +1772,9 @@ a hand-run round.
   `labels` must name files uploaded to this round. A mapping that fails (422 with the
   reason) leaves the last good import in place. Saving a new one discards later progress,
   including decisions, because they described the old source.
-- **`baseline_snapshot`** is an integrated snapshot, or `original` for the client's dumps in `sql-files-nus`.
-  `GET /rounds/options` lists `original` last. A source is read from one flat table, so SkillsFuture imported this
+- **`baseline_snapshot`** is an integrated snapshot, or `@original` for the client's dumps in `sql-files-nus`.
+  The `@` keeps it apart from any snapshot, since a round ID can't contain one, so a snapshot named `original`
+  stays itself. `GET /rounds/options` lists `@original` last. A source is read from one flat table, so SkillsFuture imported this
   way gives framework skill titles (sheet `Job Role_TSC_CCS`), not the Unique Skills in `skillsfuture_taxonomy.sql`,
   which needs its generator's join. Expect a much longer review queue than O*NET's.
 - A source can't be named `enriched`, because that names the finished snapshot in the round's comparison.
