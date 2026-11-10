@@ -61,9 +61,12 @@ def roots(tmp_path: Path) -> rounds.RoundRoots:
             }},
         ],
     }), "utf-8")
+    original = tmp_path / "sql-files"
+    original.mkdir()
+    (original / "mini.sql").write_text(baseline, "utf-8")
     return rounds.RoundRoots(
         rounds=tmp_path / "rounds", integrations=tmp_path / "integrations", merge_runs=tmp_path / "merge_runs",
-        template=template,
+        template=template, original=original,
     )
 
 
@@ -130,10 +133,101 @@ def test_a_name_already_used_by_any_output_is_refused(roots: rounds.RoundRoots, 
 def test_options_offer_the_snapshots_services_and_template_defaults(roots: rounds.RoundRoots) -> None:
     options = rounds.round_options(roots)
 
-    assert options.snapshots == ["base"]
+    assert options.snapshots == ["base", "@original"]
     assert [(service.id, service.name) for service in options.services] == [(1, "Industry")]
     assert options.saturation_defaults == {"threshold": 90}
     assert not options.llm_allowed
+
+
+def test_the_original_taxonomy_is_offered_after_the_newest_snapshot_so_the_default_stays(
+    roots: rounds.RoundRoots,
+) -> None:
+    assert rounds.round_options(roots).snapshots[0] == "base"
+
+
+def test_with_no_snapshots_the_original_is_offered_with_its_services(roots: rounds.RoundRoots) -> None:
+    shutil.rmtree(roots.integrations / "base")
+
+    options = rounds.round_options(roots)
+
+    assert options.snapshots == ["@original"]
+    assert [service.name for service in options.services] == ["Industry"]
+
+
+def test_the_original_is_not_offered_when_its_dumps_are_missing(roots: rounds.RoundRoots) -> None:
+    shutil.rmtree(roots.original)
+
+    assert rounds.round_options(roots).snapshots == ["base"]
+    with pytest.raises(ValueError, match="no integrated snapshot"):
+        rounds.create_round(roots, "r1", "@original")
+
+
+def test_a_snapshot_named_original_is_never_confused_with_the_clients_dumps(
+    roots: rounds.RoundRoots, isolated_db: Path,
+) -> None:
+    shutil.copytree(roots.integrations / "base", roots.integrations / "original")
+
+    assert rounds.round_options(roots).snapshots[-1] == "@original"
+    assert "original" in rounds.round_options(roots).snapshots
+    rounds.create_round(roots, "on-snapshot", "original")
+    rounds.add_file(roots, "on-snapshot", "flat.csv", CSV.encode())
+    rounds.configure_round(roots, "on-snapshot", _mapping(), RoundSettings())
+
+    baseline = next(d for d in load_config(roots.rounds / "on-snapshot" / "config.yaml").datasets
+                    if d.name == "round_baseline")
+    assert all(str(roots.integrations / "original") in str(path) for path in baseline.paths)
+
+
+def test_rounds_on_the_original_share_one_complete_config(roots: rounds.RoundRoots, isolated_db: Path) -> None:
+    for round_id in ("first", "second"):
+        rounds.create_round(roots, round_id, "@original")
+        rounds.add_file(roots, round_id, "flat.csv", CSV.encode())
+        rounds.configure_round(roots, round_id, _mapping(), RoundSettings())
+
+    shared = roots.rounds / ".original-baseline"
+    assert [path.name for path in shared.iterdir()] == ["enriched.yaml"]  # no half-written copies left behind
+    assert load_config(shared / "enriched.yaml").datasets[0].paths
+
+
+def test_a_round_on_the_original_only_reads_the_clients_dumps(roots: rounds.RoundRoots, isolated_db: Path) -> None:
+    rounds.create_round(roots, "from-original", "@original")
+    rounds.add_file(roots, "from-original", "flat.csv", CSV.encode())
+
+    state = rounds.configure_round(roots, "from-original", _mapping(), RoundSettings())
+
+    assert state.status == "ready"
+    baseline = next(d for d in load_config(roots.rounds / "from-original" / "config.yaml").datasets
+                    if d.name == "round_baseline")
+    assert [Path(path).name for path in baseline.paths] == ["mini.sql"]
+    assert rounds.list_rounds(roots)[0].round_id == "from-original"
+    assert len(rounds.list_rounds(roots)) == 1
+
+
+def test_a_round_on_the_original_finishes_as_a_snapshot_on_the_lineages_root(
+    roots: rounds.RoundRoots, isolated_db: Path,
+) -> None:
+    rounds.create_round(roots, "from-original", "@original")
+    rounds.add_file(roots, "from-original", "flat.csv", CSV.encode())
+    rounds.configure_round(roots, "from-original", _mapping(), RoundSettings())
+    state = _run(roots, "from-original")
+    assert state.status in {"review", "ready_to_integrate"}, [(s.id, s.error) for s in state.stages]
+    queue = rounds.get_review(roots, "from-original", limit=200)
+    if queue.tags:
+        rounds.save_decisions(roots, "from-original", "Pat", [_create(item) for item in queue.tags])
+        _, stages = rounds.start_apply(roots, "from-original")
+        rounds.run_stages(roots, "from-original", stages)
+
+    _, stages = rounds.start_integrate(roots, "from-original")
+    rounds.run_stages(roots, "from-original", stages)
+
+    assert rounds.get_round(roots, "from-original").status == "complete"
+    original = (roots.original / "mini.sql").read_bytes()
+    assert (roots.integrations / "from-original" / "baseline" / "mini.sql").read_bytes() == original
+    chain = next(c for c in taxonomy_lineage(roots.integrations, roots.merge_runs, original=roots.original).chains
+                 if "from-original" in c.stages)
+    assert chain.stages[0].startswith("baseline:")
+    assert chain.stages[-1] == "from-original"
+    assert "from-original" in rounds.round_options(roots).snapshots
 
 
 def test_an_uploaded_file_lists_its_columns_rows_and_samples(roots: rounds.RoundRoots) -> None:

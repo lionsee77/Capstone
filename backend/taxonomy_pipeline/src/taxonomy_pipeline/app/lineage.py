@@ -23,16 +23,27 @@ from .. import db
 from ..enrichment.lineage import FileFingerprint, IntegrationRound, file_fingerprint, read_rounds
 from ..models import LineageChain, LineageRun, LineageStage, TaxonomyLineage
 from ..quality.registry import METRICS
+from .rounds import ORIGINAL_DUMPS
+from .sources import ROUND_BASELINE
+
+# The name of a chain's root when it is the client's original taxonomy.
+ORIGINAL_ROOT = "original"
 
 # How many of the newest runs are checked for lineage stages. Run history is small (one row per
 # scoring run), and each run's files are hashed once and then cached.
 RUN_LIMIT = 200
 
 
-def taxonomy_lineage(integrations_root: Path, merge_root: Path, *, run_limit: int = RUN_LIMIT) -> TaxonomyLineage:
-    """The stages under `integrations_root`, the chains through them and the runs that scored them."""
+def taxonomy_lineage(
+    integrations_root: Path, merge_root: Path, *, run_limit: int = RUN_LIMIT, original: Path = ORIGINAL_DUMPS,
+) -> TaxonomyLineage:
+    """The stages under `integrations_root`, the chains through them and the runs that scored them.
+
+    `original` is the folder of the client's dumps, used to recognise a chain that started from them.
+    """
     rounds = read_rounds(integrations_root, merge_root)
-    stages, fingerprints = _stages(rounds)
+    dumps = sorted(original.glob("*.sql")) if original.is_dir() else []
+    stages, fingerprints = _stages(rounds, file_fingerprint(dumps) if dumps else None)
     runs = _runs(fingerprints, run_limit)
     chains = [LineageChain(stages=path, runs=_best_runs(path, runs)) for path in _chains(stages)]
     # A chain with scores first (the sort keeps the rest in order), so a new unscored round can't replace a report.
@@ -40,14 +51,23 @@ def taxonomy_lineage(integrations_root: Path, merge_root: Path, *, run_limit: in
     return TaxonomyLineage(stages=stages, chains=chains, runs=runs)
 
 
-def _stages(rounds: list[IntegrationRound]) -> tuple[list[LineageStage], dict[FileFingerprint, str]]:
-    """One stage per round's snapshot, plus a root for every baseline no round produced."""
+def _stages(
+    rounds: list[IntegrationRound], original: FileFingerprint | None,
+) -> tuple[list[LineageStage], dict[FileFingerprint, str]]:
+    """One stage per round's snapshot, plus a root for every baseline no round produced.
+
+    A round calls whatever it built on `round_baseline`, enriched or not, so a root is named "original" only when its
+    files are the client's dumps. An enriched snapshot whose parent can't be read keeps its own name.
+    """
     produced = {item.snapshot: item.name for item in rounds}
     roots: dict[FileFingerprint, LineageStage] = {}
     for item in sorted(rounds, key=_created):
         if item.baseline not in produced and item.baseline not in roots:
-            stage_id = _root_id(item.baseline_dataset, {stage.id for stage in roots.values()})
-            roots[item.baseline] = LineageStage(id=stage_id, name=item.baseline_dataset)
+            started_from_original = item.baseline_dataset == ROUND_BASELINE and original is not None \
+                and item.baseline == original
+            dataset = ORIGINAL_ROOT if started_from_original else item.baseline_dataset
+            stage_id = _root_id(dataset, {stage.id for stage in roots.values()})
+            roots[item.baseline] = LineageStage(id=stage_id, name=dataset)
     parents = {**{fingerprint: stage.id for fingerprint, stage in roots.items()}, **produced}
     stages = list(roots.values()) + [
         LineageStage(

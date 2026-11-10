@@ -22,6 +22,7 @@ import {
 } from "@/lib/api/queries";
 import type { RoundFile, RoundOptions, RoundState } from "@/lib/api/schemas";
 import {
+  baselineLabel,
   buildMapping,
   buildSettings,
   draftFromMapping,
@@ -32,6 +33,7 @@ import {
   type LevelDraft,
   mappingProblems,
   type MappingDraft,
+  ORIGINAL_BASELINE,
   roundIdProblem,
   type SettingsDraft,
   suggestSourceName,
@@ -77,10 +79,14 @@ function StartRound({ options }: { options: RoundOptions }) {
           <Label htmlFor="round-baseline">Build on</Label>
           <NativeSelect id="round-baseline" className="w-64" value={baseline} onChange={(e) => setBaseline(e.target.value)}>
             {options.snapshots.map((snapshot) => (
-              <option key={snapshot} value={snapshot}>{snapshot}</option>
+              <option key={snapshot} value={snapshot}>{baselineLabel(snapshot)}</option>
             ))}
           </NativeSelect>
-          <p className="max-w-64 text-sm text-muted-foreground">The newest is first. New tags are checked against this version.</p>
+          <p className="max-w-64 text-sm text-muted-foreground">
+            {baseline === ORIGINAL_BASELINE
+              ? "Before any enrichment. A source is read from one table, so SkillsFuture gives framework skill titles, not Unique Skills, and review will be long."
+              : "The newest is first. New tags are checked against this version."}
+          </p>
         </div>
       </div>
       <div>

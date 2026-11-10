@@ -25,6 +25,7 @@ import json
 import os
 import re
 import shutil
+import tempfile
 import threading
 import zipfile
 from collections.abc import Iterator
@@ -59,6 +60,11 @@ from .scoring import load_taxonomies, run_config, run_pipeline, write_report
 from .sources import DEFAULT_TEMPLATE, ROUND_BASELINE, import_source
 
 ROUND_ID = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
+# What a round asks for to build on the client's dumps directly, rather than on an integrated snapshot.
+# What a round names the client's dumps as its baseline. The "@" keeps it apart from every snapshot: a snapshot is
+# named after its round, and a round ID can't contain "@", so a snapshot called "original" stays itself.
+ORIGINAL_BASELINE = "@original"
+ORIGINAL_DUMPS = Path(__file__).resolve().parents[4] / "sql-files-nus"
 RESERVED_ROUND_IDS = {"options"}
 # What `integrate` calls the finished snapshot, unless a source already has the name. The round's comparison asks
 # for the snapshot by this name, so a source using it would be compared in the snapshot's place.
@@ -95,6 +101,7 @@ class RoundRoots:
     integrations: Path
     merge_runs: Path
     template: Path = DEFAULT_TEMPLATE
+    original: Path = ORIGINAL_DUMPS
 
     def directory(self, round_id: str) -> Path:
         if not ROUND_ID.fullmatch(round_id):
@@ -121,9 +128,12 @@ def round_options(roots: RoundRoots) -> RoundOptions:
         key=lambda item: (item.created_at.isoformat() if item.created_at else "", item.name), reverse=True,
     )
     snapshots = [item.name for item in rounds]
+    # Last, because the form starts on the first: the default stays the newest snapshot.
+    if _original_dumps(roots):
+        snapshots.append(ORIGINAL_BASELINE)
     services = []
     if snapshots:
-        config_path = roots.integrations / snapshots[0] / "enriched.yaml"
+        config_path = _baseline_directory(roots, snapshots[0]) / "enriched.yaml"
         name = load_config(config_path).datasets[0].name
         dataset = load_taxonomies(config_path, name)[name]
         services = [RoundServiceOption(id=row["id"], name=str(row["name"])) for row in dataset.services]
@@ -142,8 +152,10 @@ def create_round(roots: RoundRoots, round_id: str, baseline_snapshot: str) -> Ro
         raise ValueError("round name must be lowercase letters, digits, '-' or '_', starting with a letter or digit")
     if round_id in RESERVED_ROUND_IDS:
         raise ValueError(f"{round_id!r} can't name a round: it is a route under /rounds")
-    if not (roots.integrations / baseline_snapshot / "enriched.yaml").is_file() or not ROUND_ID.fullmatch(
-        baseline_snapshot,
+    known = baseline_snapshot == ORIGINAL_BASELINE and _original_dumps(roots)
+    if not known and (
+        not ROUND_ID.fullmatch(baseline_snapshot)
+        or not (roots.integrations / baseline_snapshot / "enriched.yaml").is_file()
     ):
         raise ValueError(f"no integrated snapshot named {baseline_snapshot!r}")
     for parent in (roots.rounds, roots.merge_runs, roots.integrations):
@@ -157,6 +169,33 @@ def create_round(roots: RoundRoots, round_id: str, baseline_snapshot: str) -> Ro
     )
     _save(roots, state)
     return state
+
+
+def _original_dumps(roots: RoundRoots) -> list[Path]:
+    return sorted(roots.original.glob("*.sql")) if roots.original.is_dir() else []
+
+
+def _baseline_directory(roots: RoundRoots, baseline: str) -> Path:
+    """The folder holding `enriched.yaml` for what a round builds on.
+
+    The original taxonomy isn't a snapshot, so it gets a small config in the same shape, listing the client's
+    dumps. It sits in `rounds/`, not `integrations/`, because no round produced it. `integrate` copies the dumps
+    into the new snapshot as usual, and `/lineage` matches them by content to the same root as earlier rounds.
+    """
+    if baseline != ORIGINAL_BASELINE:
+        return roots.integrations / baseline
+    directory = roots.rounds / ".original-baseline"
+    directory.mkdir(parents=True, exist_ok=True)
+    paths = [str(path.resolve()) for path in _original_dumps(roots)]
+    dataset = {"name": "enriched", "type": "sql_dump", "paths": paths}
+    # Rounds share this file and can import at the same time, so each writes its own copy and swaps it in whole:
+    # a reader never sees one that's empty or half written.
+    with tempfile.NamedTemporaryFile(
+        "w", dir=directory, prefix="enriched.", suffix=".tmp", delete=False, encoding="utf-8",
+    ) as handle:
+        handle.write(yaml.safe_dump({"datasets": [dataset], "metrics": []}))
+    Path(handle.name).replace(directory / "enriched.yaml")
+    return directory
 
 
 def list_rounds(roots: RoundRoots) -> list[RoundState]:
@@ -356,7 +395,7 @@ def _configure(
         )
         try:
             imported = import_source(
-                mapping_path, out_dir=staging, baseline_snapshot=roots.integrations / state.baseline_snapshot,
+                mapping_path, out_dir=staging, baseline_snapshot=_baseline_directory(roots, state.baseline_snapshot),
                 template_config=roots.template, round_config=new_config,
             )
         except Exception as exc:

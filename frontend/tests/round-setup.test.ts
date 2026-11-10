@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  baselineLabel,
   buildMapping,
   buildSettings,
   draftFromMapping,
@@ -41,6 +42,14 @@ describe("uploadProblem", () => {
     expect(uploadProblem({ name: ".DS_Store", size: 1 })).toBe("hidden file");
     expect(uploadProblem({ name: "README.md", size: 1 })).toContain("not a CSV");
     expect(uploadProblem({ name: "big.csv", size: MAX_UPLOAD_BYTES + 1 })).toContain("50 MB");
+  });
+});
+
+describe("baselineLabel", () => {
+  it("names the original taxonomy in words, and a snapshot by its own name", () => {
+    expect(baselineLabel("@original")).toBe("Original taxonomy");
+    expect(baselineLabel("original")).toBe("original"); // a snapshot that happens to be called original
+    expect(baselineLabel("judged-1015")).toBe("judged-1015");
   });
 });
 

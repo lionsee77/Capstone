@@ -13,6 +13,13 @@ const SOURCE_NAME = /^[a-z][a-z0-9_]*$/;
 // Names the finished snapshot in the round's comparison; mirrors `RESERVED_SOURCE_NAME` in `app/rounds.py`.
 const RESERVED_SOURCE_NAME = "enriched";
 
+/** What the API calls the client's dumps when a round builds on them directly; mirrors `ORIGINAL_BASELINE`. */
+export const ORIGINAL_BASELINE = "@original";
+
+export function baselineLabel(baseline: string): string {
+  return baseline === ORIGINAL_BASELINE ? "Original taxonomy" : baseline;
+}
+
 /** Why a file won't be uploaded, or null if it will. Folders bring along plenty that isn't a table. */
 export function uploadProblem(file: { name: string; size: number }): string | null {
   const name = file.name.toLowerCase();
