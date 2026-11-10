@@ -41,6 +41,16 @@ export function reuseCandidateLabel(candidate: ReuseCandidate): string {
   return `${candidate.name} (${how}, ${candidate.score.toFixed(2)})`;
 }
 
+/** The reuse dropdown's value as a tag ID. "" is its "Choose a tag" placeholder, so it means nothing is chosen. */
+export function chosenReuseTag(value: string): number | undefined {
+  return value === "" ? undefined : Number(value);
+}
+
+/** Whether "Reuse existing" can be pressed: only once the reviewer has chosen a tag, and there's a placement for it. */
+export function canReuse(tag: ReviewQueueTag, reuseTagId: number | undefined): boolean {
+  return reuseTagId !== undefined && tag.placements.length > 0 && reuseCandidates(tag).some((item) => item.tag_id === reuseTagId);
+}
+
 /** A tag decision. Returns null when the choice is incomplete: nowhere to place it, or nothing to reuse. */
 export function tagDecision(
   tag: ReviewQueueTag, action: TagAction, options: { placement?: number; reuseTagId?: number; reason?: string } = {},

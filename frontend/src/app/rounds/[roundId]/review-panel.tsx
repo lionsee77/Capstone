@@ -13,6 +13,8 @@ import { useApplyDecisions, useDraftDecisions, useIntegrateRound, useReviewQueue
 import type { ReviewQueueProposal, ReviewQueueTag, RoundState } from "@/lib/api/schemas";
 import {
   bulkTagDecisions,
+  canReuse,
+  chosenReuseTag,
   clampOffset,
   type DecisionInput,
   placementLabel,
@@ -361,7 +363,7 @@ function TagCard({
               <NativeSelect
                 id={`reuse-${tag.source.tag_id}`}
                 value={reuseTagId ?? ""}
-                onChange={(e) => setReuseTagId(e.target.value ? Number(e.target.value) : undefined)}
+                onChange={(e) => setReuseTagId(chosenReuseTag(e.target.value))}
               >
                 <option value="">Choose a tag</option>
                 {candidates.map((candidate) => (
@@ -375,7 +377,7 @@ function TagCard({
           <Input aria-label={`Reason for ${tag.tag}`} placeholder="Reason (optional)" value={reason} onChange={(e) => setReason(e.target.value)} />
           <div className="flex flex-wrap gap-2">
             <Button size="sm" disabled={disabled || tag.placements.length === 0} onClick={() => decide("create")}>Create</Button>
-            <Button size="sm" variant="outline" disabled={disabled || reuseTagId === undefined || tag.placements.length === 0} onClick={() => decide("reuse")}>Reuse existing</Button>
+            <Button size="sm" variant="outline" disabled={disabled || !canReuse(tag, reuseTagId)} onClick={() => decide("reuse")}>Reuse existing</Button>
             <Button size="sm" variant="ghost" disabled={disabled} onClick={() => decide("exclude")}>Exclude</Button>
             <Button size="sm" variant="ghost" disabled={disabled} onClick={() => decide("defer")}>Defer</Button>
           </div>
