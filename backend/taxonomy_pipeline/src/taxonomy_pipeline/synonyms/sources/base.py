@@ -9,16 +9,12 @@ its own module and adding one line to `registry.py`.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from collections import defaultdict
 from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict
 
-from ...matching.names import normalize
 from ...taxonomy.base import TaxonomyDataset
 from ..models import SynonymLevel
-
-LEVELS: tuple[SynonymLevel, ...] = ("categories", "specialities", "tags")
 
 
 class Suggestion(BaseModel):
@@ -40,14 +36,3 @@ class SynonymSource(ABC):
 
     @abstractmethod
     def suggest(self, taxonomy: TaxonomyDataset, path: Path | None = None) -> list[Suggestion]: ...
-
-
-def concepts_by_name(taxonomy: TaxonomyDataset) -> dict[str, list[tuple[SynonymLevel, str, str]]]:
-    """Every named category, speciality and tag, by normalised name: (level, id, name)."""
-    found: dict[str, list[tuple[SynonymLevel, str, str]]] = defaultdict(list)
-    for level in LEVELS:
-        for row in getattr(taxonomy, level):
-            name = row.get("name")
-            if isinstance(name, str) and normalize(name):
-                found[normalize(name)].append((level, str(row.get("id")), name))
-    return found

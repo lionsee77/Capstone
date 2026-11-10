@@ -1,9 +1,11 @@
 """O*NET alternate occupation titles as synonym suggestions.
 
-Download **Alternate Titles** from onetcenter.org (Excel or tab-delimited text); each
-row has an occupation `Title` and one `Alternate Title`. Only taxonomy concepts named
-exactly like an O*NET occupation get suggestions, which in practice means the
-specialities an O*NET round added (`backend/onet/`). O*NET is CC BY 4.0; credit "O*NET".
+Download **Alternate Titles** from onetcenter.org in **Excel** format: each row has an
+occupation `Title` and one `Alternate Title`. (The tab-delimited text download has no
+`Title` column, only the O*NET-SOC code, so it can't be matched to concept names on its
+own; it is refused with that explanation.) Only taxonomy concepts named like an O*NET
+occupation get suggestions, which in practice means the specialities an O*NET round
+added (`backend/onet/`). O*NET is CC BY 4.0; credit "O*NET".
 """
 from __future__ import annotations
 
@@ -22,7 +24,10 @@ class OnetSource(SynonymSource):
 
     def suggest(self, taxonomy: TaxonomyDataset, path: Path | None = None) -> list[Suggestion]:
         if path is None:
-            raise ValueError("the onet source needs --file: O*NET's Alternate Titles file")
+            raise ValueError("the onet source needs --file: O*NET's Alternate Titles file (Excel)")
+        if Path(path).suffix.lower() != ".xlsx":
+            raise ValueError("the onet source reads the Excel Alternate Titles download: the text download has no "
+                             "Title column to match concept names with")
         alternates: dict[str, list[str]] = defaultdict(list)
         for row in read_table(path, ("Title", "Alternate Title")):
             alternates[row["Title"]].append(row["Alternate Title"])

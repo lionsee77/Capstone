@@ -57,10 +57,10 @@ taxonomy_pipeline/
 │   │   ├── store.py                  #   SQLite table + audit event per change; propose/review; concept_name check
 │   │   └── sources/                  #   suggestion sources - register new ones in registry.py
 │   │       ├── base.py               #     SynonymSource ABC and Suggestion
-│   │       ├── spelling.py           #     British/American and '&'/'and' variants (the seed set)
+│   │       ├── spelling.py           #     British/American spellings matching doesn't fold (the seed set)
 │   │       ├── labels.py             #     shared preferred-label -> alternative-labels matching, file reader
 │   │       ├── esco.py               #     ESCO altLabels (skills/occupations CSV)
-│   │       ├── onet.py               #     O*NET Alternate Titles (xlsx or tab-delimited text)
+│   │       ├── onet.py               #     O*NET Alternate Titles (the Excel download)
 │   │       └── registry.py           #     SOURCES by id; `synonym-suggest --source`
 │   ├── quality/                      # pluggable quality checks that score one taxonomy
 │   │   ├── base.py                   #   Metric ABC (run; measures for comparisons)
@@ -2031,20 +2031,27 @@ taxonomy-pipeline synonym-review <synonym_id> --reject --reason "Different meani
 
 | Source | Suggests | Needs |
 |---|---|---|
-| `spelling` | British/American respellings (a curated word list plus the `-isation`/`-ise` family, minus words like *exercise* that have only one spelling) and `&`/`and` swaps of every concept name | nothing; on `configs/baseline_v1.yaml` it proposes 226, mostly `&`/`and` category and speciality names |
+| `spelling` | British/American respellings that `match_key` doesn't already fold: a curated word list (*colour/color*, *centre/center*, *modelling/modeling*) and an allowlist of `-ise`/`-ize` stems (*organise/organize*). Both are allowlists: a rule would misspell *advertising* or *paradise*, and American words with another British sense (*check*, *program*, *tire*, *license*) are never respelled | nothing; on `configs/baseline_v1.yaml` it proposes 11 (*Defence/Defense*, *Modelling/Modeling*, *Centre/Center*, ...) |
 | `esco` | ESCO `altLabels` of each skill/occupation whose `preferredLabel` is a concept name | an ESCO CSV, e.g. `skills_en.csv` (CC BY 4.0) |
-| `onet` | O*NET alternate titles of each occupation whose `Title` is a concept name (in practice, specialities an O*NET round added) | O*NET **Alternate Titles** (xlsx or txt, CC BY 4.0) |
+| `onet` | O*NET alternate titles of each occupation whose `Title` is a concept name (in practice, specialities an O*NET round added) | O*NET **Alternate Titles**, the **Excel** download (CC BY 4.0): the text download has no `Title` column, so it is refused |
 
 Rules:
 
-- A suggestion equal to the concept's own name, or already proposed, approved or
-  **rejected** for that concept, isn't proposed again, so rerunning a source only adds
-  what's new and a rejection sticks.
+- A suggestion that is the concept's own name or a spelling of it (`match_key`), or that
+  was already proposed, approved, **rejected** or **removed** for that concept, isn't
+  proposed again, so rerunning a source only adds what's new, and a rejection or a
+  removal sticks (add it by hand with `synonym-add` to bring it back). Suggestions for
+  retired or unknown concepts are skipped; `skipped` in the report counts each reason.
+- Labels are matched to concept names by `match_key`, like every other stage. Files are
+  read without CSV quoting for `.txt`/`.tsv`, closed after reading, and a file that can't
+  be parsed (a corrupt `.xlsx`, a bad CSV) is refused with its name (422 over HTTP).
 - A source label naming several of our concepts (duplicate rows) is skipped rather than
   guessed.
-- **Approving** runs the same checks as `synonym-add` (the concept still exists; a global
-  synonym can't already mean another concept, #61) and logs `synonym_add` with the
-  reviewer as actor. **Rejecting** logs a `review_decision`. Proposing logs nothing,
+- **Approving** runs the same checks as `synonym-add` against the current taxonomy (the
+  concept still exists and is active; the term isn't its current name; a global synonym
+  can't already mean another concept, #61). The approved row and its `synonym_add` event
+  record the concept's *current* name and snapshot, not the proposal's, and the reviewer
+  as actor. **Rejecting** logs a `review_decision`. Proposing logs nothing,
   because nothing has changed yet.
 - Over HTTP: `POST /synonyms/suggest` (`run_id`, `dataset`, `source`, optional `path`,
   which must sit under `TAXONOMY_DATA_ROOTS`), `GET /synonyms?status=proposed`,

@@ -31,6 +31,8 @@ ScopeLevel = Literal["categories", "specialities"]
 SynonymStatus = Literal["proposed", "approved", "rejected", "removed"]
 # The audit log names levels in the singular.
 AUDIT_LEVELS: dict[str, str] = {"categories": "category", "specialities": "speciality", "tags": "tag"}
+# The levels a synonym can name, in hierarchy order: the one list every synonym module uses.
+LEVELS: tuple[SynonymLevel, ...] = ("categories", "specialities", "tags")
 
 
 class _Scoped(BaseModel):
