@@ -1885,15 +1885,24 @@ Rules:
 
 - **One concept, many synonyms.** Each is stored with its own `term` and the concept's
   canonical `concept_name`, so a synonym is always distinguishable from the real name.
-- **No duplicates.** A term is compared after `normalize` (case, spacing, trailing
-  punctuation), so "JS", "js" and " JS. " are the same synonym. Adding one that is
-  already approved for that concept in the same scope is refused (409 over HTTP); so is
-  a term equal to the concept's own name (422).
+- **No duplicates.** Terms are compared by `match_key` (stored as `term_key`): case,
+  spacing, trailing punctuation, `&`/`and`, `-isation`/`-ization` and a trailing plural,
+  so "JS tag", "js tags" and " JS tag. " are one synonym. Adding one already approved for
+  that concept in the same scope is refused (409 over HTTP); so is the concept's own name
+  or a spelling of it ("Audits" for *audit*), and a term with no letters or digits or a
+  placeholder ("test", "new") (422).
 - **A global synonym can't have two meanings** (#61). It is refused (409) when the term
   is already another concept's name, or another concept's global synonym. A word that
   means different things in different branches must be scoped instead.
-- **The concept must exist.** An unknown dataset, run or concept ID is refused (404)
-  before anything is written.
+- **The concept must exist and be active.** An unknown run, dataset or concept ID is
+  refused (404) before anything is written, and so is a dataset whose config can't be
+  read or whose files can't be loaded (404, with the loading error). A retired concept
+  (status 0) is refused (422): new terms shouldn't resolve to it.
+- **One dataset name, one taxonomy.** Synonyms belong to a dataset name such as
+  `original`, so they survive enrichment (`integrate` keeps the baseline's IDs). Each
+  records its concept's name; adding to an ID whose synonyms were recorded under a
+  different name is refused (422), because that dataset name now points at another
+  taxonomy. Give it its own name in the config.
 - **Removing keeps history.** `synonym-remove` marks the row `removed` with who and why;
   `synonyms --include-removed` (or `include_removed=true`) shows it. The same term can be
   added again later as a new row.
@@ -1927,10 +1936,24 @@ specific first, and the first tier with any candidate decides:
 2. concept names;
 3. global synonyms.
 
-The result is `resolved` (one concept), `ambiguous` (several in the deciding tier, all
-listed, none chosen: two rows sharing a name are ambiguous too) or `unknown`. Each match
-says whether it came `via` the concept's name or a synonym, and which synonym. Removed
-synonyms never resolve.
+Terms compare by `match_key`, like stored synonyms. The result is `resolved` (one
+concept), `ambiguous` (several in the deciding tier, all listed once, none chosen: two
+rows sharing a name are ambiguous too) or `unknown`. Each match says whether it came
+`via` the concept's name or a synonym, and which synonym. Removed synonyms never
+resolve. `within` may be a category, speciality or tag (its branches), given as a string
+or integer ID; an unknown one is refused rather than treated as "no branch".
+
+A stored synonym only applies where it still fits the taxonomy: its concept exists with
+the name the synonym was recorded against, and a scoped one's concept still sits in its
+scope. One that doesn't fit (renamed, removed, moved) is set aside instead of resolving
+to the wrong concept, and doesn't block new synonyms. Synonyms from before these rules
+(#59 allowed one term on two concepts) can also be shadowed by a name or ambiguous.
+`synonym-check` (or `GET /synonyms/problems?run_id=...&dataset=...`) lists every such
+synonym with the reason, and exits 1 when there is any:
+
+```bash
+taxonomy-pipeline synonym-check            # configs/baseline_v1.yaml, dataset original
+```
 
 The table's schema is now version 2 (scope columns). A version 1 table from #59 is
 migrated on the next write, and its synonyms become global.
@@ -1980,6 +2003,10 @@ dataset type; it doesn't call `/synonyms` yet, so the proxy allowlist is unchang
 
 What isn't built yet: suggested synonyms from external sources (ESCO, O*NET, spelling
 variants), which will arrive as `proposed` rows a reviewer approves or rejects.
+
+If the synonym store can't be used (an unreadable database, or a table written by another
+version) the routes answer 503. Every write recreates a missing table or index, and reads
+work on older tables before anything has migrated them.
 
 ## Plugging in a taxonomy dataset
 

@@ -87,3 +87,14 @@ def test_no_snapshots_is_409_without_exposing_the_server_path(
 
     assert response.status_code == 409
     assert str(tmp_path) not in response.text
+
+
+def test_an_unreadable_synonym_store_is_503_not_500(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    import sqlite3
+
+    def broken(*args: object, **kwargs: object) -> list:
+        raise sqlite3.DatabaseError("file is not a database")
+
+    monkeypatch.setattr(lookup, "approved_synonyms", broken)
+    response = client.get("/lookup", params={"q": "Tax Advisory"})
+    assert response.status_code == 503 and "synonym store" in response.json()["detail"]

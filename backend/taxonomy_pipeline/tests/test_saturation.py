@@ -923,7 +923,8 @@ def _synonym_set(*mappings: tuple[str, str, str, str], scope: tuple[str, str] | 
     from taxonomy_pipeline.taxonomy.synonym_set import SynonymMapping, SynonymSet
 
     return SynonymSet(name="synonyms_v1", dataset="original", synonyms=[
-        SynonymMapping(synonym_id=f"s{i}", term=term, normalized_term=names.normalize(term), concept_level=level,
+        SynonymMapping(synonym_id=f"s{i}", term=term, normalized_term=names.normalize(term),
+                       term_key=names.match_key(term), concept_level=level,
                        concept_id=cid, concept_name=name, scope_level=scope[0] if scope else None,
                        scope_id=scope[1] if scope else None)
         for i, (term, level, cid, name) in enumerate(mappings)

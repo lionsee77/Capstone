@@ -27,6 +27,7 @@ class SynonymMapping(BaseModel):
     synonym_id: str
     term: str
     normalized_term: str
+    term_key: str  # `match_key(term)`: what every stage compares
     concept_level: Literal["categories", "specialities", "tags"]
     concept_id: str
     concept_name: str

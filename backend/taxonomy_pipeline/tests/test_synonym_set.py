@@ -12,9 +12,10 @@ from taxonomy_pipeline.taxonomy.synonym_set import SynonymMapping, SynonymSet
 
 def _write(path: Path) -> Path:
     path.write_text(SynonymSet(name="exported-name", dataset="original", synonyms=[
-        SynonymMapping(synonym_id="a", term="JS", normalized_term="js", concept_level="tags", concept_id="1",
-                       concept_name="JavaScript"),
-        SynonymMapping(synonym_id="b", term="Pitch", normalized_term="pitch", concept_level="tags",
+        SynonymMapping(synonym_id="a", term="JS", normalized_term="js", term_key="js", concept_level="tags",
+                       concept_id="1", concept_name="JavaScript"),
+        SynonymMapping(synonym_id="b", term="Pitch", normalized_term="pitch", term_key="pitch",
+                       concept_level="tags",
                        concept_id="2", concept_name="Sales Pitch", scope_level="categories", scope_id="7"),
     ]).model_dump_json(), encoding="utf-8")
     return path

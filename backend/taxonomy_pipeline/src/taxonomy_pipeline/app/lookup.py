@@ -13,9 +13,11 @@ round, or an edited one, is picked up without a restart.
 
 Approved global synonyms count as exact matches (`match_type: "synonym"`, #60). They
 are read live from the synonym store for `synonym_dataset` (default `original`, the
-taxonomy synonyms are recorded against). A snapshot keeps the baseline's IDs, since
-`integrate` only inserts, but a synonym only applies where its concept ID still has
-the name it was recorded with, so a mismatched snapshot never gets a wrong match.
+taxonomy synonyms are recorded against), only those whose term key (`match_key`, as
+for names) is the query's, through the store's index, so each keystroke reads a few rows.
+A snapshot keeps the baseline's IDs, since `integrate` only inserts, but a synonym only
+applies where its concept ID still has the name it was recorded with, so a mismatched
+snapshot never gets a wrong match.
 Scoped synonyms need the branch a term is used in, which a lookup doesn't have, so
 they don't apply here; `synonym-resolve --within-...` answers that question.
 """
@@ -30,7 +32,7 @@ from typing import Any
 from ..config import DatasetConfig
 from ..enrichment.lineage import FileFingerprint, IntegrationRound, read_rounds
 from ..matching.lookup import DEFAULT_MIN_SCORE, NameIndex, NameMatch
-from ..matching.names import normalize
+from ..matching.names import match_key
 from ..matching.semantic import SemanticMatcher
 from ..models import ConceptLevel, LookupMatch, TagLookupResult
 from ..synonyms import Synonym, approved_synonyms
@@ -100,9 +102,11 @@ def lookup_term(
     exact = [_to_model(loaded, match) for match in matches if match.exact]
     if synonym_dataset:
         named = {(match.level, str(match.id)) for match in exact}
-        exact += [hit for hit in _synonym_hits(loaded, term, approved_synonyms(synonym_dataset), level)
+        exact += [hit for hit in _synonym_hits(loaded, approved_synonyms(synonym_dataset, term=term), level)
                   if (hit.level, str(hit.id)) not in named]
-    near = [_to_model(loaded, match) for match in matches if not match.exact][:limit]
+    found = {(match.level, str(match.id)) for match in exact}  # a concept found exactly isn't also listed as near
+    near = [model for model in (_to_model(loaded, match) for match in matches if not match.exact)
+            if (model.level, str(model.id)) not in found][:limit]
     return TagLookupResult(query=term, snapshot=chosen.name, exists=bool(exact), exact=exact, near=near)
 
 
@@ -163,16 +167,15 @@ def _semantic_matcher() -> SemanticMatcher:
         raise SemanticUnavailable(f"semantic matching is unavailable: {exc}") from exc
 
 
-def _synonym_hits(
-    loaded: _Snapshot, term: str, synonyms: list[Synonym], level: ConceptLevel | None,
-) -> list[LookupMatch]:
-    """Concepts `term` names through an approved global synonym, where the snapshot still has that concept."""
-    key, hits = normalize(term), []
+def _synonym_hits(loaded: _Snapshot, synonyms: list[Synonym], level: ConceptLevel | None) -> list[LookupMatch]:
+    """Concepts the query names through these approved global synonyms (already matched by term key),
+    where the snapshot still has the concept with the name the synonym was recorded against."""
+    hits = []
     for synonym in synonyms:
-        if synonym.scope or synonym.normalized_term != key or (level and synonym.concept_level != level):
+        if synonym.scope or (level and synonym.concept_level != level):
             continue
         row = loaded.by_id.get((synonym.concept_level, synonym.concept_id))
-        if row is None or normalize(str(row.get("name"))) != normalize(synonym.concept_name):
+        if row is None or match_key(str(row.get("name"))) != match_key(synonym.concept_name):
             continue  # this snapshot doesn't have the concept the synonym was recorded against
         hits.append(LookupMatch(
             id=row["id"], name=str(row["name"]), level=synonym.concept_level, match_type="synonym",

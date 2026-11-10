@@ -442,11 +442,12 @@ def test_saved_screening_rejects_inconsistent_evidence(baseline: TaxonomyDataset
 
 
 def _mapping(term: str, level: str, concept_id: str, name: str, scope: tuple[str, str] | None = None):
-    from taxonomy_pipeline.matching.names import normalize
+    from taxonomy_pipeline.matching.names import match_key, normalize
     from taxonomy_pipeline.synonyms import SynonymMapping
 
     return SynonymMapping(
-        synonym_id=f"syn-{term}", term=term, normalized_term=normalize(term), concept_level=level,
+        synonym_id=f"syn-{term}", term=term, normalized_term=normalize(term), term_key=match_key(term),
+        concept_level=level,
         concept_id=concept_id, concept_name=name, scope_level=scope[0] if scope else None,
         scope_id=scope[1] if scope else None,
     )
