@@ -47,7 +47,8 @@ describe("uploadProblem", () => {
 
 describe("baselineLabel", () => {
   it("names the original taxonomy in words, and a snapshot by its own name", () => {
-    expect(baselineLabel("original")).toBe("Original taxonomy");
+    expect(baselineLabel("@original")).toBe("Original taxonomy");
+    expect(baselineLabel("original")).toBe("original"); // a snapshot that happens to be called original
     expect(baselineLabel("judged-1015")).toBe("judged-1015");
   });
 });

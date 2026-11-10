@@ -14,7 +14,7 @@ const SOURCE_NAME = /^[a-z][a-z0-9_]*$/;
 const RESERVED_SOURCE_NAME = "enriched";
 
 /** What the API calls the client's dumps when a round builds on them directly; mirrors `ORIGINAL_BASELINE`. */
-export const ORIGINAL_BASELINE = "original";
+export const ORIGINAL_BASELINE = "@original";
 
 export function baselineLabel(baseline: string): string {
   return baseline === ORIGINAL_BASELINE ? "Original taxonomy" : baseline;

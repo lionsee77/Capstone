@@ -61,9 +61,11 @@ from .sources import DEFAULT_TEMPLATE, ROUND_BASELINE, import_source
 
 ROUND_ID = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
 # What a round asks for to build on the client's dumps directly, rather than on an integrated snapshot.
-ORIGINAL_BASELINE = "original"
+# What a round names the client's dumps as its baseline. The "@" keeps it apart from every snapshot: a snapshot is
+# named after its round, and a round ID can't contain "@", so a snapshot called "original" stays itself.
+ORIGINAL_BASELINE = "@original"
 ORIGINAL_DUMPS = Path(__file__).resolve().parents[4] / "sql-files-nus"
-RESERVED_ROUND_IDS = {"options", ORIGINAL_BASELINE}
+RESERVED_ROUND_IDS = {"options"}
 # What `integrate` calls the finished snapshot, unless a source already has the name. The round's comparison asks
 # for the snapshot by this name, so a source using it would be compared in the snapshot's place.
 RESERVED_SOURCE_NAME = "enriched"
@@ -182,7 +184,7 @@ def _baseline_directory(roots: RoundRoots, baseline: str) -> Path:
     """
     if baseline != ORIGINAL_BASELINE:
         return roots.integrations / baseline
-    directory = roots.rounds / f".{ORIGINAL_BASELINE}-baseline"
+    directory = roots.rounds / ".original-baseline"
     directory.mkdir(parents=True, exist_ok=True)
     paths = [str(path.resolve()) for path in _original_dumps(roots)]
     dataset = {"name": "enriched", "type": "sql_dump", "paths": paths}
