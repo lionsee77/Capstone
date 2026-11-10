@@ -21,14 +21,34 @@ export function placementLabel(place: { service: string; category: string; speci
   return `${place.service} › ${place.category} › ${place.speciality}`;
 }
 
-/** The baseline tags a held tag could be mapped to, without repeats. */
-export function reuseCandidates(tag: ReviewQueueTag): { tag_id: number; name: string; score: number }[] {
-  const found = new Map<number, { tag_id: number; name: string; score: number }>();
+export type ReuseCandidate = { tag_id: number; name: string; score: number; basis: string };
+
+/** The baseline tags a held tag could be mapped to, without repeats. None is ever chosen for the reviewer. */
+export function reuseCandidates(tag: ReviewQueueTag): ReuseCandidate[] {
+  const found = new Map<number, ReuseCandidate>();
   for (const match of tag.closest) {
     if (match.tag_id === null || found.has(match.tag_id)) continue;
-    found.set(match.tag_id, { tag_id: match.tag_id, name: match.name ?? `Tag ${match.tag_id}`, score: match.score });
+    found.set(match.tag_id, {
+      tag_id: match.tag_id, name: match.name ?? `Tag ${match.tag_id}`, score: match.score, basis: match.basis,
+    });
   }
   return [...found.values()];
+}
+
+/** Says how a candidate matched, because a close spelling alone says nothing about meaning (Bash and cash). */
+export function reuseCandidateLabel(candidate: ReuseCandidate): string {
+  const how = candidate.basis === "semantic" ? "similar meaning" : "similar spelling";
+  return `${candidate.name} (${how}, ${candidate.score.toFixed(2)})`;
+}
+
+/** The reuse dropdown's value as a tag ID. "" is its "Choose a tag" placeholder, so it means nothing is chosen. */
+export function chosenReuseTag(value: string): number | undefined {
+  return value === "" ? undefined : Number(value);
+}
+
+/** Whether "Reuse existing" can be pressed: only once the reviewer has chosen a tag, and there's a placement for it. */
+export function canReuse(tag: ReviewQueueTag, reuseTagId: number | undefined): boolean {
+  return reuseTagId !== undefined && tag.placements.length > 0 && reuseCandidates(tag).some((item) => item.tag_id === reuseTagId);
 }
 
 /** A tag decision. Returns null when the choice is incomplete: nowhere to place it, or nothing to reuse. */
