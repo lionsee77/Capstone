@@ -158,11 +158,22 @@ function StartRound({ options }: { options: RoundOptions }) {
 
 function SetupRound({ roundId, options }: { roundId: string; options: RoundOptions }) {
   const { data: round, error } = useRound(roundId);
-  const { data: files } = useRoundFiles(roundId);
+  const { data: files, error: filesError, refetch: refetchFiles, isFetching: fetchingFiles } = useRoundFiles(roundId);
   if (error) {
     return (
       <Notice title="Could not load this round" tone="error">
         {error.message}
+      </Notice>
+    );
+  }
+  // Without this the page would wait for the file list forever, with no hint why.
+  if (filesError && !files) {
+    return (
+      <Notice title="Could not list this round's files" tone="error">
+        <p>{filesError.message}</p>
+        <Button className="mt-2" size="sm" variant="outline" disabled={fetchingFiles} onClick={() => void refetchFiles()}>
+          {fetchingFiles ? "Trying again…" : "Try again"}
+        </Button>
       </Notice>
     );
   }
