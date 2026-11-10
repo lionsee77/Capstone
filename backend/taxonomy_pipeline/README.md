@@ -1874,13 +1874,22 @@ Rules:
 
 - **One concept, many synonyms.** Each is stored with its own `term` and the concept's
   canonical `concept_name`, so a synonym is always distinguishable from the real name.
-- **No duplicates.** A term is compared after `normalize` (case, spacing, trailing
-  punctuation), so "JS", "js" and " JS. " are the same synonym. Adding one that is
-  already approved for that concept is refused (409 over HTTP); so is a term equal to the
-  concept's own name (422). The same term on two *different* concepts is allowed for
-  now: deciding when that is ambiguous is #61.
-- **The concept must exist.** An unknown dataset, run or concept ID is refused (404)
-  before anything is written.
+- **No duplicates.** Terms are compared by `match_key` (stored as `term_key`): case,
+  spacing, trailing punctuation, `&`/`and`, `-isation`/`-ization` and a trailing plural,
+  so "JS tag", "js tags" and " JS tag. " are one synonym. Adding one already approved for
+  that concept is refused (409 over HTTP); so is the concept's own name or a spelling of
+  it ("Audits" for *audit*), and a term with no letters or digits or a placeholder
+  ("test", "new") (422). Another concept's name, or the same term on two concepts, is
+  refused once #61 lands.
+- **The concept must exist and be active.** An unknown run, dataset or concept ID is
+  refused (404) before anything is written, and so is a dataset whose config can't be
+  read or whose files can't be loaded (404, with the loading error). A retired concept
+  (status 0) is refused (422): new terms shouldn't resolve to it.
+- **One dataset name, one taxonomy.** Synonyms belong to a dataset name such as
+  `original`, so they survive enrichment (`integrate` keeps the baseline's IDs). Each
+  records its concept's name; adding to an ID whose synonyms were recorded under a
+  different name is refused (422), because that dataset name now points at another
+  taxonomy. Give it its own name in the config.
 - **Removing keeps history.** `synonym-remove` marks the row `removed` with who and why;
   `synonyms --include-removed` (or `include_removed=true`) shows it. The same term can be
   added again later as a new row.
@@ -1897,6 +1906,10 @@ variants), which will arrive as `proposed` rows a reviewer approves or rejects. 
 mappings are passed into matching as data rather than matching importing this context.
 The dashboard doesn't call `/synonyms` yet, so the proxy allowlist and zod schemas are
 unchanged.
+
+If the synonym store can't be used (an unreadable database, or a table written by another
+version) the routes answer 503. Every write recreates a missing table or index, and reads
+work on older tables before anything has migrated them.
 
 ## Plugging in a taxonomy dataset
 

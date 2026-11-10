@@ -10,9 +10,12 @@ from __future__ import annotations
 from .models import Synonym, SynonymCreate, SynonymLevel, SynonymList, SynonymQuery
 from .store import (
     DuplicateSynonym,
+    RetiredConcept,
     SynonymError,
     SynonymNotFound,
+    TaxonomyUnavailable,
     UnknownConcept,
+    UnsupportedSchema,
     add_synonym,
     concept_name,
     list_synonyms,
@@ -20,7 +23,7 @@ from .store import (
 )
 
 __all__ = [
-    "DuplicateSynonym", "Synonym", "SynonymCreate", "SynonymError", "SynonymLevel", "SynonymList",
-    "SynonymNotFound", "SynonymQuery", "UnknownConcept", "add_synonym", "concept_name", "list_synonyms",
-    "remove_synonym",
+    "DuplicateSynonym", "RetiredConcept", "Synonym", "SynonymCreate", "SynonymError", "SynonymLevel", "SynonymList",
+    "SynonymNotFound", "SynonymQuery", "TaxonomyUnavailable", "UnknownConcept", "UnsupportedSchema", "add_synonym",
+    "concept_name", "list_synonyms", "remove_synonym",
 ]

@@ -10,6 +10,8 @@ import pytest
 from taxonomy_pipeline.audit import ChangeQuery, read_changes
 from taxonomy_pipeline.synonyms import (
     DuplicateSynonym,
+    RetiredConcept,
+    Synonym,
     SynonymCreate,
     SynonymError,
     SynonymNotFound,
@@ -37,7 +39,7 @@ def _request(term: str = "JS", concept_id: str = "100", **extra: str) -> Synonym
                          reason="Common abbreviation", actor="reviewer", **extra)
 
 
-def _add(term: str = "JS", concept_id: str = "100"):
+def _add(term: str = "JS", concept_id: str = "100") -> Synonym:
     name = concept_name(TAXONOMY, "tags", concept_id)
     return add_synonym(_request(term, concept_id), canonical_name=name, snapshot_id="sha256:snapshot")
 
@@ -146,3 +148,53 @@ def test_a_database_from_another_schema_version_is_refused(isolated_db: Path) ->
         connection.execute("UPDATE taxonomy_synonym_schema SET version = 99")
     with pytest.raises(SynonymError, match="schema version 99"):
         _add("ECMAScript")
+
+
+@pytest.mark.parametrize("term", ["#", "--", "()", "...-", "test", "New"])
+def test_symbol_only_and_placeholder_terms_are_refused(isolated_db: Path, term: str) -> None:
+    with pytest.raises(SynonymError, match="no letters or digits, or is a placeholder"):
+        _add(term)
+    assert not isolated_db.exists()
+
+
+@pytest.mark.parametrize("term", ["Javascripts", "JAVASCRIPT."])
+def test_a_spelling_of_the_concepts_own_name_is_refused(isolated_db: Path, term: str) -> None:
+    with pytest.raises(SynonymError, match="own name"):
+        _add(term)
+
+
+@pytest.mark.parametrize(("first", "second"), [("JS tag", "JS tags"), ("JS & TS", "JS and TS")])
+def test_spelling_variants_of_an_approved_synonym_are_duplicates(isolated_db: Path, first: str, second: str) -> None:
+    original = _add(first)
+    with pytest.raises(DuplicateSynonym, match=original.synonym_id):
+        _add(second)
+
+
+def test_a_retired_concept_is_refused() -> None:
+    retired = TAXONOMY.model_copy(update={"tags": [{"id": 100, "name": "JavaScript", "status": "0"}]})
+    with pytest.raises(RetiredConcept, match="retired"):
+        concept_name(retired, "tags", "100")
+
+
+def test_a_repeated_id_resolves_to_its_last_row_like_hierarchy() -> None:
+    repeated = TAXONOMY.model_copy(update={"tags": [{"id": 100, "name": "Old"}, {"id": 100, "name": "JavaScript"}]})
+    assert concept_name(repeated, "tags", "100") == "JavaScript"
+
+
+def test_a_dataset_name_now_pointing_at_another_taxonomy_is_refused(isolated_db: Path) -> None:
+    _add("JS")  # recorded against tag 100 "JavaScript"
+    with pytest.raises(SynonymError, match="now points at a different taxonomy"):
+        add_synonym(_request("Rb"), canonical_name="Ruby", snapshot_id="other")
+    assert list_synonyms(SynonymQuery()).total == 1
+
+
+def test_a_dropped_table_or_index_is_recreated_on_the_next_write(isolated_db: Path) -> None:
+    _add("JS")
+    with closing(sqlite3.connect(isolated_db)) as connection, connection:
+        connection.execute("DROP INDEX synonym_approved_mapping")
+    _add("ECMAScript")
+    with pytest.raises(DuplicateSynonym):
+        _add("JS")
+    with closing(sqlite3.connect(isolated_db)) as connection:
+        indexes = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type='index'")}
+    assert "synonym_approved_mapping" in indexes

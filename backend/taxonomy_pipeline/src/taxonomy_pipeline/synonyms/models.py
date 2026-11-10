@@ -47,6 +47,8 @@ class Synonym(BaseModel):
     synonym_id: Text
     term: Text
     normalized_term: Text
+    # `match_key(term)`: what duplicates and lookups compare, so "Audits" is the same term as "audit" (#59).
+    term_key: Text
     dataset: Text
     concept_level: SynonymLevel
     concept_id: Text
