@@ -477,7 +477,7 @@ def _claim(roots: RoundRoots, state: RoundState, stages: list[RoundStageId]) -> 
 def run_stages(roots: RoundRoots, round_id: str, stages: list[RoundStageId]) -> None:
     """Run claimed stages in order, stopping at the first failure. Never raises: it runs in the background."""
     try:
-        for stage_id in stages:
+        for index, stage_id in enumerate(stages):
             state = RoundState.model_validate_json((roots.directory(round_id) / "round.json").read_text("utf-8"))
             stage = _stage(state, stage_id)
             stage.status, stage.started_at, stage.finished_at, stage.error = "running", utcnow(), None, None
@@ -488,6 +488,13 @@ def run_stages(roots: RoundRoots, round_id: str, stages: list[RoundStageId]) -> 
             except Exception as exc:  # recorded on the round: this is the only place a failure can be reported
                 stage.status, stage.error = "failed", f"{type(exc).__name__}: {exc}"
             stage.finished_at = utcnow()
+            # Start the next stage in the same save: with nothing running for an instant, the round would read as
+            # idle, and a dashboard polling at that moment would stop following it.
+            if stage.status != "failed" and index + 1 < len(stages):
+                following = _stage(state, stages[index + 1])
+                following.status, following.started_at, following.finished_at, following.error = (
+                    "running", utcnow(), None, None,
+                )
             _save(roots, state)
             if stage.status == "failed":
                 return
