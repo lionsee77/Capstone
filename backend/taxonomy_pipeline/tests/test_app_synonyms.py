@@ -166,6 +166,11 @@ def test_cli_resolves_and_exports(isolated_db: Path, config: Path, tmp_path: Pat
     assert '"via": "synonym"' in capsys.readouterr().out
     assert main(["synonyms", "--export", str(tmp_path / "s.json")]) == 1
     assert "--export needs --dataset" in capsys.readouterr().err
+    assert main(["synonyms", "--export", str(tmp_path / "s.json"), "--dataset", "original", "--level", "tags"]) == 1
+    assert "drop --level" in capsys.readouterr().err
+    assert main(["synonyms", "--export", str(tmp_path / "s.json"), "--dataset", "orignal"]) == 1
+    assert "has no approved synonyms" in capsys.readouterr().err
+    assert not (tmp_path / "s.json").exists()
     assert main(["synonyms", "--export", str(tmp_path / "s.json"), "--dataset", "original"]) == 0
     assert "wrote 1 approved synonyms" in capsys.readouterr().out
 

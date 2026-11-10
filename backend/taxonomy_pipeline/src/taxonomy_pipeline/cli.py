@@ -293,6 +293,11 @@ def _cmd_synonyms(args: argparse.Namespace) -> int:
         if args.export:
             if not args.dataset:
                 raise ValueError("--export needs --dataset: a synonym set holds one dataset's synonyms")
+            ignored = [flag for flag, value in (("--level", args.level), ("--concept-id", args.concept_id),
+                                                ("--term", args.term), ("--include-removed", args.include_removed))
+                       if value]
+            if ignored:
+                raise ValueError(f"--export writes every approved synonym of --dataset; drop {', '.join(ignored)}")
             exported = synonym_cases.export_synonyms(args.dataset, args.export)
             print(f"[OK] wrote {len(exported.synonyms)} approved synonyms of {exported.dataset} to {args.export}")
             return 0

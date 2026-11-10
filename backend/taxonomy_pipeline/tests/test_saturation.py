@@ -944,7 +944,10 @@ def test_a_synonym_set_makes_an_incoming_synonym_an_exact_match_of_its_concept()
     assert levels["exact_matches"] == before + 1
     match = next(m for m in levels["exact_match_details"] if m["incoming_name"] == "Carbon Accounting")
     assert (match["baseline_id"], match["baseline_name"]) == (10, "Payroll Processing")
-    assert result.details["synonyms"] == {"dataset": "synonyms_v1", "global_synonyms_applied": 1}
+    assert result.details["synonyms"] == {
+        "dataset": "synonyms_v1", "exported_from": "original", "global_synonyms_applied": 1, "dropped": [],
+    }
+    assert "Synonyms (synonyms_v1): 1 applied." in result.summary
 
 
 def test_scoped_synonyms_and_unknown_concepts_are_not_applied_and_names_keep_their_meaning():
@@ -959,6 +962,18 @@ def test_scoped_synonyms_and_unknown_concepts_are_not_applied_and_names_keep_the
     other = SaturationMetric().run(datasets, {"baseline": "original", "incoming": "skillsfuture",
                                               "synonyms": "synonyms_v1"})
     assert other.details["synonyms"]["global_synonyms_applied"] == 0
+    assert [d["concept_id"] for d in other.details["synonyms"]["dropped"]] == ["999"]
+    assert "1 dropped" in other.summary
+
+
+def test_a_synonym_whose_id_names_another_concept_in_this_baseline_is_dropped():
+    # Exported from a dataset where specialities/77 was "Payroll Processing"; here that name is ID 10.
+    datasets = {**_datasets(), "synonyms_v1": _synonym_set(("Carbon Accounting", "specialities", "77",
+                                                           "Payroll Processing"))}
+    result = SaturationMetric().run(datasets, {"baseline": "original", "incoming": "skillsfuture",
+                                               "synonyms": "synonyms_v1"})
+    assert result.details["synonyms"]["global_synonyms_applied"] == 0
+    assert [d["concept_id"] for d in result.details["synonyms"]["dropped"]] == ["77"]
 
 
 def test_without_the_synonyms_param_results_are_unchanged_and_record_no_synonyms():

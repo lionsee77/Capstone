@@ -1972,12 +1972,13 @@ taxonomy-pipeline synonym-resolve "Assurance review"                    # live, 
 curl -H "Authorization: Bearer $TAXONOMY_API_TOKEN" \
     "http://localhost:8000/synonyms/resolve?run_id=<run>&dataset=original&term=Assurance%20review"
 taxonomy-pipeline merge-preview --input case_a_output.json --input case_b_output.json --synonyms
-taxonomy-pipeline synonyms --export synonyms/synonyms_v1.json --dataset original   # freeze for scoring
+taxonomy-pipeline synonyms --export configs/synonyms/synonyms_v1.json --dataset original   # freeze for scoring
 ```
 
 **Why scoring reads a frozen file.** Live synonyms change whenever a reviewer approves
 one, so a config reading them would score differently next week. Saturation instead
-names a `synonym_set` dataset:
+names a `synonym_set` dataset. Its `paths` resolve against the config's own directory,
+so a config in `configs/` reads the file exported to `configs/synonyms/` above:
 
 ```yaml
 datasets:
@@ -1987,7 +1988,13 @@ metrics:
     params: {baseline: original, incoming: [skillsfuture], synonyms: synonyms_v1}
 ```
 
-`--export` refuses to overwrite a file, so export each new set under a new name. The
+`--export` refuses to overwrite a file, so export each new set under a new name, and
+refuses a dataset with no approved synonyms (a mistyped name would otherwise pin an empty
+set); it can't be combined with the list filters. A synonym only applies where the
+baseline has its concept with the same ID and name: any other is dropped and listed in
+`details.synonyms.dropped` (with `exported_from`, the set's dataset), and the summary
+counts them, so a set exported from another taxonomy can't attach terms to a
+same-named but different concept. The
 `synonyms` param is part of the recorded settings, and `check-comparable` compares the
 synonym set's row counts (total, global, scoped) between two runs like any reference
 dataset, so a run with synonyms and one without are flagged as scored differently.

@@ -210,12 +210,14 @@ class SaturationMetric(Metric):
             ))
 
         synonyms: list[SynonymMapping] = []
+        synonym_set: SynonymSet | None = None
         if p.get("synonyms") is not None:
             # Opt-in and read from a frozen `synonym_set` dataset, so the same config always scores the same (#60).
             found = self.require_datasets(datasets, {"synonyms": p["synonyms"]}, {"synonyms": SynonymSet})
             if isinstance(found, MetricResult):
                 return found
-            synonyms = found["synonyms"].synonyms
+            synonym_set = found["synonyms"]
+            synonyms = synonym_set.synonyms
 
         baseline = resolved["baseline"]
         incoming = [resolved[f"incoming[{i}]"] for i in range(len(incoming_names))]
@@ -252,7 +254,7 @@ class SaturationMetric(Metric):
             settings["judge"] = (judge, judge_cfg)
 
         try:
-            steps, curve, pool, aliases = self._compare_sources(
+            steps, curve, pool, (aliases, dropped) = self._compare_sources(
                 baseline, incoming_names, incoming, settings, semantic_matcher, synonyms,
             )
         except JudgeError as exc:
@@ -274,6 +276,11 @@ class SaturationMetric(Metric):
                 f"{counts['judged_duplicate']} duplicates, "
                 f"{counts['judged_new']} new, {counts['unsure']} unsure, {counts['failed']} failed."
             )
+        if synonym_set is not None:
+            summary += f" Synonyms ({p['synonyms']}): {aliases} applied"
+            if dropped:
+                summary += f", {len(dropped)} dropped (their concept isn't in {baseline.name} with that ID and name)"
+            summary += "."
         if len(curve) > 1:
             summary += " Curve: " + ", ".join(
                 f"{point['source']} {point['new_rate_min']:.1%}-{point['new_rate_max']:.1%}" for point in curve
@@ -299,8 +306,12 @@ class SaturationMetric(Metric):
                     settings["semantic_threshold_by_level"] if semantic_matcher else None
                 ),
                 **({"judge": judge_cfg} if judge_cfg else {}),
-                **({"synonyms": {"dataset": p["synonyms"], "global_synonyms_applied": aliases}}
-                   if p.get("synonyms") is not None else {}),
+                **({"synonyms": {
+                    "dataset": p["synonyms"], "exported_from": synonym_set.dataset,
+                    "global_synonyms_applied": aliases,
+                    "dropped": [s.model_dump(include={"term", "concept_level", "concept_id", "concept_name"})
+                                for s in dropped],
+                }} if synonym_set is not None else {}),
                 "curve": curve,
                 "steps": steps,
             },
@@ -311,9 +322,10 @@ class SaturationMetric(Metric):
         baseline: TaxonomyDataset, incoming_names: list[str], incoming: list[TaxonomyDataset],
         settings: dict[str, Any], semantic_matcher: SemanticMatcher | None,
         synonyms: list[SynonymMapping] | None = None,
-    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], KnownPool, int]:
+    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], KnownPool, tuple[int, list[SynonymMapping]]]:
         """Compare each incoming source in order against everything known before it; the baseline's
-        global synonyms (if any) count as names of its concepts. Also returns how many were applied."""
+        global synonyms (if any) count as names of its concepts. Also returns how many were applied
+        and which were dropped (`KnownPool.add_aliases`)."""
         judged = bool(settings.get("judge"))
         pool = KnownPool()
         pool.add(baseline.name, baseline)

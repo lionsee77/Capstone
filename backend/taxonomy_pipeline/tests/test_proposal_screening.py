@@ -492,3 +492,13 @@ def test_screening_synonyms_survive_a_replay(baseline: TaxonomyDataset) -> None:
     assert saved.screening.settings.synonyms == settings.synonyms
     again = resolve_outputs(report, baseline, screening=saved.screening)
     assert screened(again).status == "reuse"
+
+
+# A synonym recorded for a concept that now has another name (a refreshed dump) is not applied.
+def test_a_synonym_whose_concept_has_another_name_now_is_not_applied(baseline: TaxonomyDataset) -> None:
+    stale = _mapping("Dataviz", "specialities", "93", "Data visualisation tools")
+    settings = ScreeningSettings(synonyms=[stale])
+    proposal = screened(resolve_outputs(proposal_report(baseline, speciality="Dataviz"), baseline,
+                                        screening_settings=settings))
+    assert proposal.status != "reuse"
+    assert all("synonym" not in match.match_types for match in proposal.matches)

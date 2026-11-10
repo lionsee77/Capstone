@@ -105,25 +105,31 @@ class KnownPool:
                                 "name": parent["name"], "normalized": normalize(str(parent["name"])),
                             })
 
-    def add_aliases(self, synonyms: Iterable[SynonymMapping]) -> int:
+    def add_aliases(self, synonyms: Iterable[SynonymMapping]) -> tuple[int, list[SynonymMapping]]:
         """Let each global synonym's term match the concept it names, as an exact match on that concept.
 
         Only global synonyms apply: a scoped one needs the branch a term is used in, and an
-        incoming concept's branch belongs to another taxonomy. A term that is already a known
-        name keeps its own meaning. Returns how many terms were added.
+        incoming concept's branch belongs to another taxonomy. A synonym applies only where
+        the known taxonomy has its concept with the same ID and name; any other is dropped
+        and returned, so a set exported from another dataset can't attach terms to a
+        same-named but different concept. A term that is already a known name keeps its own
+        meaning. Returns how many terms were added, and the dropped synonyms.
         """
-        added = 0
+        added, dropped = 0, []
         for synonym in synonyms:
             if synonym.scope:
                 continue
             known = self.by_level.get(synonym.concept_level)
             concept = known.get(match_key(synonym.concept_name)) if known is not None else None
+            if concept is None or str(concept.get("id")) != synonym.concept_id:
+                dropped.append(synonym)
+                continue
             alias = match_key(synonym.term)
-            if concept is None or not alias or alias in known:
+            if not alias or alias in known:
                 continue
             known[alias] = concept
             added += 1
-        return added
+        return added, dropped
 
     def size(self) -> int:
         """Known concepts, not keys: a synonym alias shares its concept's entry."""
