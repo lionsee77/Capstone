@@ -266,6 +266,7 @@ export const synonymMappingSchema = z.object({
   synonym_id: z.string(),
   term: z.string(),
   normalized_term: z.string(),
+  term_key: z.string(), // match_key(term): what every stage compares
   concept_level: z.enum(["categories", "specialities", "tags"]),
   concept_id: z.string(),
   concept_name: z.string(),

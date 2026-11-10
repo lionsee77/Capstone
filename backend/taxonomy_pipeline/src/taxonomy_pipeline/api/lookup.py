@@ -8,6 +8,7 @@ with the names of the rounds under the configured root.
 from __future__ import annotations
 
 import os
+import sqlite3
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Query
@@ -46,3 +47,5 @@ def lookup(
         raise HTTPException(status_code=409, detail="No integrated taxonomy snapshot is available yet") from exc
     except use_cases.SemanticUnavailable as exc:
         raise HTTPException(status_code=503, detail="Semantic matching is unavailable on this server") from exc
+    except sqlite3.Error as exc:  # lookups read approved synonyms from the pipeline's SQLite store
+        raise HTTPException(status_code=503, detail=f"The synonym store is unavailable: {exc}") from exc

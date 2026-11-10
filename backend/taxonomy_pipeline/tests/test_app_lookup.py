@@ -277,15 +277,21 @@ def test_an_approved_synonym_is_an_exact_match_flagged_with_the_synonym(round_wi
     assert [path.speciality.name for path in match.paths] == ["Tax Advisory"]
 
 
-def test_a_synonym_of_a_concept_already_matched_by_name_is_not_repeated(round_with: Callable[..., Path]) -> None:
-    _synonym("Taxs", "100", "tax")  # match_key folds "taxs" to "tax": it already finds tag 100 as a variant
-    _synonym("Taxs", "103", "advisory")  # global here only because the store is called directly
-    result = lookup.lookup_term("taxs", round_with("r1"))
-    assert [(m.id, m.match_type) for m in result.exact] == [(100, "variant"), (103, "synonym")]
+def test_a_concept_found_through_a_synonym_is_not_also_listed_as_near(round_with: Callable[..., Path]) -> None:
+    _synonym("Taxation", "100", "tax")
+    result = lookup.lookup_term("taxation", round_with("r1"), min_score=50)
+    assert [(m.id, m.match_type) for m in result.exact] == [(100, "synonym")]
+    assert 100 not in {m.id for m in result.near}
+
+
+def test_a_synonym_matches_spelling_variants_like_names_do(round_with: Callable[..., Path]) -> None:
+    _synonym("Goods and Services Tax", "101", "gst")
+    [match] = lookup.lookup_term("Goods & Services Tax.", round_with("r1")).exact
+    assert (match.id, match.match_type, match.synonym) == (101, "synonym", "Goods and Services Tax")
 
 
 def test_synonyms_that_do_not_fit_the_snapshot_or_need_a_scope_are_left_out(round_with: Callable[..., Path]) -> None:
-    _synonym("Goods tax", "101", "a different name")  # this snapshot's tag 101 isn't that concept
+    _synonym("Goods tax", "102", "a different name")  # this snapshot's tag 102 isn't that concept
     _synonym("Levy", "101", "gst", scope_level="specialities", scope_id="10")
     root = round_with("r1")
     assert not lookup.lookup_term("goods tax", root).exact

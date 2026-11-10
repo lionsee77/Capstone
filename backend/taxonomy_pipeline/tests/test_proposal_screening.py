@@ -442,11 +442,12 @@ def test_saved_screening_rejects_inconsistent_evidence(baseline: TaxonomyDataset
 
 
 def _mapping(term: str, level: str, concept_id: str, name: str, scope: tuple[str, str] | None = None):
-    from taxonomy_pipeline.matching.names import normalize
+    from taxonomy_pipeline.matching.names import match_key, normalize
     from taxonomy_pipeline.synonyms import SynonymMapping
 
     return SynonymMapping(
-        synonym_id=f"syn-{term}", term=term, normalized_term=normalize(term), concept_level=level,
+        synonym_id=f"syn-{term}", term=term, normalized_term=normalize(term), term_key=match_key(term),
+        concept_level=level,
         concept_id=concept_id, concept_name=name, scope_level=scope[0] if scope else None,
         scope_id=scope[1] if scope else None,
     )
@@ -491,3 +492,13 @@ def test_screening_synonyms_survive_a_replay(baseline: TaxonomyDataset) -> None:
     assert saved.screening.settings.synonyms == settings.synonyms
     again = resolve_outputs(report, baseline, screening=saved.screening)
     assert screened(again).status == "reuse"
+
+
+# A synonym recorded for a concept that now has another name (a refreshed dump) is not applied.
+def test_a_synonym_whose_concept_has_another_name_now_is_not_applied(baseline: TaxonomyDataset) -> None:
+    stale = _mapping("Dataviz", "specialities", "93", "Data visualisation tools")
+    settings = ScreeningSettings(synonyms=[stale])
+    proposal = screened(resolve_outputs(proposal_report(baseline, speciality="Dataviz"), baseline,
+                                        screening_settings=settings))
+    assert proposal.status != "reuse"
+    assert all("synonym" not in match.match_types for match in proposal.matches)

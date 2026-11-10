@@ -38,7 +38,7 @@ def test_adds_a_synonym_for_a_concept_found_through_a_config(isolated_db: Path, 
 
 @pytest.mark.parametrize(("changes", "message"), [
     ({"concept_id": "999"}, "no tag with ID 999"),
-    ({"dataset": "missing"}, "no taxonomy dataset named 'missing'"),
+    ({"dataset": "missing"}, "declares no dataset named 'missing'"),
 ])
 def test_an_unknown_dataset_or_concept_is_reported_and_nothing_is_stored(
     isolated_db: Path, config: Path, changes: dict, message: str,
@@ -58,7 +58,7 @@ def test_needs_exactly_one_way_to_find_the_taxonomy(isolated_db: Path, config: P
 def test_removal_refuses_a_blank_reason_or_actor(isolated_db: Path, config: Path, field: str) -> None:
     synonym = use_cases.add_synonym(_request(), config_path=config)
     kwargs = {"reason": "Wrong", "actor": "lead", field: "   "}
-    with pytest.raises(ValueError, match=f"{field} must not be blank"):
+    with pytest.raises(ValueError, match="non-blank reason and actor"):
         use_cases.remove_synonym(synonym.synonym_id, **kwargs)
     assert use_cases.list_synonyms(SynonymQuery()).total == 1
 
@@ -122,14 +122,21 @@ def test_resolves_a_term_through_names_and_approved_synonyms(isolated_db: Path, 
         ("101", "synonym", "Goods and Services Tax"),
     ]
     assert use_cases.resolve_term("tax", dataset="original", config_path=config).matches[0].concept_id == "100"
-    inside = use_cases.resolve_term("tax", dataset="original", config_path=config, within=("specialities", "10"))
+    inside = use_cases.resolve_term("tax", dataset="original", config_path=config,
+                                    within_level="specialities", within_id="10")
     assert [(m.concept_id, m.via) for m in inside.matches] == [("103", "synonym")]
     assert use_cases.resolve_term("payroll", dataset="original", config_path=config).status == "unknown"
 
 
 def test_resolving_inside_an_unknown_branch_is_refused(isolated_db: Path, config: Path) -> None:
-    with pytest.raises(UnknownConcept, match="no specialities with ID 99"):
-        use_cases.resolve_term("tax", dataset="original", config_path=config, within=("specialities", "99"))
+    with pytest.raises(UnknownConcept, match="no speciality with ID 99"):
+        use_cases.resolve_term("tax", dataset="original", config_path=config,
+                               within_level="specialities", within_id="99")
+    with pytest.raises(ValueError, match="both within_level and within_id"):
+        use_cases.resolve_term("tax", dataset="original", config_path=config, within_level="categories")
+    with pytest.raises(UnknownConcept):  # an empty ID is a branch that doesn't exist, not "no branch"
+        use_cases.resolve_term("tax", dataset="original", config_path=config, within_level="categories",
+                               within_id="")
 
 
 def test_removed_synonyms_do_not_resolve(isolated_db: Path, config: Path) -> None:
@@ -159,6 +166,11 @@ def test_cli_resolves_and_exports(isolated_db: Path, config: Path, tmp_path: Pat
     assert '"via": "synonym"' in capsys.readouterr().out
     assert main(["synonyms", "--export", str(tmp_path / "s.json")]) == 1
     assert "--export needs --dataset" in capsys.readouterr().err
+    assert main(["synonyms", "--export", str(tmp_path / "s.json"), "--dataset", "original", "--level", "tags"]) == 1
+    assert "drop --level" in capsys.readouterr().err
+    assert main(["synonyms", "--export", str(tmp_path / "s.json"), "--dataset", "orignal"]) == 1
+    assert "has no approved synonyms" in capsys.readouterr().err
+    assert not (tmp_path / "s.json").exists()
     assert main(["synonyms", "--export", str(tmp_path / "s.json"), "--dataset", "original"]) == 0
     assert "wrote 1 approved synonyms" in capsys.readouterr().out
 
@@ -168,20 +180,20 @@ def test_suggests_from_a_source_then_approves_and_rejects_with_the_usual_checks(
 ) -> None:
     # mini_original has no British/American names; give spelling something to find.
     sql = (FIXTURES / "mini_original.sql").read_text(encoding="utf-8")
-    (config.parent / "mini.sql").write_text(sql.replace("'Brand Strategy'", "'Brand Organisation'"), encoding="utf-8")
+    (config.parent / "mini.sql").write_text(sql.replace("'Brand Strategy'", "'Brand Colour'"), encoding="utf-8")
     data = yaml.safe_load(config.read_text())
     data["datasets"][0]["paths"] = [str(config.parent / "mini.sql")]
     config.write_text(yaml.safe_dump(data))
 
     report = use_cases.suggest_synonyms("spelling", dataset="original", config_path=config, actor="bot")
     assert [(s.concept_id, s.term, s.source, s.actor) for s in report.proposed] == [
-        ("11", "Brand Organization", "spelling", "bot"),
+        ("11", "Brand Color", "spelling", "bot"),
     ]
     again = use_cases.suggest_synonyms("spelling", dataset="original", config_path=config)
     assert (again.proposed, again.skipped) == ([], {"already_known": 1})
     approved = use_cases.review_synonym(report.proposed[0].synonym_id, approve=True, reason="US spelling",
                                         actor="lead", config_path=config)
-    assert use_cases.resolve_term("brand organization", dataset="original", config_path=config).matches[0].via == (
+    assert use_cases.resolve_term("brand color", dataset="original", config_path=config).matches[0].via == (
         "synonym")
     assert approved.status == "approved"
 
@@ -217,3 +229,51 @@ def test_cli_suggests_lists_and_reviews(isolated_db: Path, config: Path, tmp_pat
     assert main(["synonym-review", second.synonym_id, "--reject", "--reason", "Different tax"]) == 0
     assert "[OK] rejected" in capsys.readouterr().out
     assert [s.term for s in use_cases.list_synonyms(SynonymQuery()).synonyms] == ["goods and services tax"]
+
+
+@pytest.mark.parametrize("text", ["datasets: [unclosed", "datasets: not-a-list\nmetrics: []"])
+def test_a_broken_config_is_reported_as_unavailable_not_as_a_missing_concept(
+    isolated_db: Path, tmp_path: Path, text: str, capsys: pytest.CaptureFixture[str],
+) -> None:
+    from taxonomy_pipeline.synonyms import TaxonomyUnavailable
+
+    broken = tmp_path / "broken.yaml"
+    broken.write_text(text, encoding="utf-8")
+    with pytest.raises(TaxonomyUnavailable, match="couldn't be read"):
+        use_cases.add_synonym(_request(), config_path=broken)
+    assert main(["synonym-add", "--config", str(broken), "--level", "tags", "--concept-id", "101",
+                 "--term", "Goods and Services Tax", "--reason", "x"]) == 1
+    assert "[FAILED] synonym-add" in capsys.readouterr().err
+
+
+def test_a_dataset_whose_file_is_gone_is_unavailable(isolated_db: Path, tmp_path: Path) -> None:
+    from taxonomy_pipeline.synonyms import TaxonomyUnavailable
+
+    config = tmp_path / "gone.yaml"
+    config.write_text(yaml.safe_dump({"datasets": [{"name": "original", "paths": [str(tmp_path / "gone.sql")]}],
+                                      "metrics": [{"id": "integrity", "params": {"dataset": "original"}}]}))
+    with pytest.raises(TaxonomyUnavailable, match="couldn't be loaded"):
+        use_cases.add_synonym(_request(), config_path=config)
+
+
+def test_synonym_check_lists_synonyms_stored_before_the_ambiguity_rules(
+    isolated_db: Path, config: Path, capsys: pytest.CaptureFixture[str],
+) -> None:
+    from taxonomy_pipeline.synonyms import add_synonym as store_add
+
+    for concept_id, name in (("101", "gst"), ("102", "unused-tag")):  # what #59 allowed: one term, two concepts
+        store_add(_request(concept_id=concept_id, term="Levy"), canonical_name=name, snapshot_id="s")
+    problems = use_cases.synonym_problems("original", config_path=config)
+    assert sorted((p.concept_id, p.problem) for p in problems) == [
+        ("101", "ambiguous: a global synonym of 2 concepts"), ("102", "ambiguous: a global synonym of 2 concepts"),
+    ]
+    assert main(["synonym-check", "--config", str(config)]) == 1
+    assert "[FLAGGED] 2 synonym problem(s)" in capsys.readouterr().out
+
+
+def test_adding_checks_only_against_synonyms_that_still_fit(isolated_db: Path, config: Path) -> None:
+    from taxonomy_pipeline.synonyms import add_synonym as store_add
+
+    # A synonym recorded for tag 102 under a name it no longer has doesn't block "Levy" for tag 101.
+    store_add(_request(concept_id="102", term="Levy"), canonical_name="old name", snapshot_id="s")
+    assert use_cases.add_synonym(_request(term="Levy"), config_path=config).concept_id == "101"

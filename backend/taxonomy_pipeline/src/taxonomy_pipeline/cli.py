@@ -1,5 +1,5 @@
 """`taxonomy-pipeline run|check-comparable|compare|serve|import-source|case-a|case-b|merge-preview|
-review-proposals|bulk-decide|integrate|lookup|synonyms|synonym-add|synonym-remove|synonym-resolve|
+review-proposals|bulk-decide|integrate|lookup|synonyms|synonym-add|synonym-remove|synonym-check|synonym-resolve|
 synonym-suggest|synonym-review`
 
 A thin adapter over `app/`: each command parses its flags, calls the one use
@@ -295,6 +295,11 @@ def _cmd_synonyms(args: argparse.Namespace) -> int:
         if args.export:
             if not args.dataset:
                 raise ValueError("--export needs --dataset: a synonym set holds one dataset's synonyms")
+            ignored = [flag for flag, value in (("--level", args.level), ("--concept-id", args.concept_id),
+                                                ("--term", args.term), ("--include-removed", args.include_removed))
+                       if value]
+            if ignored:
+                raise ValueError(f"--export writes every approved synonym of --dataset; drop {', '.join(ignored)}")
             exported = synonym_cases.export_synonyms(args.dataset, args.export)
             print(f"[OK] wrote {len(exported.synonyms)} approved synonyms of {exported.dataset} to {args.export}")
             return 0
@@ -326,14 +331,26 @@ def _cmd_synonym_add(args: argparse.Namespace) -> int:
     return 0
 
 
+# List stored synonyms that don't resolve as recorded, through the same use case as GET /synonyms/problems.
+def _cmd_synonym_check(args: argparse.Namespace) -> int:
+    try:
+        problems = synonym_cases.synonym_problems(args.dataset, config_path=args.config)
+    except (OSError, ValueError, sqlite3.Error) as exc:
+        print(f"[FAILED] synonym-check: {exc}", file=sys.stderr)
+        return 1
+    for problem in problems:
+        print(f"[WARN] {problem.term!r} -> {problem.concept_name!r} ({problem.concept_level} {problem.concept_id}, "
+              f"synonym {problem.synonym_id}): {problem.problem}")
+    print(f"[{'OK' if not problems else 'FLAGGED'}] {len(problems)} synonym problem(s) in {args.dataset}")
+    return 1 if problems else 0
+
+
 # Say what a term means through the same use case as GET /synonyms/resolve.
 def _cmd_synonym_resolve(args: argparse.Namespace) -> int:
     try:
-        if (args.within_level is None) != (args.within_id is None):
-            raise ValueError("give both --within-level and --within-id, or neither")
-        within = (args.within_level, args.within_id) if args.within_level else None
         resolution = synonym_cases.resolve_term(
-            args.term, dataset=args.dataset, config_path=args.config, level=args.level, within=within,
+            args.term, dataset=args.dataset, config_path=args.config, level=args.level,
+            within_level=args.within_level, within_id=args.within_id,
         )
         print(resolution.model_dump_json(indent=2))
     except (OSError, ValueError, sqlite3.Error) as exc:
@@ -390,7 +407,8 @@ def _cmd_lookup(args: argparse.Namespace) -> int:
             min_score=args.min_score, semantic=args.semantic, synonym_dataset=args.synonym_dataset or None,
         )
     except (
-        OSError, ValueError, lookups.NoSnapshots, lookups.SnapshotNotFound, lookups.SemanticUnavailable,
+        OSError, ValueError, sqlite3.Error, lookups.NoSnapshots, lookups.SnapshotNotFound,
+        lookups.SemanticUnavailable,
     ) as exc:
         print(f"[FAILED] lookup: {exc}", file=sys.stderr)
         return 1
@@ -557,12 +575,16 @@ def build_parser() -> argparse.ArgumentParser:
     synonym_remove.add_argument("--reason", required=True, help="why it is removed (kept in the audit log)")
     synonym_remove.add_argument("--actor", default="unspecified", help="self-reported identity for the audit log")
     synonym_remove.set_defaults(func=_cmd_synonym_remove)
+    synonym_check = subparsers.add_parser("synonym-check", help="list synonyms that are stale, shadowed or ambiguous")
+    synonym_check.add_argument("--config", default="configs/baseline_v1.yaml", help="config declaring --dataset")
+    synonym_check.add_argument("--dataset", default="original")
+    synonym_check.set_defaults(func=_cmd_synonym_check)
     synonym_resolve = subparsers.add_parser("synonym-resolve", help="say what a term means: names and synonyms")
     synonym_resolve.add_argument("term")
     synonym_resolve.add_argument("--config", default="configs/baseline_v1.yaml", help="config declaring --dataset")
     synonym_resolve.add_argument("--dataset", default="original")
     synonym_resolve.add_argument("--level", choices=levels)
-    synonym_resolve.add_argument("--within-level", choices=["categories", "specialities"],
+    synonym_resolve.add_argument("--within-level", choices=levels,
                                  help="the branch the lookup is made in, so scoped synonyms apply")
     synonym_resolve.add_argument("--within-id")
     synonym_resolve.set_defaults(func=_cmd_synonym_resolve)

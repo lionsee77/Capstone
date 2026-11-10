@@ -2,11 +2,19 @@
 under the app's token check.
 
 Adding names the taxonomy by a past run's `run_id` and `dataset`, as `/taxonomy` does,
-since the API doesn't read config files from callers. A file a suggestion source reads
-must sit under the allowed data roots, the same request-level check `POST /runs` makes.
+since the API doesn't read config files from callers. Every route maps the use case's
+errors the same way (`_errors`): 404 for an unknown run, dataset, concept or synonym
+(or a dataset whose files can't be loaded), 409 for a duplicate or a term that already
+means another concept where it would apply, 422 for any other refused request (such as a
+scope the concept isn't in), and 503 when the synonym store itself can't be used. A file a suggestion source reads
+must sit under the allowed data roots (403 otherwise), the same request-level check
+`POST /runs` makes.
 """
 from __future__ import annotations
 
+import sqlite3
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Query
@@ -18,16 +26,17 @@ from ..synonyms import (
     ConflictingSynonym,
     DuplicateSynonym,
     Resolution,
-    ScopeLevel,
     SuggestionReport,
     Synonym,
     SynonymCreate,
-    SynonymError,
     SynonymLevel,
     SynonymList,
     SynonymNotFound,
+    SynonymProblem,
     SynonymQuery,
+    TaxonomyUnavailable,
     UnknownConcept,
+    UnsupportedSchema,
 )
 from ..synonyms.models import SynonymStatus
 from .security import data_roots
@@ -72,6 +81,21 @@ class SynonymReviewRequest(BaseModel):
     run_id: Text | None = None
 
 
+@contextmanager
+def _errors() -> Iterator[None]:
+    """Translate the use case's errors into HTTP statuses, so none of them surfaces as a 500."""
+    try:
+        yield
+    except (UnknownConcept, TaxonomyUnavailable, SynonymNotFound) as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except (DuplicateSynonym, ConflictingSynonym) as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except (UnsupportedSchema, sqlite3.Error) as exc:
+        raise HTTPException(status_code=503, detail=f"the synonym store is unavailable: {exc}") from exc
+    except ValueError as exc:  # SynonymError, validation, or the audit store refusing its schema
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
 @router.get("/synonyms")
 def get_synonyms(
     dataset: str | None = None, concept_level: SynonymLevel | None = None, concept_id: str | None = None,
@@ -87,90 +111,78 @@ def get_synonyms(
         )
     except ValidationError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
-    return use_cases.list_synonyms(query)
+    with _errors():
+        return use_cases.list_synonyms(query)
+
+
+@router.get("/synonyms/problems")
+def get_synonym_problems(run_id: str, dataset: str) -> list[SynonymProblem]:
+    """Approved synonyms of a past run's dataset that don't resolve as recorded (stale, shadowed or ambiguous)."""
+    with _errors():
+        return use_cases.synonym_problems(dataset, run_id=run_id)
 
 
 @router.get("/synonyms/resolve")
 def resolve_synonym(
     run_id: str, dataset: str, term: str, level: SynonymLevel | None = None,
-    within_level: ScopeLevel | None = None, within_id: str | None = None,
+    within_level: SynonymLevel | None = None, within_id: str | None = None,
 ) -> Resolution:
     """What `term` means in a past run's dataset: `resolved`, `ambiguous` or `unknown`, with each match
-    flagged `via` name or synonym. `within_level`/`within_id` name the branch the lookup is made in."""
-    if (within_level is None) != (within_id is None):
-        raise HTTPException(status_code=422, detail="give both within_level and within_id, or neither")
-    within = (within_level, within_id) if within_level and within_id else None
-    try:
-        return use_cases.resolve_term(term, dataset=dataset, run_id=run_id, level=level, within=within)
-    except UnknownConcept as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-    except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    flagged `via` name or synonym. `within_level`/`within_id` name the branch the lookup is made in;
+    the use case checks them (both or neither; an unknown branch is 404)."""
+    with _errors():
+        return use_cases.resolve_term(term, dataset=dataset, run_id=run_id, level=level,
+                                      within_level=within_level, within_id=within_id)
 
 
 @router.post("/synonyms", status_code=201)
 def post_synonym(request: SynonymAddRequest) -> Synonym:
-    """Approve a synonym for one existing concept: 404 for an unknown run, dataset or concept,
-    409 if it is already a synonym of that concept or the term already means another concept
-    where it would apply, 422 for a refused term or a scope the concept isn't in."""
+    """Approve a synonym for one existing concept (see the module docstring for statuses)."""
     create = SynonymCreate.model_validate(request.model_dump(exclude={"run_id"}))
-    try:
+    with _errors():
         return use_cases.add_synonym(create, run_id=request.run_id)
-    except UnknownConcept as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-    except (DuplicateSynonym, ConflictingSynonym) as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
-    except SynonymError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @router.post("/synonyms/suggest", status_code=201)
 def suggest_synonyms(request: SynonymSuggestRequest) -> SuggestionReport:
     """Store one source's suggestions as `proposed` synonyms: 403 for a file outside the data roots,
-    404 for an unknown run or dataset, 422 for an unknown source or a missing/unexpected file."""
+    404 for an unknown run or dataset, 422 for an unknown source, a missing/unexpected file or one that
+    can't be read."""
     if request.path is not None and not any(
         Path(request.path).resolve().is_relative_to(root) for root in data_roots()
     ):
         raise HTTPException(status_code=403, detail="path is outside the allowed data directories")
-    try:
-        return use_cases.suggest_synonyms(
-            request.source, dataset=request.dataset, run_id=request.run_id, path=request.path, actor=request.actor,
-        )
-    except UnknownConcept as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-    except (OSError, ValueError) as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    with _errors():
+        try:
+            return use_cases.suggest_synonyms(
+                request.source, dataset=request.dataset, run_id=request.run_id, path=request.path,
+                actor=request.actor,
+            )
+        except OSError as exc:  # the file to read is missing or unreadable
+            raise ValueError(f"{request.path} couldn't be read: {exc}") from exc
 
 
 @router.post("/synonyms/{synonym_id}/approve")
 def approve_synonym(synonym_id: str, request: SynonymReviewRequest) -> Synonym:
-    """Approve a proposed synonym after the same checks as adding one: 404 for no such proposal or an unknown
-    run/concept, 409 when the term already means another concept, 422 without `run_id`."""
+    """Approve a proposed synonym after the same checks as adding one (see the module docstring);
+    422 without `run_id`, the taxonomy it is checked against."""
     if request.run_id is None:
         raise HTTPException(status_code=422, detail="approving needs run_id: the taxonomy it is checked against")
-    try:
+    with _errors():
         return use_cases.review_synonym(
             synonym_id, approve=True, reason=request.reason, actor=request.actor, run_id=request.run_id,
         )
-    except (SynonymNotFound, UnknownConcept) as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-    except (DuplicateSynonym, ConflictingSynonym) as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
 @router.post("/synonyms/{synonym_id}/reject")
 def reject_synonym(synonym_id: str, request: SynonymReviewRequest) -> Synonym:
     """Reject a proposed synonym; it is kept so the same suggestion isn't offered again. 404 for no such proposal."""
-    try:
+    with _errors():
         return use_cases.review_synonym(synonym_id, approve=False, reason=request.reason, actor=request.actor)
-    except SynonymNotFound as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @router.post("/synonyms/{synonym_id}/remove")
 def remove_synonym(synonym_id: str, request: SynonymRemoveRequest) -> Synonym:
     """Mark an approved synonym removed (its row and history are kept): 404 if there is none."""
-    try:
+    with _errors():
         return use_cases.remove_synonym(synonym_id, reason=request.reason, actor=request.actor)
-    except SynonymNotFound as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc

@@ -22,7 +22,8 @@ from .proposals.screening import (
     service_ids_by_name,
 )
 
-EXACT_MATCH_TYPES = {"normalized_name", "match_key"}
+# An approved synonym identifies an existing concept as surely as its name does (#60).
+EXACT_MATCH_TYPES = {"normalized_name", "match_key", "synonym"}
 
 
 # Canonicalize hierarchy decisions and reject stale proposal IDs or conflicting actions.
