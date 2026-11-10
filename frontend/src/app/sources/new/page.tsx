@@ -1,20 +1,17 @@
-import { Notice, PageHeader } from "@/components/layout/page-header";
+import { PageHeader } from "@/components/layout/page-header";
 
-export default function NewSourcePage() {
+import { NewRoundForm } from "./new-round-form";
+
+export default async function NewRoundPage({ searchParams }: PageProps<"/sources/new">) {
+  const { round } = await searchParams;
   return (
     <div className="flex max-w-5xl flex-col gap-8">
       <PageHeader
-        eyebrow="Sources"
-        title="New data source"
-        description="Register a dataset and validate it against the existing taxonomy."
+        eyebrow="Enrichment"
+        title="New enrichment round"
+        description="Bring a new source into the taxonomy: add its files, say how to read them, then run the pipeline."
       />
-      {/* TODO: form backed by `useSourceDraftStore` (datasets + metrics), validated with
-          `pipelineConfigSchema`, submitted with `useCreateRun`, then redirect to /runs/[runId]. */}
-      <Notice title="Not available in the dashboard yet">
-        Import a source from the command line with{" "}
-        <code className="font-mono text-foreground">taxonomy-pipeline import-source</code>, then score it with{" "}
-        <code className="font-mono text-foreground">taxonomy-pipeline run</code>.
-      </Notice>
+      <NewRoundForm roundId={typeof round === "string" ? round : null} />
     </div>
   );
 }

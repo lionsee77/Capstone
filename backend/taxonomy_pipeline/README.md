@@ -74,7 +74,7 @@ taxonomy_pipeline/
 │   ├── providers/                    # what is specific to one external source
 │   │   ├── base.py                   #   SourceProvider ABC: per-tag context and display name for Case B
 │   │   ├── registry.py               #   PROVIDERS by name; `case-b --provider`
-│   │   ├── skillsfuture.py           #   SkillsFuture: tag-ID offset, unique-skills workbook context
+│   │   ├── models.py                 #   validated context snapshot and content hash
 │   │   └── tag_context.py            #   any `import-source` source: context from its <name>_tag_context.json
 │   ├── enrichment/                   # Case A/B producers and the merge stages (see "Classification workflow")
 │   │   ├── models.py                 #   ClassificationOutput contract + every stage's report model
@@ -87,6 +87,7 @@ taxonomy_pipeline/
 │   │   ├── deduplication.py          #   merge 2: group hierarchy paths, suggest duplicate tag pairs
 │   │   ├── resolution.py             #   merge 3: apply review decisions, assign temporary IDs
 │   │   ├── review.py                 #   hierarchy decisions applied to screened proposals
+│   │   ├── review_queue.py           #   held tags and proposals with their evidence, for dashboard review
 │   │   ├── review_view.py            #   saved proposal review view behind `review-proposals` and /proposals
 │   │   ├── change_log.py             #   retain submitted decisions in the legacy JSONL handoff
 │   │   ├── audit.py                  #   review/snapshot evidence -> durable shared audit events
@@ -110,6 +111,7 @@ taxonomy_pipeline/
 │   │   ├── comparison.py             #   compare / compare_runs; Markdown, CSV and JSON exports
 │   │   ├── lineage.py                #   taxonomy_lineage: stages, chains and the runs that scored them
 │   │   ├── enrichment.py             #   case_a, case_b, merge_preview, review_proposals, bulk_decide, integrate
+│   │   ├── rounds.py                 #   a whole enrichment round as tracked background stages (/rounds)
 │   │   ├── browse.py                 #   taxonomy search/detail over a past run's dataset (/taxonomy)
 │   │   ├── lookup.py                 #   lookup_term: does a term exist in the newest snapshot? (/lookup)
 │   │   └── sources.py                #   import_source: flat source -> dump, tag context, next round's config
@@ -121,6 +123,7 @@ taxonomy_pipeline/
 │   ├── api/
 │   │   ├── app.py                    #   FastAPI: /metrics, /runs (incl. compare), /taxonomy routes over app/
 │   │   ├── proposals.py              #   /proposals: which merge runs a request may read, over app.enrichment
+│   │   ├── rounds.py                 #   /rounds: which folders a round may use, over app.rounds
 │   │   ├── lineage.py                #   /lineage: which integrations and merge roots it reads, over app.lineage
 │   │   ├── lookup.py                 #   /lookup: which integrations root it reads, over app.lookup
 │   │   ├── changes.py                #   authenticated, read-only GET /changes over app.changes
@@ -169,7 +172,7 @@ field in `resolution.json`. Paths below are under `src/taxonomy_pipeline/`.
 | Loading `backend/.env` | three places | `env.py` only (via `llm.py` for the LLM) |
 | Service/category/speciality id lookups | rebuilt in saturation, Case A, `/taxonomy`, Case B | `TaxonomyDataset.hierarchy()` in `taxonomy/base.py` |
 | Name normalisation | `integrity.normalize`, `saturation.match_key`, `integrate._collation_key` | `matching/names.py` (`normalize`, `match_key`, `collation_key`; its docstring says which stage uses which) |
-| SkillsFuture specifics (`TAG_ID_OFFSET`, unique-skills workbook) | `classification/case_b.py`, `cli.py` | `providers/skillsfuture.py`, behind `providers/base.py` + `registry.py` |
+| SkillsFuture workbook parsing and tag numbering | `classification/case_b.py`, `cli.py` | standalone SkillsFuture generator; Case B reads its JSON through `providers/tag_context.py` |
 | `InputLocation`, `SourceTagRef`, `HierarchyGroup` | root `models.py` | `enrichment/models.py` |
 | Classification placement path | `TaxonomyPath` in `classification/models.py` | `PlacementPath` in `enrichment/models.py` (the API's `TaxonomyPath` keeps its name) |
 | Why a tag is pending | text prefix "Producer requested review" | `SourceDisposition.reason_codes` |
@@ -205,7 +208,7 @@ taxonomy_pipeline.pipeline            -> taxonomy_pipeline.app.scoring
 
 **Changed calls**
 
-- `case-b` takes `--provider` (default: the `--incoming` dataset name) and
+- `case-b` takes `--provider` (default: `tag_context`) and
   `--context` (`--unique` still works); `run_case_b(provider=..., context=...)`
   replaces `unique_skills=...`.
 - `experiments/evaluate_case_b.py` takes `--config` and `--baseline <dataset
@@ -252,7 +255,8 @@ Run from `backend/taxonomy_pipeline/` (the commands default to
 ```bash
 taxonomy-pipeline run --config configs/original_vs_skillsfuture.yaml --output judged_report.json  # needs .[llm] + key
 taxonomy-pipeline case-a --report judged_report.json
-taxonomy-pipeline case-b --report judged_report.json        # needs .[llm] and OPENAI_API_KEY
+taxonomy-pipeline case-b --report judged_report.json --provider tag_context \
+    --context ../skillsfuture/skillsfuture_tag_context.json  # needs .[llm] and OPENAI_API_KEY
 taxonomy-pipeline merge-preview --input case_a_output.json --input case_b_output.json
 # optionally draft decisions for the clear-cut ambiguous tags, then review the rest:
 taxonomy-pipeline bulk-decide --merge-run merge_runs/<timestamp> --report judged_report.json \
@@ -305,20 +309,27 @@ stages' rules and the review-decision format are in the
 
 ### Case B (LLM classification)
 
-Case B's SkillsFuture provider mirrors the standalone generator's tag numbering.
-An end-to-end regression test checks the generated IDs and titles against the
-provider's contexts, including blank titles and whitespace normalization.
+SkillsFuture and generic imports both use the JSON-based `tag_context` reader.
+The standalone SkillsFuture generator writes SQL and context JSON together,
+using the exact same tag IDs. There is no separate SkillsFuture provider;
+all sources use the same JSON reader without reconstructing IDs.
+Regenerate SkillsFuture once with `python skillsfuture/generate_skillsfuture_taxonomy.py`
+from `backend/` to create `skillsfuture_tag_context.json`. Run Case B with
+`--provider tag_context --context ../skillsfuture/skillsfuture_tag_context.json`.
 
 `case-b` asks an OpenAI model to place each parentless new tag into the
 baseline's existing categories and specialities, or to propose a new one,
 using the incoming source's context for each tag. That comes from the source's
-provider (`--provider`, defaulting to the `--incoming` dataset name; see
-`providers/`): for SkillsFuture, the unique-skills workbook's skill
-descriptions (`--context`, or the older `--unique`, defaulting to the one in
-`backend/skillsfuture/`); for a source added with `import-source`, the
+provider (`--provider`, defaulting to `tag_context`; see
+`providers/`): for SkillsFuture, the generator's `skillsfuture_tag_context.json`
+in `backend/skillsfuture/` supplies skill ID, title, description and type;
+explicit workbook paths passed through `--context` or `--unique` must now point
+to this JSON instead. For a source added with `import-source`, use the
 `tag_context` provider and the `<name>_tag_context.json` it wrote
 (`--provider tag_context --context <file>`; the prompt names the source by the
-file's `display_name`). Both taxonomies come from
+file's `display_name`). SkillsFuture also supports this explicit generic form:
+`--provider tag_context --context ../skillsfuture/skillsfuture_tag_context.json`.
+Keep the SQL and context file from the same generator/import run. Both taxonomies come from
 the pipeline config, the same datasets saturation and Case A use. Install the
 optional dependencies and set the key in `backend/.env` (copy
 `backend/.env.example`):
@@ -331,6 +342,14 @@ pip install -e ".[dev,llm]"
 OPENAI_API_KEY=your-openai-api-key
 OPENAI_MODEL=gpt-4o-mini
 ```
+
+`--context` is required and checked before loading datasets. Its `source` must
+equal `--incoming`; both supported generators write that metadata. Any context
+title supplied for an incoming tag must match its taxonomy title (ignoring
+case and whitespace), otherwise the run stops before API calls. Missing context
+coverage warns and falls back to tag names. Description-only legacy context
+also warns when titles cannot be checked; it cannot establish ID/title alignment.
+The provider reads one snapshot so validation, prompt data and hashing agree.
 
 Options: `--batch-size` (default 5), `--model`, `--debug-response` (also
 shows the endpoint, model and each raw response; Case B logs its progress to
@@ -347,6 +366,10 @@ to reclassify those tags. Each record also carries an `action`:
 `assign_existing`, `propose_new_speciality` or `propose_new_category`.
 The checkpoint also records `context_schema_version`; checkpoints made before
 the corrected skill-context mapping are rejected instead of reusing old proposals.
+It additionally records the exact context file's SHA-256, provider and source
+display name. Editing the context (including metadata) rejects an old checkpoint
+before model initialization. Older checkpoints lacking these fields must be
+restarted with a new checkpoint path or deliberately removed after inspection.
 
 Each batch makes at most three API attempts, with SDK retries disabled on the
 Case B client built by the pipeline. Injected clients keep their own settings;
@@ -956,6 +979,10 @@ taxonomy-pipeline import-source --mapping ../onet/onet_mapping.yaml \
 - It writes `<name>_taxonomy.sql` and `<name>_tag_context.json` next to the
   mapping (`--out-dir` to change), then reloads the dump through `sql_dump` and
   fails unless every row reads back unchanged.
+  Context entries include the generated tag's canonical title alongside its
+  description, allowing Case B to reject mismatched titles before model calls.
+  Regenerate older context files with `import-source` to include these titles;
+  keep the SQL and context JSON from the same import run.
 - Categories are unique per (service, name), specialities per name within a
   category, tags per name across the source; a tag under several specialities
   gets one row and several links. Tag names are compared the way the client
@@ -1712,6 +1739,8 @@ the token, so use curl or the dashboard to call endpoints.
   several taxonomies needs its subject named (422 otherwise).
 - `GET /lineage` - the enrichment lineage as JSON (`TaxonomyLineage`); see
   "Enrichment lineage" below. It takes no parameters.
+- `/rounds` - run a whole enrichment round from the dashboard. See "Run a round
+  from the API" below.
 - `GET /proposals?merge_run=&level=&offset=&limit=` and
   `GET /proposals/{proposal_id}?merge_run=` - saved hierarchy proposals with
   parent branches, matching evidence and decisions (see the #58 review view above).
@@ -1729,6 +1758,75 @@ the token, so use curl or the dashboard to call endpoints.
   rather than an error, the same row `integrity` would report as an orphan.
 - `GET /lookup?q=&level=&limit=&min_score=&semantic=&snapshot=` - does a proposed
   term already exist? See "Tag lookup" below. It needs no run ID.
+
+### Run a round from the API
+
+`/rounds` runs what "Next round" above does by hand, as stages a dashboard can follow:
+import -> score -> Case A -> Case B -> merge preview -> review -> integrate -> score the
+snapshot. It adds no pipeline logic: each stage calls the use case its CLI command calls
+(`app/rounds.py`). A round's inputs and intermediates live in `rounds/<round_id>/`
+(gitignored), while its merge run and snapshot go to `merge_runs/<round_id>` and
+`integrations/<round_id>`, so `/lineage`, `/proposals` and the Docker loader treat it like
+a hand-run round.
+
+| Route | What it does |
+|---|---|
+| `GET /rounds/options` | Snapshots to build on, services, LLM availability, saturation defaults |
+| `GET /rounds`, `GET /rounds/{id}` | Round state: overall `status`, and each stage's status, summary and error |
+| `POST /rounds` | Create a round: `{round_id, baseline_snapshot}` |
+| `PUT /rounds/{id}/files/{name}` | Upload a `.csv`, `.tsv`, `.xlsx` or `.xlsm` as the raw body, up to 50 MB |
+| `GET /rounds/{id}/files`, `GET /rounds/{id}/files/{name}?sheet=` | Each file's sheets, columns, row count and sample values |
+| `DELETE /rounds/{id}/files/{name}` | Remove an uploaded file |
+| `PUT /rounds/{id}/config` | Save `{mapping, settings}`: imports the source and writes the round config |
+| `GET /rounds/{id}/config` | The generated round config, as text |
+| `POST /rounds/{id}/run` | Run or resume the stages before review, in the background |
+| `GET /rounds/{id}/review?state=&q=&offset=&limit=` | The review queue: `undecided`, `decided` or `all` tags, plus proposals |
+| `POST /rounds/{id}/decisions` | Save `{reviewer, decisions, clear_tags, clear_proposals}` |
+| `POST /rounds/{id}/bulk-decide` | Draft clear-cut decisions: `{reviewer, create_below, reuse_above}` |
+| `POST /rounds/{id}/apply` | Rebuild the merge preview with the saved decisions, in the background |
+| `POST /rounds/{id}/integrate` | Generate the snapshot and score it, in the background |
+| `DELETE /rounds/{id}` | Remove a round and what it produced |
+
+- **`mapping`** is the `SourceMapping` from "Next round", except that `source` and any
+  `labels` must name files uploaded to this round. A mapping that fails (422 with the
+  reason) leaves the last good import in place. Saving a new one discards later progress,
+  including decisions, because they described the old source.
+- A source can't be named `enriched`, because that names the finished snapshot in the round's comparison.
+- **`settings`** has `judge`, `case_b` and saturation's `threshold`, `semantic_threshold`,
+  `add_candidate_lexical_threshold` and `add_candidate_semantic_threshold`. Unset values keep the
+  template's (`configs/original_vs_skillsfuture.yaml`). Nothing else can be set, so a
+  caller can't choose a judge model or cache path.
+- **LLM steps** are off unless the server sets `TAXONOMY_ALLOW_LLM=true` and has a real
+  `OPENAI_API_KEY`. With the judge off, more tags reach review. With Case B off, new tags
+  without a parent are left out of the round, with a warning. Judge verdicts are cached
+  in `judge_cache_<source>.json` beside `rounds/`, so rerunning a source reuses them.
+  `POST /runs` still refuses judge settings.
+- **Review:** the queue lists tags `merge-preview` is holding, with the reason, every proposed
+  placement and saturation's closest matches, plus hierarchy proposals screening is holding.
+  `decisions` are the same `ReviewDecision` records as a hand-edited file, and each replaces any
+  earlier one on that tag or proposal. Saving only writes `rounds/<id>/decisions.json`. `apply`
+  runs them through `merge-preview`, which has the last word: a decision it refuses fails the
+  stage with the reason, and the saved decisions stay to be corrected. A `create` on a path
+  screening still blocks leaves the tag pending. `reviewer` is self-reported, like `--actor`, and
+  is what the audit history records. `bulk-decide` is the CLI's, and only drafts: its decisions are
+  saved and can be changed before applying. It reads saved decisions, so apply yours first.
+- **Integrate** is refused while a tag is pending or decisions are unapplied. Deferred and
+  excluded tags don't hold it up, and they aren't in the snapshot. It then scores the baseline and
+  the snapshot in one run (`enriched_run_id`), so they compare like for like through
+  `GET /runs/{id}/compare/{id}?before_subject=round_baseline&after_subject=enriched`, and the round
+  appears on the dashboard's Improvement page. With the judge on, that scoring uses it again.
+- **Changing files:** replacing or removing a file the imported mapping reads, with different
+  contents, sends the round back to `setup` and discards what was built from it, including saved
+  decisions. Import it again to continue; the saved mapping stays. Uploading the same bytes again, or a
+  file the mapping doesn't use, changes nothing.
+- **Resuming:** `POST /rounds/{id}/run` skips finished stages, so a retry never repeats a
+  paid step. A stage still marked running after a server restart reads back as failed.
+- **Removing:** only rounds made through `/rounds` can be removed, and not one that is
+  running or that a later round builds on. Stored runs and audit events remain.
+- **`status`:** `setup`, `ready`, `running`, `failed`, `review`, `ready_to_integrate` or `complete`.
+
+Set `TAXONOMY_ROUNDS_ROOT` to keep rounds elsewhere. Uploads are limited to 20 files per round.
+A source split across linked files still needs a script to flatten it first (#118).
 
 ### Enrichment lineage
 
@@ -2209,6 +2307,10 @@ Ruff linting and the test suite run in CI (see the root
 `.github/workflows/ci.yml`).
 
 ## Known gaps
+
+- **One model at a time:** `embeddings.MODEL_LOCK` makes every sentence-model load and
+  encode take turns, because running them on two threads at once kills the process. A long
+  encode therefore delays any other request that needs a model.
 
 - **Ambiguous tags make a large review queue:** routing every
   `REVIEW_AMBIGUOUS` tag holds each one for a decision. A historical lexical-only
