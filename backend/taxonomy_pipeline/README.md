@@ -417,6 +417,14 @@ summary; `run.json.warning_count` records all run warnings, including missing
 input run stamps. Integration replay recomputes findings from source evidence
 and decisions, rather than trusting cached effective screening.
 
+The review queue's default `undecided` filter and count include only pending
+tags without a saved decision. Advisory accepted tags remain available under
+`all` for individual review, but are excluded from dashboard bulk selection
+and bulk actions. `proposals_undecided` counts only proposals with screening
+status `review` and no saved decision; accepted advisory proposals remain
+visible as context. `decided` counts saved decisions, so advisory context can
+make the `all` total larger than `undecided + decided`.
+
 Warnings do not merge nodes, choose a parent, change `needs_review`, add review
 holds, or alter approvals, counts, completeness or exit status. They remain
 visible when reviewers approve both new paths. Resolve the repeated-name policy

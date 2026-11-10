@@ -19,6 +19,7 @@ import {
   reusableMatches,
   reuseCandidates,
   tagDecision,
+  tagNeedsDecision,
   type TagAction,
 } from "@/lib/review";
 import { useDebouncedValue } from "@/lib/use-debounced-value";
@@ -62,7 +63,8 @@ export function ReviewPanel({ round }: { round: RoundState }) {
     setSelected(new Set());
   }
 
-  const selectedTags = (queue?.tags ?? []).filter((tag) => selected.has(tag.source.tag_id));
+  const selectableTags = (queue?.tags ?? []).filter(tagNeedsDecision);
+  const selectedTags = selectableTags.filter((tag) => selected.has(tag.source.tag_id));
   const canEdit = named && !locked && !save.isPending;
 
   return (
@@ -101,6 +103,7 @@ export function ReviewPanel({ round }: { round: RoundState }) {
           <p className="text-sm text-muted-foreground">
             Held proposals need a decision before tags can be created under them.
             Repeated-name warnings are advisory and remain visible when both paths are approved.
+            Automatically accepted tags are available under All for individual review.
           </p>
           {queue.repeated_names.map((warning) => (
             <Notice key={`${warning.code}:${warning.name}`} title={`Repeated name: ${warning.name}`}>
@@ -140,15 +143,16 @@ export function ReviewPanel({ round }: { round: RoundState }) {
             />
           </div>
 
-          {queue.tags.length > 0 && (
+          {selectableTags.length > 0 && (
             <div className="flex flex-wrap items-center gap-2 rounded-md border border-border bg-muted/50 p-3">
               <label className="flex items-center gap-2 text-sm">
                 <input
                   type="checkbox"
-                  checked={selectedTags.length === queue.tags.length}
-                  onChange={(e) => setSelected(new Set(e.target.checked ? queue.tags.map((tag) => tag.source.tag_id) : []))}
+                  disabled={!canEdit}
+                  checked={selectedTags.length === selectableTags.length}
+                  onChange={(e) => setSelected(new Set(e.target.checked ? selectableTags.map((tag) => tag.source.tag_id) : []))}
                 />
-                Select this page ({selectedTags.length} selected)
+                Select pending tags on this page ({selectedTags.length} selected)
               </label>
               <Input
                 aria-label="Reason for selected tags"
@@ -180,7 +184,7 @@ export function ReviewPanel({ round }: { round: RoundState }) {
             <TagCard
               key={`${tag.source.source_dataset}-${tag.source.tag_id}`}
               tag={tag}
-              selected={selected.has(tag.source.tag_id)}
+              selected={tagNeedsDecision(tag) && selected.has(tag.source.tag_id)}
               disabled={!canEdit}
               onToggle={(checked) => {
                 const next = new Set(selected);
@@ -321,11 +325,15 @@ function TagCard({
           className="mt-1"
           aria-label={`Select ${tag.tag}`}
           checked={selected}
+          disabled={disabled || !tagNeedsDecision(tag)}
           onChange={(e) => onToggle(e.target.checked)}
         />
         <div className="flex flex-col gap-1">
           <h4 className="font-medium">{tag.tag}</h4>
           <p className="text-sm text-muted-foreground">{tag.reason}</p>
+          {tag.status === "accepted" && tag.decision === null && (
+            <p className="text-sm text-muted-foreground">Automatically accepted; review individually if needed.</p>
+          )}
         </div>
       </div>
       {tag.closest.length > 0 && (

@@ -23,7 +23,7 @@ const round = roundStateSchema.parse({
   status: "ready_to_integrate",
 });
 const queue = {
-  tags: [], total: 0, offset: 0, limit: 50, undecided: 0, decided: 0, proposals_undecided: 2,
+  tags: [], total: 0, offset: 0, limit: 50, undecided: 0, decided: 0, proposals_undecided: 0,
   proposals: ["Marine", "Retail"].map((category) => ({
     proposal_id: category, level: "speciality", name: "Navigation", path: ["Industry", category, "Navigation"],
     status: "new", reason: "No baseline match", blocks_creation: false, source_tags: 1, matches: [], decision: null,
@@ -41,6 +41,37 @@ describe("repeated names in the round review panel", () => {
     expect(html.match(/See the parent groups above/g)).toHaveLength(2);
     expect(html).toContain("Generate enriched snapshot");
     expect(html).toContain("Create new");
+    expect(html).toContain("0 to decide");
+    expect(html).not.toContain("Select pending tags on this page");
+  });
+
+  it("renders accepted context without bulk selection while leaving individual review available", () => {
+    state.queue = reviewQueueSchema.parse({ ...queue, total: 1, tags: [{
+      source: { source_dataset: "demo", tag_id: "1" }, tag: "Accepted skill", status: "accepted",
+      reason: "Automatically accepted", reason_codes: [], placements: [], closest: [], duplicates: [], decision: null,
+    }] });
+    const html = renderToStaticMarkup(createElement(ReviewPanel, { round }));
+    expect(html).toMatch(/<input[^>]*aria-label="Select Accepted skill"[^>]*disabled=""/);
+    expect(html).not.toContain("Select pending tags on this page");
+    expect(html).toContain("Automatically accepted; review individually if needed.");
+    expect(html).toMatch(/<button(?![^>]*\sdisabled=)[^>]*>Exclude<\/button>/);
+  });
+
+  it("offers bulk selection only for pending undecided tags on a mixed page", () => {
+    state.queue = reviewQueueSchema.parse({ ...queue, total: 3, undecided: 1, decided: 1, tags: [
+      { name: "Pending skill", status: "pending", decision: null },
+      { name: "Accepted skill", status: "accepted", decision: null },
+      { name: "Decided skill", status: "pending", decision: { action: "defer", reason: "Later" } },
+    ].map(({ name, status, decision }) => ({
+      source: { source_dataset: "demo", tag_id: name }, tag: name, status,
+      reason: "Fixture", reason_codes: [], placements: [], closest: [], duplicates: [], decision,
+    })) });
+    const html = renderToStaticMarkup(createElement(ReviewPanel, { round }));
+    expect(html).toContain("Select pending tags on this page");
+    expect(html).toMatch(/<input(?![^>]*\sdisabled=)[^>]*aria-label="Select Pending skill"/);
+    for (const name of ["Accepted", "Decided"]) {
+      expect(html).toMatch(new RegExp(`<input[^>]*aria-label="Select ${name} skill"[^>]*disabled=""`));
+    }
   });
 
   it("keeps older queues readable and removes collision notices after the cluster clears", () => {

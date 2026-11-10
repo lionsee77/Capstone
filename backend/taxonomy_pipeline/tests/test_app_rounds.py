@@ -589,29 +589,65 @@ def _decide_all(roots: rounds.RoundRoots, round_id: str) -> None:
     rounds.run_stages(roots, round_id, stages)
 
 
-# Applying a partial path choice refreshes persisted queue findings and removes stale round advisories.
-def test_round_review_surfaces_and_clears_repeated_names(roots: rounds.RoundRoots, configured: str) -> None:
+@pytest.mark.parametrize("pending", [False, True])
+# Advisory context stays out of pending counts and filters, and individual choices can still clear collisions.
+def test_round_review_surfaces_and_clears_repeated_names(
+    roots: rounds.RoundRoots, configured: str, pending: bool,
+) -> None:
     _run(roots, configured)
     directory = roots.directory(configured)
     rows = [dict(
         source_dataset="demo", tag_id="999", tag="Deep Welding", original_classification="classified",
         service="Industry", category=category, speciality="Navigation", reason="Fixture", confidence=0.8,
     ) for category in ("Marine", "Retail")]
+    if pending:
+        rows.append(dict(rows[0], tag_id="1000", tag="Welding Assessment", needs_review=True))
     (directory / "case_a.json").write_text(json.dumps(rows), encoding="utf-8")
     _, stages = rounds.start_apply(roots, configured)
     rounds.run_stages(roots, configured, stages)
     queue = rounds.get_review(roots, configured)
     assert len(queue.repeated_names) == 1
     assert {item.proposal_id for item in queue.proposals} == set(queue.repeated_names[0].proposal_ids)
+    assert queue.total == queue.undecided == int(pending) == rounds.get_round(roots, configured).pending_sources
+    assert all(item.status == "pending" for item in queue.tags)
+    assert queue.proposals_undecided == queue.decided == 0
+    context = rounds.get_review(roots, configured, state="all")
+    assert context.total == 1 + int(pending)
+    assert next(item for item in context.tags if item.source.tag_id == "999").status == "accepted"
+    assert rounds.get_review(roots, configured, query="Deep").total == 0
+    assert rounds.get_review(roots, configured, state="all", query="Deep", limit=1).total == 1
+    assert rounds.get_review(roots, configured, state="all", offset=context.total).tags == []
+    assert rounds.get_review(roots, configured, state="decided").tags == []
     assert any(item.startswith("warning.repeated_") for item in rounds.get_round(roots, configured).warnings)
     rounds.save_decisions(roots, configured, "Reviewer", [ReviewDecision(
         members=[SourceTagRef(source_dataset="demo", tag_id="999")], action="create", reason="Choose one path",
         approved_paths=[PlacementPath(service="Industry", category="Marine", speciality="Navigation")],
     )])
+    decided = rounds.get_review(roots, configured, state="decided")
+    assert decided.total == decided.decided == 1
+    assert decided.undecided == int(pending)
     _, stages = rounds.start_apply(roots, configured)
     rounds.run_stages(roots, configured, stages)
     assert rounds.get_review(roots, configured).repeated_names == []
     assert not any(item.startswith("warning.repeated_") for item in rounds.get_round(roots, configured).warnings)
+
+
+# Proposal counts distinguish a screening hold from automatically accepted advisory context and saved choices.
+def test_only_held_undecided_proposals_count_as_review_work(roots: rounds.RoundRoots, configured: str) -> None:
+    _run(roots, configured)
+    path = roots.directory(configured) / rounds.QUEUE_FILE
+    evidence = json.loads(path.read_text(encoding="utf-8"))
+    evidence["proposals"] = [dict(
+        proposal_id=status, level="speciality", name=status, path=["Industry", "Marine", status],
+        status=status, reason="Fixture", blocks_creation=status == "review", source_tags=1,
+    ) for status in ("new", "reuse", "review")]
+    path.write_text(json.dumps(evidence), encoding="utf-8")
+    queue = rounds.get_review(roots, configured)
+    assert len(queue.proposals) == 3 and queue.proposals_undecided == 1
+    rounds.save_decisions(roots, configured, "Reviewer", [
+        ReviewDecision(proposal_id="review", action="defer", reason="Later"),
+    ])
+    assert rounds.get_review(roots, configured).proposals_undecided == 0
 
 
 def test_the_queue_lists_held_tags_with_their_reason_placements_and_matches(
