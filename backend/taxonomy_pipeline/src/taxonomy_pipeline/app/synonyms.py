@@ -1,5 +1,5 @@
-"""Synonym use cases shared by the CLI (`synonym-add`, `synonym-remove`, `synonyms`, `synonym-check`)
-and the `/synonyms` routes.
+"""Synonym use cases shared by the CLI (`synonym-add`, `synonym-remove`, `synonyms`, `synonym-check`,
+`synonym-resolve`) and the `/synonyms` routes.
 
 Adding a synonym first checks the concept exists in the named taxonomy, found either
 through a config file (the CLI) or through a past run's config (the API, the same
@@ -11,6 +11,10 @@ was checked against. Neither path writes to a taxonomy file.
 Finding the taxonomy fails one of two ways, kept apart so a broken setup isn't reported
 as a missing concept: UnknownConcept (no such run, dataset or concept) and
 TaxonomyUnavailable (the config can't be read, or the dataset's files can't be loaded).
+
+`resolve_term` answers "what does this term mean here?" from the live approved
+synonyms (#60). `export_synonyms` freezes them into a `synonym_set` file, which is
+what a scoring config names: scores must not move when a reviewer approves a synonym.
 """
 from __future__ import annotations
 
@@ -21,12 +25,16 @@ import yaml
 from ..config import load_config
 from ..enrichment.resolution import taxonomy_snapshot_id
 from ..synonyms import (
+    InvalidScope,
+    Resolution,
     Synonym,
     SynonymCreate,
     SynonymIndex,
+    SynonymLevel,
     SynonymList,
     SynonymProblem,
     SynonymQuery,
+    SynonymSet,
     TaxonomyUnavailable,
     UnknownConcept,
     approved_synonyms,
@@ -78,6 +86,50 @@ def synonym_problems(dataset: str, *, config_path: str | Path | None = None,
     another concept's name or that two concepts share, e.g. from before the #61 rules existed."""
     taxonomy = _taxonomy(dataset, config_path=config_path, run_id=run_id)
     return SynonymIndex(taxonomy, approved_synonyms(dataset)).problems()
+
+
+def resolve_term(
+    term: str, *, dataset: str, config_path: str | Path | None = None, run_id: str | None = None,
+    level: SynonymLevel | None = None, within_level: str | None = None, within_id: str | None = None,
+) -> Resolution:
+    """What `term` means in `dataset`, through its concept names and approved synonyms.
+
+    `within_level`/`within_id` name the branch the lookup is made in (a category, speciality
+    or tag), which is what lets scoped synonyms apply: both or neither, and an unknown
+    branch is UnknownConcept. Find the taxonomy as `add_synonym` does.
+    """
+    if not term.strip():
+        raise ValueError("term must not be blank")
+    if (within_level is None) != (within_id is None):
+        raise ValueError("give both within_level and within_id, or neither")
+    taxonomy = _taxonomy(dataset, config_path=config_path, run_id=run_id)
+    index = SynonymIndex(taxonomy, approved_synonyms(dataset, term=term))
+    within = (within_level, within_id) if within_level is not None and within_id is not None else None
+    try:
+        return index.resolve(term, level=level, within=within)
+    except InvalidScope as exc:
+        raise UnknownConcept(str(exc)) from exc
+
+
+def export_synonyms(dataset: str, path: str | Path) -> SynonymSet:
+    """Write `dataset`'s approved synonyms to a new `synonym_set` file; an existing file is never overwritten.
+
+    A scoring config pins the file, so rewriting it in place would silently change what
+    that config scores: export to a new name (e.g. `synonyms_v2.json`) instead. A dataset
+    with no approved synonyms (a typo in its name, say) is refused rather than written as
+    an empty set that a config could pin.
+    """
+    path = Path(path)
+    if path.exists():
+        raise ValueError(f"{path} already exists; export to a new file so configs pinned to it keep their scores")
+    synonyms = approved_synonyms(dataset)
+    if not synonyms:
+        raise ValueError(f"{dataset!r} has no approved synonyms to export; check the dataset name")
+    exported = SynonymSet(name=path.stem, dataset=dataset, synonyms=[synonym.mapping() for synonym in synonyms])
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("x", encoding="utf-8") as stream:
+        stream.write(exported.model_dump_json(indent=2))
+    return exported
 
 
 def _taxonomy(dataset: str, *, config_path: str | Path | None, run_id: str | None) -> TaxonomyDataset:

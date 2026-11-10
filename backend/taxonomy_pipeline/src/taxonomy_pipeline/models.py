@@ -311,13 +311,16 @@ class LookupMatch(TaxonomyConceptSummary):
 
     `lexical_score` is a 0-100 spelling ratio and `semantic_score` a -1 to 1 cosine,
     present only when meaning matching was requested. Both are uncalibrated review
-    evidence (#47). `active` is false for a retired row, which is still returned: the
-    term does exist, and proposing it again would duplicate that row.
+    evidence (#47). A `synonym` match names the approved synonym the term matched; its
+    `lexical_score` is 100 because the term is that synonym, spelled alike (#60).
+    `active` is false for a retired row, which is still returned: the term does exist,
+    and proposing it again would duplicate that row.
     """
 
-    match_type: Literal["exact", "variant", "lexical", "semantic"]
+    match_type: Literal["exact", "variant", "lexical", "semantic", "synonym"]
     lexical_score: float
     semantic_score: float | None = None
+    synonym: str | None = None
     active: bool = True
     paths: list[TaxonomyPath] = Field(default_factory=list)
 

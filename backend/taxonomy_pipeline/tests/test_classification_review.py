@@ -261,3 +261,20 @@ def test_unknown_and_conflicting_hierarchy_decisions_fail(baseline: TaxonomyData
 def test_shared_decision_contract_rejects_mixed_or_incomplete_targets(changes: dict[str, Any]) -> None:
     with pytest.raises(ValidationError):
         ReviewDecision.model_validate(dict(proposal_id="proposal", action="create", reason="Reviewed") | changes)
+
+
+# A proposal matched to an existing concept through an approved synonym can't be created as a duplicate.
+def test_create_is_refused_when_an_approved_synonym_identifies_an_existing_concept(baseline: TaxonomyDataset) -> None:
+    from taxonomy_pipeline.enrichment.proposals.models import ScreeningSettings
+    from taxonomy_pipeline.taxonomy.synonym_set import SynonymMapping
+
+    dataviz = SynonymMapping(synonym_id="s", term="Dataviz", normalized_term="dataviz", term_key="dataviz",
+                             concept_level="specialities", concept_id="20", concept_name="Data visualization")
+    row = dict(source_dataset="feed", tag_id="1", tag="Fresh skill", original_classification="classified",
+               service="Subject", category="Computing", speciality="Dataviz", confidence=0.8, reason="Producer")
+    report = deduplicate_outputs(validate_outputs({"case.json": json.dumps([row])}, baseline))
+    original = resolve_outputs(report, baseline, screening_settings=ScreeningSettings(synonyms=[dataviz]))
+    assert next(p for p in original.screening.proposals if p.level == "speciality").matches[0].match_types == [
+        "synonym"]
+    with pytest.raises(ValueError, match="exact/equivalent"):
+        resolve_outputs(original.evidence, baseline, [decision(original)], screening=original.screening)

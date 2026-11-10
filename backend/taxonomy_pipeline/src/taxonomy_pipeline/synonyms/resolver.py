@@ -21,7 +21,9 @@ the wrong concept; `problems()` lists them with any ambiguous global synonyms.
 `check_new` enforces the rules that keep global synonyms unambiguous: a global
 synonym may not be another concept's name or another concept's global synonym, so a
 word with several meanings has to be scoped. The index is pure data, built from a
-taxonomy and the synonyms the caller loaded; it never reads storage itself.
+taxonomy and the synonyms the caller loaded (stored `Synonym` rows, of which only
+approved ones count, or `SynonymMapping`s from screening settings or an exported synonym
+set); it never reads storage itself.
 """
 from __future__ import annotations
 
@@ -33,6 +35,7 @@ from pydantic import BaseModel
 
 from ..matching.names import match_key
 from ..taxonomy.base import TaxonomyDataset
+from ..taxonomy.synonym_set import SynonymMapping
 from .models import AUDIT_LEVELS, Resolution, ResolvedConcept, Synonym, SynonymCreate
 from .store import SynonymError
 
@@ -63,7 +66,7 @@ class SynonymProblem(BaseModel):
 class SynonymIndex:
     """Concept names and fitting approved synonyms of one taxonomy, folded once for lookups."""
 
-    def __init__(self, taxonomy: TaxonomyDataset, synonyms: Iterable[Synonym] = ()) -> None:
+    def __init__(self, taxonomy: TaxonomyDataset, synonyms: Iterable[Synonym | SynonymMapping] = ()) -> None:
         self.taxonomy = taxonomy
         self.hierarchy = taxonomy.hierarchy()
         # Every row is a concept, named or not; a repeated ID is its last row, as in Hierarchy.
@@ -75,12 +78,14 @@ class SynonymIndex:
             name = row.get("name")
             if isinstance(name, str) and match_key(name):
                 self.names[match_key(name)].append((level, concept_id, name))
-        self.global_synonyms: dict[str, list[Synonym]] = defaultdict(list)
-        self.scoped_synonyms: dict[str, list[Synonym]] = defaultdict(list)
+        self.global_synonyms: dict[str, list[SynonymMapping]] = defaultdict(list)
+        self.scoped_synonyms: dict[str, list[SynonymMapping]] = defaultdict(list)
         self.stale: list[SynonymProblem] = []
         for synonym in synonyms:
-            if synonym.status != "approved":
-                continue
+            if isinstance(synonym, Synonym):
+                if synonym.status != "approved":
+                    continue
+                synonym = synonym.mapping()
             problem = self._misfit(synonym)
             if problem:
                 self.stale.append(_problem(synonym, problem))
@@ -131,7 +136,7 @@ class SynonymIndex:
                 return Resolution(term=term, status="resolved" if len(unique) == 1 else "ambiguous", matches=unique)
         return Resolution(term=term, status="unknown")
 
-    def check_new(self, request: SynonymCreate, existing: Iterable[Synonym] | None = None) -> None:
+    def check_new(self, request: SynonymCreate, existing: Iterable[Synonym | SynonymMapping] | None = None) -> None:
         """Refuse a synonym that would make a term ambiguous, or whose scope doesn't contain its concept.
 
         Global: the term may not already be another concept's name or global synonym.
@@ -144,7 +149,9 @@ class SynonymIndex:
         if existing is None:
             others = [s for group in (self.global_synonyms, self.scoped_synonyms) for s in group.get(key, [])]
         else:
-            others = [s for s in existing if s.status == "approved" and s.term_key == key and not self._misfit(s)]
+            mappings = [s.mapping() if isinstance(s, Synonym) else s for s in existing
+                        if not isinstance(s, Synonym) or s.status == "approved"]
+            others = [s for s in mappings if s.term_key == key and not self._misfit(s)]
         if request.scope is not None:
             if request.scope not in self.concepts:
                 raise InvalidScope(f"{self.taxonomy.name} has no {AUDIT_LEVELS[request.scope[0]]} "
@@ -190,7 +197,7 @@ class SynonymIndex:
                     found.append(_problem(synonym, f"ambiguous: a global synonym of {len(concepts)} concepts"))
         return found
 
-    def _misfit(self, synonym: Synonym) -> str | None:
+    def _misfit(self, synonym: SynonymMapping) -> str | None:
         """Why a stored synonym doesn't apply to this taxonomy, or None when it does."""
         row = self.concepts.get((synonym.concept_level, synonym.concept_id))
         if row is None:
@@ -202,12 +209,12 @@ class SynonymIndex:
         return None
 
 
-def _problem(synonym: Synonym, problem: str) -> SynonymProblem:
+def _problem(synonym: SynonymMapping, problem: str) -> SynonymProblem:
     return SynonymProblem(synonym_id=synonym.synonym_id, term=synonym.term, concept_level=synonym.concept_level,
                           concept_id=synonym.concept_id, concept_name=synonym.concept_name, problem=problem)
 
 
-def _via_synonym(synonym: Synonym) -> ResolvedConcept:
+def _via_synonym(synonym: SynonymMapping) -> ResolvedConcept:
     return ResolvedConcept(
         concept_level=synonym.concept_level, concept_id=synonym.concept_id, concept_name=synonym.concept_name,
         via="synonym", synonym_id=synonym.synonym_id, synonym_term=synonym.term,

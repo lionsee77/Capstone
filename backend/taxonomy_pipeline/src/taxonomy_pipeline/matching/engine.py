@@ -17,6 +17,7 @@ from typing import Any
 import numpy as np
 
 from ..taxonomy.base import TaxonomyDataset
+from ..taxonomy.synonym_set import SynonymMapping
 from .judge import NONE_CHOICE, JudgeCandidate, JudgeQuestion
 from .names import is_valid_name, lexical_scores, match_key, normalize
 from .semantic import SemanticMatcher
@@ -104,8 +105,35 @@ class KnownPool:
                                 "name": parent["name"], "normalized": normalize(str(parent["name"])),
                             })
 
+    def add_aliases(self, synonyms: Iterable[SynonymMapping]) -> tuple[int, list[SynonymMapping]]:
+        """Let each global synonym's term match the concept it names, as an exact match on that concept.
+
+        Only global synonyms apply: a scoped one needs the branch a term is used in, and an
+        incoming concept's branch belongs to another taxonomy. A synonym applies only where
+        the known taxonomy has its concept with the same ID and name; any other is dropped
+        and returned, so a set exported from another dataset can't attach terms to a
+        same-named but different concept. A term that is already a known name keeps its own
+        meaning. Returns how many terms were added, and the dropped synonyms.
+        """
+        added, dropped = 0, []
+        for synonym in synonyms:
+            if synonym.scope:
+                continue
+            known = self.by_level.get(synonym.concept_level)
+            concept = known.get(match_key(synonym.concept_name)) if known is not None else None
+            if concept is None or str(concept.get("id")) != synonym.concept_id:
+                dropped.append(synonym)
+                continue
+            alias = match_key(synonym.term)
+            if not alias or alias in known:
+                continue
+            known[alias] = concept
+            added += 1
+        return added, dropped
+
     def size(self) -> int:
-        return sum(len(known) for known in self.by_level.values())
+        """Known concepts, not keys: a synonym alias shares its concept's entry."""
+        return sum(len({id(entry) for entry in known.values()}) for known in self.by_level.values())
 
     def candidates(self, level: str, *, other_levels: bool) -> dict[str, tuple[str, dict[str, Any]]]:
         """Known concepts to compare a `level` concept against, as key -> (level, entry):

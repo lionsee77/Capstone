@@ -218,12 +218,18 @@ def list_synonyms(query: SynonymQuery, *, db_path: Path | str | None = None) -> 
     return result
 
 
-def approved_synonyms(dataset: str, *, db_path: Path | str | None = None) -> list[Synonym]:
-    """Every approved synonym of one dataset, oldest first, read without creating the database."""
+def approved_synonyms(
+    dataset: str, *, term: str | None = None, db_path: Path | str | None = None,
+) -> list[Synonym]:
+    """The approved synonyms of one dataset (only those whose term key is `term`'s, if given), oldest first,
+    read without creating the database. With `term` the read uses the `synonym_term` index."""
+    where, params = "status = 'approved' AND dataset = ?", (dataset,)
+    if term is not None:
+        where, params = where + " AND term_key = ?", (*params, match_key(term))
     with _reader(db_path) as connection:
         if connection is None:
             return []
-        return _rows(connection, "status = 'approved' AND dataset = ? ORDER BY created_at, synonym_id", (dataset,))
+        return _rows(connection, f"{where} ORDER BY created_at, synonym_id", params)
 
 
 def approved_with_key(connection: sqlite3.Connection, dataset: str, key: str) -> list[Synonym]:

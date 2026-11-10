@@ -21,6 +21,7 @@ from ..audit.models import Text
 from ..synonyms import (
     ConflictingSynonym,
     DuplicateSynonym,
+    Resolution,
     Synonym,
     SynonymCreate,
     SynonymLevel,
@@ -89,6 +90,19 @@ def get_synonym_problems(run_id: str, dataset: str) -> list[SynonymProblem]:
     """Approved synonyms of a past run's dataset that don't resolve as recorded (stale, shadowed or ambiguous)."""
     with _errors():
         return use_cases.synonym_problems(dataset, run_id=run_id)
+
+
+@router.get("/synonyms/resolve")
+def resolve_synonym(
+    run_id: str, dataset: str, term: str, level: SynonymLevel | None = None,
+    within_level: SynonymLevel | None = None, within_id: str | None = None,
+) -> Resolution:
+    """What `term` means in a past run's dataset: `resolved`, `ambiguous` or `unknown`, with each match
+    flagged `via` name or synonym. `within_level`/`within_id` name the branch the lookup is made in;
+    the use case checks them (both or neither; an unknown branch is 404)."""
+    with _errors():
+        return use_cases.resolve_term(term, dataset=dataset, run_id=run_id, level=level,
+                                      within_level=within_level, within_id=within_id)
 
 
 @router.post("/synonyms", status_code=201)

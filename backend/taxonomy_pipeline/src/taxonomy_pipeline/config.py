@@ -16,8 +16,8 @@ class DatasetConfig(BaseModel):
     """One taxonomy dataset to load, addressed by `name` from metric params.
 
     `type` selects a source implementation registered in `taxonomy/__init__.py`
-    ("sql_dump", "ssic", or "ssoc"). Classification sources require exactly
-    one workbook path. `table_map` remaps canonical concepts onto
+    ("sql_dump", "ssic", "ssoc" or "synonym_set"). Classification sources require
+    exactly one workbook path, and a synonym set one exported synonyms file. `table_map` remaps canonical concepts onto
     whatever the underlying tables are actually called, e.g. the SkillsFuture
     dump's `sf_categories` -> `categories`; concepts left out default to their
     own name.

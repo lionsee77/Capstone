@@ -37,6 +37,7 @@ taxonomy_pipeline/
 │   │   ├── __init__.py               #   source registry - register new `type:` values here
 │   │   ├── base.py                   #   TaxonomySource protocol, canonical TaxonomyDataset, its Hierarchy (parent lookups)
 │   │   ├── sql_dump.py               #   reads plain .sql dump files; sql_literal, the escaper every writer uses
+│   │   ├── synonym_set.py            #   `type: synonym_set`: a frozen export of approved synonyms (SynonymMapping)
 │   │   ├── flat_import.py            #   one mapped CSV/xlsx table -> 4-table dump + tag context (`import-source`)
 │   │   └── references/               #   classification references a taxonomy is measured against
 │   │       ├── workbook.py           #     the shared workbook loader and reference/record base models
@@ -1334,6 +1335,7 @@ Defaults come from `SaturationMetric.default_params`
 | `add_candidate_semantic_threshold` | 0.50 | ...and (with a model) the best meaning score below this; otherwise `REVIEW_AMBIGUOUS` | 0.50 |
 | `cross_level` | true | Also search the other levels of the known taxonomy | true |
 | `judge` | none (off) | Optional LLM judge for `REVIEW_AMBIGUOUS` concepts; see [Decisions API judge](#decisions-api-judge) | on: `gpt-6-luna`, `[tags]`, cache `judge_cache.json` |
+| `synonyms` | none (off) | Name of a `synonym_set` dataset: the baseline's global synonyms count as names of their concepts. Not in `default_params`, so definitions v1 and `baseline_v1.yaml` are unchanged; see [Synonyms](#synonyms-pb07) | none |
 
 ### Decisions API judge
 
@@ -1907,6 +1909,7 @@ taxonomy-pipeline lookup "Tax Advisory"    # run from backend/taxonomy_pipeline,
 | `variant` | `exact` | Same `match_key`: also `&`/`and`, `-isation`/`-ization` and a trailing plural |
 | `lexical` | `near` | RapidFuzz ratio on `match_key` of at least `min_score` |
 | `semantic` | `near` | Only with `semantic=true`: cosine of at least 0.7 |
+| `synonym` | `exact` | The term is an approved global synonym of the concept; `synonym` names it (#60) |
 
 | Param | Default | Meaning |
 |---|---|---|
@@ -1938,7 +1941,12 @@ Worth knowing when reading a result:
 - **Duplicate rows all come back:** a name held by several rows returns each one, and their
   `paths` show where each sits.
 - **Retired rows count as existing:** a row with `status` 0 is returned with `active: false`.
-  Synonyms (#60) and deprecation replacements (#64) aren't applied.
+  Deprecation replacements (#64) aren't applied.
+- **Synonyms:** approved *global* synonyms recorded against `TAXONOMY_SYNONYM_DATASET`
+  (default `original`; CLI `--synonym-dataset`, `''` to leave them out) count as exact
+  matches. A synonym only applies where the snapshot still has its concept ID with the
+  name it was recorded against. Scoped synonyms need the branch a term is used in, so
+  they don't apply here: use `synonym-resolve --within-level/--within-id`.
 
 ### Synonyms (PB07)
 
@@ -2043,17 +2051,63 @@ synonym with the reason, and exits 1 when there is any:
 
 ```bash
 taxonomy-pipeline synonym-check            # configs/baseline_v1.yaml, dataset original
-``` Lookups start using this in #60.
+```
 
 The table's schema is now version 2 (scope columns). A version 1 table from #59 is
 migrated on the next write, and its synonyms become global.
 
-What isn't built yet: lookups and scoring don't use synonyms (#60); suggested synonyms from external sources (ESCO, O*NET, spelling
-variants), which will arrive as `proposed` rows a reviewer approves or rejects. The
-`synonyms` context sits between `quality` and `matching`, so when #60 lands, the approved
-mappings are passed into matching as data rather than matching importing this context.
-The dashboard doesn't call `/synonyms` yet, so the proxy allowlist and zod schemas are
-unchanged.
+#### Where synonyms are used (#60)
+
+| Where | How | Synonyms |
+|---|---|---|
+| `synonym-resolve` / `GET /synonyms/resolve` | "What does this term mean here?": the resolver above, with `within_level`/`within_id` for the branch | live, global and scoped |
+| Tag lookup (`lookup`, `GET /lookup`) | a `synonym` match among the exact ones | live, global only |
+| Hierarchy screening (`merge-preview --synonyms`) | a proposal whose name is an approved synonym gets a `synonym` match, which counts as exact: within the same parent it is reused | live when screened; saved in `resolution.json`'s screening settings, so a replay uses the same ones |
+| Saturation (`synonyms:` param) | an incoming concept whose name is a global synonym is an exact match of that concept | frozen `synonym_set` file |
+
+```bash
+taxonomy-pipeline synonym-resolve "Assurance review"                    # live, against configs/baseline_v1.yaml
+curl -H "Authorization: Bearer $TAXONOMY_API_TOKEN" \
+    "http://localhost:8000/synonyms/resolve?run_id=<run>&dataset=original&term=Assurance%20review"
+taxonomy-pipeline merge-preview --input case_a_output.json --input case_b_output.json --synonyms
+taxonomy-pipeline synonyms --export configs/synonyms/synonyms_v1.json --dataset original   # freeze for scoring
+```
+
+**Why scoring reads a frozen file.** Live synonyms change whenever a reviewer approves
+one, so a config reading them would score differently next week. Saturation instead
+names a `synonym_set` dataset. Its `paths` resolve against the config's own directory,
+so a config in `configs/` reads the file exported to `configs/synonyms/` above:
+
+```yaml
+datasets:
+  - {name: synonyms_v1, type: synonym_set, paths: [synonyms/synonyms_v1.json]}
+metrics:
+  - id: saturation
+    params: {baseline: original, incoming: [skillsfuture], synonyms: synonyms_v1}
+```
+
+`--export` refuses to overwrite a file, so export each new set under a new name, and
+refuses a dataset with no approved synonyms (a mistyped name would otherwise pin an empty
+set); it can't be combined with the list filters. A synonym only applies where the
+baseline has its concept with the same ID and name: any other is dropped and listed in
+`details.synonyms.dropped` (with `exported_from`, the set's dataset), and the summary
+counts them, so a set exported from another taxonomy can't attach terms to a
+same-named but different concept. The
+`synonyms` param is part of the recorded settings, and `check-comparable` compares the
+synonym set's row counts (total, global, scoped) between two runs like any reference
+dataset, so a run with synonyms and one without are flagged as scored differently.
+Without the param, saturation is unchanged: `baseline_v1.yaml` and definitions v1 don't
+use synonyms. `integrate` copies the `synonyms` param and its dataset into
+`enriched.yaml` like any other dataset a round's metric reads. Only global synonyms
+apply to saturation, because an incoming concept's branch belongs to another taxonomy.
+
+The `synonyms` context sits between `quality` and `matching`: matching receives
+`SynonymMapping`s as data (`KnownPool.add_aliases`) and never imports it. The dashboard's
+zod schemas mirror the new `synonym` match types, screening settings and `synonym_set`
+dataset type; it doesn't call `/synonyms` yet, so the proxy allowlist is unchanged.
+
+What isn't built yet: suggested synonyms from external sources (ESCO, O*NET, spelling
+variants), which will arrive as `proposed` rows a reviewer approves or rejects.
 
 If the synonym store can't be used (an unreadable database, or a table written by another
 version) the routes answer 503. Every write recreates a missing table or index, and reads

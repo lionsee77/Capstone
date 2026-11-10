@@ -21,6 +21,7 @@ from typing import Literal, Self
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from ..audit.models import Text
+from ..taxonomy.synonym_set import SynonymMapping
 
 SynonymLevel = Literal["categories", "specialities", "tags"]
 # A scope is a branch a concept sits in: a category, or a speciality (for a tag).
@@ -85,6 +86,10 @@ class Synonym(_Scoped):
     removed_at: datetime | None = None
     removed_by: Text | None = None
     removal_reason: Text | None = None
+
+    def mapping(self) -> SynonymMapping:
+        """The part of this synonym matching uses, for screening settings and exported synonym sets."""
+        return SynonymMapping.model_validate(self.model_dump(include=set(SynonymMapping.model_fields)))
 
 
 class SynonymQuery(BaseModel):
