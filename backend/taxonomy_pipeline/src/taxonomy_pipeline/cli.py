@@ -1,9 +1,10 @@
 """`taxonomy-pipeline run|check-comparable|compare|serve|import-source|case-a|case-b|merge-preview|
-review-proposals|bulk-decide|integrate|lookup`
+review-proposals|bulk-decide|integrate|lookup|synonyms|synonym-add|synonym-remove`
 
 A thin adapter over `app/`: each command parses its flags, calls the one use
 case behind it (`app.scoring` for `run` and `check-comparable`, `app.comparison` for `compare`,
-`app.sources` for `import-source`, `app.enrichment` for the classification commands, `app.lookup` for `lookup`)
+`app.sources` for `import-source`, `app.enrichment` for the classification commands, `app.lookup` for `lookup`,
+`app.synonyms` for the synonym commands)
 and turns the result into
 printed text and an exit code. `run` calls the same `run_pipeline` the FastAPI
 `/runs` route calls. Anything else a command does - loading, checks, writing
@@ -20,11 +21,13 @@ from pathlib import Path
 from .app import comparison as comparisons
 from .app import enrichment as use_cases
 from .app import lookup as lookups
+from .app import synonyms as synonym_cases
 from .app.changes import changes, sync_changes
 from .app.scoring import check_runs, result_labels, run_config, write_report
 from .app.sources import import_source
 from .audit.models import ChangeQuery
 from .matching.lookup import DEFAULT_MIN_SCORE
+from .synonyms import SynonymCreate, SynonymQuery
 
 
 def _cmd_run(args: argparse.Namespace) -> int:
@@ -283,6 +286,47 @@ def _cmd_sync_changes(args: argparse.Namespace) -> int:
     return 0
 
 
+# Print synonyms through the same use case as GET /synonyms.
+def _cmd_synonyms(args: argparse.Namespace) -> int:
+    try:
+        query = SynonymQuery(
+            dataset=args.dataset, concept_level=args.level, concept_id=args.concept_id, term=args.term,
+            include_removed=args.include_removed, offset=args.offset, limit=args.limit,
+        )
+        print(synonym_cases.list_synonyms(query).model_dump_json(indent=2))
+    except (OSError, ValueError, sqlite3.Error) as exc:
+        print(f"[FAILED] synonyms: {exc}", file=sys.stderr)
+        return 1
+    return 0
+
+
+# Approve one synonym through the same use case as POST /synonyms.
+def _cmd_synonym_add(args: argparse.Namespace) -> int:
+    try:
+        request = SynonymCreate(
+            dataset=args.dataset, concept_level=args.level, concept_id=args.concept_id, term=args.term,
+            reason=args.reason, actor=args.actor,
+        )
+        synonym = synonym_cases.add_synonym(request, config_path=args.config)
+    except (OSError, ValueError, sqlite3.Error) as exc:
+        print(f"[FAILED] synonym-add: {exc}", file=sys.stderr)
+        return 1
+    print(f"[OK] {synonym.term!r} -> {synonym.concept_name!r} ({synonym.concept_level} {synonym.concept_id}), "
+          f"synonym {synonym.synonym_id}")
+    return 0
+
+
+# Remove one synonym through the same use case as POST /synonyms/{id}/remove.
+def _cmd_synonym_remove(args: argparse.Namespace) -> int:
+    try:
+        synonym = synonym_cases.remove_synonym(args.synonym_id, reason=args.reason, actor=args.actor)
+    except (OSError, ValueError, sqlite3.Error) as exc:
+        print(f"[FAILED] synonym-remove: {exc}", file=sys.stderr)
+        return 1
+    print(f"[OK] removed {synonym.term!r} -> {synonym.concept_name!r}")
+    return 0
+
+
 # Print exact and near matches for a term through the same use case as GET /lookup.
 def _cmd_lookup(args: argparse.Namespace) -> int:
     try:
@@ -424,6 +468,31 @@ def build_parser() -> argparse.ArgumentParser:
     sync = subparsers.add_parser("sync-changes", help="retry SQLite delivery of a saved audit_events.json file")
     sync.add_argument("--events", required=True)
     sync.set_defaults(func=_cmd_sync_changes)
+
+    levels = ["categories", "specialities", "tags"]
+    synonym_list = subparsers.add_parser("synonyms", help="list approved synonyms (and removed ones on request)")
+    synonym_list.add_argument("--dataset")
+    synonym_list.add_argument("--level", choices=levels)
+    synonym_list.add_argument("--concept-id")
+    synonym_list.add_argument("--term", help="match this term after normalising it")
+    synonym_list.add_argument("--include-removed", action="store_true")
+    synonym_list.add_argument("--offset", type=int, default=0)
+    synonym_list.add_argument("--limit", type=int, default=50, help="page size, 1-200")
+    synonym_list.set_defaults(func=_cmd_synonyms)
+    synonym_add = subparsers.add_parser("synonym-add", help="approve another name for an existing concept")
+    synonym_add.add_argument("--config", default="configs/baseline_v1.yaml", help="config declaring --dataset")
+    synonym_add.add_argument("--dataset", default="original", help="taxonomy dataset the concept belongs to")
+    synonym_add.add_argument("--level", choices=levels, required=True)
+    synonym_add.add_argument("--concept-id", required=True, help="ID of the canonical concept")
+    synonym_add.add_argument("--term", required=True, help="the other name, e.g. JS for JavaScript")
+    synonym_add.add_argument("--reason", required=True, help="why this is a synonym (kept in the audit log)")
+    synonym_add.add_argument("--actor", default="unspecified", help="self-reported identity for the audit log")
+    synonym_add.set_defaults(func=_cmd_synonym_add)
+    synonym_remove = subparsers.add_parser("synonym-remove", help="remove an approved synonym (history is kept)")
+    synonym_remove.add_argument("synonym_id")
+    synonym_remove.add_argument("--reason", required=True, help="why it is removed (kept in the audit log)")
+    synonym_remove.add_argument("--actor", default="unspecified", help="self-reported identity for the audit log")
+    synonym_remove.set_defaults(func=_cmd_synonym_remove)
 
     # check whether a term already exists before proposing it
     lookup = subparsers.add_parser("lookup", help="check a term against the newest integrated snapshot")
