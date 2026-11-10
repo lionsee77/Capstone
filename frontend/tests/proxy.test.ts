@@ -69,6 +69,7 @@ describe("pipeline proxy allowlist", () => {
       ok: true,
       url: "http://pipeline:8000/rounds/r1/review?state=decided&offset=25&limit=25&q=Adobe+Acrobat",
     });
+    expect(resolve("GET", "rounds/r1/review", "state=held")).toMatchObject({ ok: true });
     for (const query of ["state=other", "offset=-1", "limit=lots"]) {
       expect(resolve("GET", "rounds/r1/review", query)).toMatchObject({ ok: false, status: 404 });
     }

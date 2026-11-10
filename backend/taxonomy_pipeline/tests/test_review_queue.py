@@ -6,9 +6,17 @@ from taxonomy_pipeline.enrichment.models import (
     DeduplicationReport,
     DuplicateCandidate,
     ResolutionReport,
+    ReviewDecision,
     SourceDisposition,
     SourceTagRef,
     TagProposal,
+)
+from taxonomy_pipeline.enrichment.proposals.models import (
+    ConceptMatch,
+    ExistingConcept,
+    ProposalScreeningReport,
+    ScreenedProposal,
+    ScreeningSettings,
 )
 from taxonomy_pipeline.enrichment.review_queue import build_review_queue
 from taxonomy_pipeline.enrichment.routing import SaturationReport
@@ -109,3 +117,68 @@ def test_each_side_of_a_duplicate_pair_lists_the_other() -> None:
 
 def test_a_run_without_hierarchy_screening_has_no_proposals() -> None:
     assert build_review_queue(_resolution([_held("1")]), None, BASELINE).proposals == []
+
+
+def _screened(name: str, path: list[str], *, level: str = "speciality", matches: list[ConceptMatch] = (),
+              blocks: bool = False) -> ScreenedProposal:
+    return ScreenedProposal(
+        proposal_id=name, level=level, name=name, path=path, variants=[path], source_tags=[("demo", "1")], origins=[],
+        matches=list(matches), status="review", blocks_creation=blocks, reason="Needs review",
+    )
+
+
+def _exact_elsewhere(level: str) -> ConceptMatch:
+    concept = ExistingConcept(
+        reference="r", level=level, id=1, name="Law", path=["Function", "Law"], path_ids=[2, 1], reusable=True,
+    )
+    return ConceptMatch(concept=concept, match_types=["normalized_name"], lexical_score=1.0, same_parent=False)
+
+
+def _with_screening(*proposals: ScreenedProposal) -> ResolutionReport:
+    resolution = _resolution([_held("1")])
+    resolution.screening = ProposalScreeningReport(
+        baseline_snapshot_id="s", settings=ScreeningSettings(), semantic_status="disabled", proposals=list(proposals),
+    )
+    return resolution
+
+
+def test_a_proposal_says_why_it_cannot_be_created() -> None:
+    blocked = _screened(
+        "Law", ["Industry", "Law"], level="category", matches=[_exact_elsewhere("category")], blocks=True,
+    )
+    child = _screened("Contracts", ["Industry", "Law", "Contracts"], blocks=True)
+    free = _screened("Biorisk", ["Industry", "Pharma", "Biorisk"])
+
+    queue = build_review_queue(_with_screening(blocked, child, free), None, BASELINE)
+    items = {item.name: item for item in queue.proposals}
+
+    assert "already exists" in items["Law"].create_blocked_reason
+    assert "category isn't settled" in items["Contracts"].create_blocked_reason
+    assert items["Biorisk"].create_blocked_reason is None
+
+
+def test_a_proposal_held_as_a_spelling_variant_says_so_until_one_is_left_out() -> None:
+    first = _screened("Organisation Design", ["Industry", "Organisation Design"], level="category")
+    second = _screened("Organization Design", ["Industry", "Organization Design"], level="category")
+
+    before = build_review_queue(_with_screening(first, second), None, BASELINE).proposals
+    assert all("spelling variant" in item.create_blocked_reason for item in before)
+    resolution = _with_screening(first, second)
+    resolution.decisions = [ReviewDecision(
+        proposal_id="Organization Design", action="exclude", reason="Same as the other spelling",
+    )]
+    after = build_review_queue(resolution, None, BASELINE).proposals
+    assert [item.name for item in after] == ["Organization Design"]  # the other spelling no longer needs a decision
+
+
+def test_a_speciality_under_a_category_left_out_says_it_cannot_be_added() -> None:
+    resolution = _with_screening(
+        _screened("Law", ["Industry", "Law"], level="category"),
+        _screened("Contracts", ["Industry", "Law", "Contracts"]),
+    )
+    resolution.decisions = [ReviewDecision(proposal_id="Law", action="exclude", reason="Not wanted")]
+
+    items = {item.name: item for item in build_review_queue(resolution, None, BASELINE).proposals}
+
+    assert "left out" in items["Contracts"].create_blocked_reason
+

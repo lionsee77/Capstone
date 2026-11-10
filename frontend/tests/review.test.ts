@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import type { ReviewQueueProposal, ReviewQueueTag, RoundState } from "@/lib/api/schemas";
 import {
-  bulkTagDecisions, canReuse, chosenReuseTag, clampOffset, hasReviewQueue, placementLabel, proposalDecision, reusableMatches, reuseCandidateLabel, reuseCandidates, roundCompareHref, tagDecision,
+  actionLabel, bulkTagDecisions, canReuse, chosenReuseTag, clampOffset, closestMatchLabel, hasReviewQueue, heldExplanation, placementLabel, proposalDecision, reasonLabels, reusableMatches, reuseCandidateLabel, reuseCandidates, reviewNextStep, reviewProgress, reviewTab, roundCompareHref, savedMessage, stagesWorthShowing, tagDecision,
 } from "@/lib/review";
 
 const place = (category: string) => ({ service: "Function", category, speciality: "Analytics", confidence: 0.6, reason: "Fits" });
@@ -14,7 +14,7 @@ const tag = (overrides: Partial<ReviewQueueTag> = {}): ReviewQueueTag => ({
 });
 const proposal = (overrides: Partial<ReviewQueueProposal> = {}): ReviewQueueProposal => ({
   proposal_id: "p1", level: "speciality", name: "Tax", path: ["Function", "Finance", "Tax"], status: "review",
-  reason: "Exact match elsewhere", blocks_creation: true, source_tags: 2, decision: null,
+  reason: "Exact match elsewhere", blocks_creation: true, source_tags: 2, create_blocked_reason: null, decision: null,
   matches: [{
     id: 5, name: "Tax", level: "speciality", path: ["Function", "Finance", "Tax"], reusable: true, same_parent: true,
     match_types: ["normalized_name"], lexical_score: 1, semantic_score: null,
@@ -168,5 +168,69 @@ describe("round links and panels", () => {
 
   it("describes a placement in reading order", () => {
     expect(placementLabel(place("Finance"))).toBe("Function › Finance › Analytics");
+  });
+});
+
+describe("the review page's wording", () => {
+  it("says the API's actions in a reviewer's words, and passes on anything unknown", () => {
+    expect(actionLabel("create")).toBe("Add as new");
+    expect(actionLabel("exclude")).toBe("Leave out");
+    expect(actionLabel("something_new")).toBe("something_new");
+  });
+
+  it("turns reason codes into short plain labels without repeats", () => {
+    expect(reasonLabels(tag({ reason_codes: ["producer_flagged", "hierarchy_review", "producer_flagged"] }))).toEqual([
+      "Unsure where it goes", "New category or speciality",
+    ]);
+  });
+
+  it("says why a decision was held, and what to do about it", () => {
+    expect(heldExplanation(tag({ reason_codes: ["hierarchy_blocked"] }))).toContain("left out or isn't settled");
+    expect(heldExplanation(tag({ reason_codes: ["producer_flagged"] }))).toContain("couldn't be used");
+  });
+
+  it("says how a closest match matched", () => {
+    expect(closestMatchLabel(match("Excel", 3))).toBe("Excel (tags, similar meaning, 0.80)");
+    expect(closestMatchLabel({ score: 0.9, basis: "lexical", name: null, level: null, tag_id: null })).toBe("unnamed (unknown level, similar spelling, 0.90)");
+  });
+
+  it("explains what happened to a tag that just left the list", () => {
+    const decision = tagDecision(tag(), "exclude")!;
+    expect(savedMessage([decision], 0)).toContain("Saved: Leave out");
+    expect(savedMessage([decision, decision], 0)).toContain("Saved 2 decisions");
+    expect(savedMessage([], 1)).toContain("back in the list");
+    expect(savedMessage([], 0)).toBe("");
+  });
+});
+
+describe("review progress", () => {
+  it("doesn't count a decision that couldn't be used as settled", () => {
+    expect(reviewProgress({ undecided: 5, decided: 5, held: 1 })).toEqual({ done: 4, total: 10, percent: 40 });
+  });
+
+  it("treats an empty queue as finished", () => {
+    expect(reviewProgress({ undecided: 0, decided: 0, held: 0 }).percent).toBe(100);
+  });
+
+  it("names the one next step", () => {
+    const queue = { undecided: 0, proposals_undecided: 0 };
+    expect(reviewNextStep(round({ status: "running" }), queue)).toBe("working");
+    expect(reviewNextStep(round({ decisions_applied: false }), queue)).toBe("apply");
+    expect(reviewNextStep(round({ pending_sources: 3 }), queue)).toBe("decide");
+    expect(reviewNextStep(round({ pending_sources: 0 }), { ...queue, proposals_undecided: 1 })).toBe("decide");
+    expect(reviewNextStep(round({ pending_sources: 0 }), queue)).toBe("generate");
+  });
+
+  it("starts on the groups until they're settled, and respects a list someone picked", () => {
+    expect(reviewTab(null, { proposals_undecided: 2 })).toBe("proposals");
+    expect(reviewTab(null, { proposals_undecided: 0 })).toBe("undecided");
+    expect(reviewTab(null, undefined)).toBe("undecided");
+    expect(reviewTab("decided", { proposals_undecided: 2 })).toBe("decided");
+  });
+
+  it("folds the stages once they've finished their part", () => {
+    expect(stagesWorthShowing({ status: "review" })).toBe(false);
+    expect(stagesWorthShowing({ status: "failed" })).toBe(true);
+    expect(stagesWorthShowing({ status: "running" })).toBe(true);
   });
 });

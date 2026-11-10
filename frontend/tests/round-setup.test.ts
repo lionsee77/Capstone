@@ -1,9 +1,22 @@
 import { describe, expect, it } from "vitest";
 
+import type { RoundFile } from "@/lib/api/schemas";
 import {
   baselineLabel,
   buildMapping,
   buildSettings,
+  chooseFile,
+  chooseSheet,
+  columnRoles,
+  currentStep,
+  examplePaths,
+  filterHasValue,
+  firstStep,
+  sourceNameProblem,
+  stepOpen,
+  suggestSheet,
+  toggleFilterValue,
+  withOnlyFile,
   draftFromMapping,
   draftFromSettings,
   draftKey,
@@ -210,5 +223,114 @@ describe("filesFromEntries", () => {
   it("opens folders inside folders", async () => {
     const nested = folder([[folder([[fileEntry("deep.csv")]]) as never]]);
     expect((await filesFromEntries([nested])).map((item) => item.name)).toEqual(["deep.csv"]);
+  });
+});
+
+describe("the setup steps", () => {
+  it("opens each step only once what it needs exists", () => {
+    expect(stepOpen("files", 0, 5)).toBe(true);
+    expect(stepOpen("columns", 0, 5)).toBe(false);
+    expect(stepOpen("columns", 1, 5)).toBe(true);
+    expect(stepOpen("options", 1, 5)).toBe(false);
+    expect(stepOpen("import", 1, 0)).toBe(true);
+  });
+
+  it("resumes a round at the first step still needing something", () => {
+    expect(firstStep(0, 5)).toBe("files");
+    expect(firstStep(1, 5)).toBe("columns");
+    expect(firstStep(1, 0)).toBe("import");
+  });
+
+  it("falls back when a removed file closes the step on screen", () => {
+    expect(currentStep("import", 1, 0)).toBe("import");
+    expect(currentStep("import", 1, 2)).toBe("columns");
+    expect(currentStep("options", 0, 2)).toBe("files");
+  });
+});
+
+describe("choosing a file and sheet", () => {
+  const file = (overrides: Partial<RoundFile> = {}): RoundFile => ({
+    name: "Software Skills.xlsx", size: 1, sheets: ["Sheet1"], columns: [], row_count: 0, samples: {}, preview_rows: [],
+    sheet_columns: {}, error: null, ...overrides,
+  });
+
+  it("skips a leading legend when suggesting a sheet", () => {
+    const sheet_columns = { Legend: ["Notes"], Data: ["Sector", "Role", "Skill"] };
+    expect(suggestSheet(file({ sheets: ["Legend", "Data"], sheet_columns }))).toBe("Data");
+  });
+
+  it("stays on the first sheet when it is a table, or when no sheet looks like one", () => {
+    expect(suggestSheet(file({ sheets: ["A", "B"], sheet_columns: { A: ["1", "2", "3"], B: ["1", "2", "3"] } }))).toBe("");
+    expect(suggestSheet(file({ sheets: ["A", "B"], sheet_columns: { A: ["1"], B: ["1"] } }))).toBe("");
+    expect(suggestSheet(file())).toBe("");
+  });
+
+  it("clears column choices that belong to the old file, and fills in names from the new one", () => {
+    const draft = { ...emptyMapping(), source: "old.csv", name: "old", displayName: "old", description: "Desc" };
+    draft.category = { ...draft.category, column: "Sector" };
+    draft.filters = [{ column: "Hot", values: "Y" }];
+
+    const next = chooseFile(draft, file());
+
+    expect(next).toMatchObject({ source: "Software Skills.xlsx", name: "software_skills", displayName: "Software Skills", description: "", filters: [] });
+    expect(next.category.column).toBe("");
+  });
+
+  it("keeps names someone typed when the file changes", () => {
+    const draft = { ...emptyMapping(), source: "old.csv", name: "mine", displayName: "My source" };
+    expect(chooseFile(draft, file())).toMatchObject({ name: "mine", displayName: "My source" });
+  });
+
+  it("clears column choices when the sheet changes, and writes the first sheet as blank", () => {
+    const uploaded = file({ sheets: ["A", "B"] });
+    const draft = { ...emptyMapping(), sheet: "B", serviceColumn: "Svc" };
+    expect(chooseSheet(draft, uploaded, "A")).toMatchObject({ sheet: "", serviceColumn: "" });
+    expect(chooseSheet(draft, uploaded, "B").sheet).toBe("B");
+  });
+
+  it("chooses the file only when there is just the one", () => {
+    expect(withOnlyFile(emptyMapping(), [file()]).source).toBe("Software Skills.xlsx");
+    expect(withOnlyFile(emptyMapping(), [file(), file({ name: "other.csv" })]).source).toBe("");
+    expect(withOnlyFile({ ...emptyMapping(), source: "saved.csv" }, [file()]).source).toBe("saved.csv");
+  });
+});
+
+describe("previewing the mapping", () => {
+  const draft = (): MappingDraft => {
+    const mapping = { ...emptyMapping(), serviceId: "1" };
+    mapping.category = { ...mapping.category, column: "Code", mode: "prefix", prefix: "2", labels: "labels.csv" };
+    mapping.speciality = { ...mapping.speciality, column: "Role" };
+    return mapping;
+  };
+
+  it("marks what each chosen column is for, including a column used twice", () => {
+    const mapping = { ...draft(), description: "Role", filters: [{ column: "Hot", values: "Y" }] };
+    expect(columnRoles(mapping)).toEqual({ Code: ["Category"], Role: ["Speciality", "Description"], Hot: ["Filter"] });
+  });
+
+  it("shows rows as paths, with codes cut to their prefix and the unchosen as a gap", () => {
+    const rows = [{ Code: "15-1252", Role: "Developer" }, { Code: "15-1252", Role: "Developer" }, { Code: "13-2011", Role: "" }];
+    expect(examplePaths(draft(), rows, "Function")).toEqual([
+      ["Function", "code 15", "Developer", "…"],
+      ["Function", "code 13", "(blank)", "…"],
+    ]);
+  });
+
+  it("shows nothing until a column is chosen", () => {
+    expect(examplePaths(emptyMapping(), [{ A: "1" }], "Function")).toEqual([]);
+  });
+
+  it("toggles a filter value, keeping values with commas quoted", () => {
+    expect(toggleFilterValue("", "Y")).toBe("Y");
+    expect(toggleFilterValue("Y", "Sales, retail")).toBe('Y, "Sales, retail"');
+    expect(toggleFilterValue('Y, "Sales, retail"', "Y")).toBe('"Sales, retail"');
+    expect(filterHasValue('Y, "Sales, retail"', "Sales, retail")).toBe(true);
+    expect(filterHasValue("Y", "N")).toBe(false);
+  });
+
+  it("asks to look at the source names only when they're unusable", () => {
+    expect(sourceNameProblem({ ...emptyMapping(), name: "onet", displayName: "O*NET" })).toBe(false);
+    expect(sourceNameProblem({ ...emptyMapping(), name: "enriched", displayName: "E" })).toBe(true);
+    expect(sourceNameProblem({ ...emptyMapping(), name: "onet", displayName: " " })).toBe(true);
   });
 });

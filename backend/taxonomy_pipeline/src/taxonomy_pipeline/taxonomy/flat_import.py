@@ -193,17 +193,32 @@ def sheet_names(path: Path) -> list[str]:
         workbook.close()
 
 
+def sheet_columns(path: Path) -> dict[str, list[str]]:
+    """Each sheet's non-empty headers, reading only its first row, so a form can tell a data sheet from a legend."""
+    if path.suffix.lower() not in (".xlsx", ".xlsm"):
+        return {}
+    workbook = load_workbook(path, read_only=True, data_only=True)
+    try:
+        return {
+            sheet.title: [text(cell) for cell in next(sheet.iter_rows(values_only=True), ()) if text(cell)]
+            for sheet in workbook.worksheets
+        }
+    finally:
+        workbook.close()
+
+
 def inspect_table(
-    path: Path, sheet: str | None = None, *, sample_size: int = 5,
-) -> tuple[list[str], int, dict[str, list[str]]]:
-    """A table's headers, row count and a few distinct values per column, for choosing a mapping."""
+    path: Path, sheet: str | None = None, *, sample_size: int = 5, preview_size: int = 5,
+) -> tuple[list[str], int, dict[str, list[str]], list[dict[str, str]]]:
+    """A table's headers, row count, a few distinct values per column and its first rows, for choosing a mapping."""
     headers, rows = _read_table(path, sheet)
     samples: dict[str, list[str]] = {}
     for header in headers:
         if header:
             values = dict.fromkeys(row[header] for row in rows if row[header])
             samples[header] = list(values)[:sample_size]
-    return [header for header in headers if header], len(rows), samples
+    named = [header for header in headers if header]
+    return named, len(rows), samples, [{header: row[header] for header in named} for row in rows[:preview_size]]
 
 
 def _read_table(path: Path, sheet: str | None) -> tuple[list[str], list[dict[str, str]]]:

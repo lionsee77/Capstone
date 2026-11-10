@@ -555,6 +555,7 @@ export const reviewQueueProposalSchema = z.object({
   reason: z.string(),
   blocks_creation: z.boolean(),
   source_tags: z.number(),
+  create_blocked_reason: z.string().nullable(),
   matches: z.array(z.object({
     id: z.union([z.number(), z.string()]).nullable(),
     name: z.string(),
@@ -579,6 +580,7 @@ export const reviewQueueSchema = z.object({
   limit: z.number(),
   undecided: z.number(),
   decided: z.number(),
+  held: z.number(),
   proposals_undecided: z.number(),
 });
 export type ReviewQueue = z.infer<typeof reviewQueueSchema>;
@@ -597,6 +599,8 @@ export const roundFileSchema = z.object({
   columns: z.array(z.string()),
   row_count: z.number(),
   samples: z.record(z.string(), z.array(z.string())),
+  preview_rows: z.array(z.record(z.string(), z.string())),
+  sheet_columns: z.record(z.string(), z.array(z.string())),
   error: z.string().nullable(),
 });
 export type RoundFile = z.infer<typeof roundFileSchema>;

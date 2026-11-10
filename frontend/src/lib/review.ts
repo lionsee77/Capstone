@@ -2,7 +2,7 @@
  * Turning a reviewer's choice into a `ReviewDecision`. The API and `merge-preview` check every decision;
  * this only builds the record and fills in a plain reason when the reviewer doesn't write one.
  */
-import type { ReviewQueueProposal, ReviewQueueTag, RoundState } from "@/lib/api/schemas";
+import type { ReviewQueue, ReviewQueueProposal, ReviewQueueTag, RoundState } from "@/lib/api/schemas";
 
 export type TagAction = "create" | "reuse" | "exclude" | "defer";
 export type ProposalAction = "create" | "reuse" | "exclude" | "defer";
@@ -16,6 +16,39 @@ export type DecisionInput = {
   existing_concept_id?: number | string;
   approved_paths?: { service: string; category: string; speciality: string }[];
 };
+
+/** The API's actions in a reviewer's words. The records keep the API's terms. */
+export const ACTION_LABELS: Record<TagAction, string> = {
+  create: "Add as new",
+  reuse: "Use existing",
+  exclude: "Leave out",
+  defer: "Decide later",
+};
+
+export function actionLabel(action: string): string {
+  return ACTION_LABELS[action as TagAction] ?? action;
+}
+
+// One entry per `ReasonCode` in `enrichment/models.py`.
+const REASON_LABELS: Record<string, string> = {
+  hierarchy_review: "New category or speciality",
+  baseline_name_match: "Same name as an existing tag",
+  producer_flagged: "Unsure where it goes",
+  hierarchy_blocked: "Waiting on its category or speciality",
+  duplicate_candidate: "May duplicate another tag",
+};
+
+/** Why a tag was held, short enough to scan down a list. The full explanation stays in the tag's details. */
+export function reasonLabels(tag: ReviewQueueTag): string[] {
+  return [...new Set(tag.reason_codes.map((code) => REASON_LABELS[code] ?? code))];
+}
+
+/** Why an applied decision didn't take, and what to do about it. The pipeline's own account stays in the details. */
+export function heldExplanation(tag: ReviewQueueTag): string {
+  return tag.reason_codes.includes("hierarchy_blocked")
+    ? "This can't go in yet: the category or speciality you chose was left out or isn't settled. Change the decision, or choose another placement."
+    : "This decision couldn't be used. Change it, or see the details for why.";
+}
 
 export function placementLabel(place: { service: string; category: string; speciality: string }): string {
   return `${place.service} › ${place.category} › ${place.speciality}`;
@@ -39,6 +72,11 @@ export function reuseCandidates(tag: ReviewQueueTag): ReuseCandidate[] {
 export function reuseCandidateLabel(candidate: ReuseCandidate): string {
   const how = candidate.basis === "semantic" ? "similar meaning" : "similar spelling";
   return `${candidate.name} (${how}, ${candidate.score.toFixed(2)})`;
+}
+
+export function closestMatchLabel(match: ReviewQueueTag["closest"][number]): string {
+  const how = match.basis === "semantic" ? "similar meaning" : "similar spelling";
+  return `${match.name ?? "unnamed"} (${match.level ?? "unknown level"}, ${how}, ${match.score.toFixed(2)})`;
 }
 
 /** The reuse dropdown's value as a tag ID. "" is its "Choose a tag" placeholder, so it means nothing is chosen. */
@@ -103,6 +141,48 @@ export function proposalDecision(
     defer: "Reviewed: needs more information",
   };
   return { ...base, reason: written || defaults[action] };
+}
+
+/** How far the tags have got: a decision that was applied but couldn't be used doesn't count as settled. */
+export function reviewProgress(queue: Pick<ReviewQueue, "undecided" | "decided" | "held">): { done: number; total: number; percent: number } {
+  const total = queue.undecided + queue.decided;
+  const done = queue.decided - queue.held;
+  return { done, total, percent: total === 0 ? 100 : Math.round((done / total) * 100) };
+}
+
+export type ReviewStep = "working" | "decide" | "apply" | "generate";
+
+/** The one thing a reviewer should do next. Applying comes before anything else, since only it can show what's held. */
+export function reviewNextStep(round: RoundState, queue: Pick<ReviewQueue, "undecided" | "proposals_undecided"> | undefined): ReviewStep {
+  if (round.status === "running") return "working";
+  if (!round.decisions_applied) return "apply";
+  if (round.pending_sources > 0 || (queue?.proposals_undecided ?? 0) > 0) return "decide";
+  return "generate";
+}
+
+export type ReviewTab = "proposals" | "undecided" | "decided" | "held";
+
+/**
+ * The list to show. Until someone picks one it follows the work: groups first, because tags under an unsettled
+ * group can't be placed, then the tags once the last group is decided.
+ */
+export function reviewTab(chosen: ReviewTab | null, queue: Pick<ReviewQueue, "proposals_undecided"> | undefined): ReviewTab {
+  return chosen ?? ((queue?.proposals_undecided ?? 0) > 0 ? "proposals" : "undecided");
+}
+
+/** The note left when a saved decision moves its tag out of the list, so the tag doesn't seem to just vanish. */
+export function savedMessage(decisions: DecisionInput[], cleared: number): string {
+  if (cleared > 0) return "Decision removed. It's back in the list to decide.";
+  const [first] = decisions;
+  if (!first) return "";
+  return decisions.length === 1
+    ? `Saved: ${actionLabel(first.action)}. Find it under Decided to change it.`
+    : `Saved ${decisions.length} decisions: ${actionLabel(first.action)}. Find them under Decided to change them.`;
+}
+
+/** Whether the stage list can stay folded: it's only worth the space while something is running or has gone wrong. */
+export function stagesWorthShowing(round: Pick<RoundState, "status">): boolean {
+  return !["review", "ready_to_integrate", "complete"].includes(round.status);
 }
 
 /** The dashboard's comparison of the taxonomy before and after this round: one run scored both. */

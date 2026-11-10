@@ -3,14 +3,17 @@ from __future__ import annotations
 
 import json
 import shutil
+from io import BytesIO
 from pathlib import Path
 
 import pytest
 import yaml
+from openpyxl import Workbook
 
 from taxonomy_pipeline.app import rounds
 from taxonomy_pipeline.app.lineage import taxonomy_lineage
 from taxonomy_pipeline.config import load_config
+from taxonomy_pipeline.enrichment import case_b
 from taxonomy_pipeline.enrichment.models import PlacementPath, ReviewDecision, SourceTagRef
 from taxonomy_pipeline.models import RoundSettings
 from taxonomy_pipeline.taxonomy.flat_import import SourceMapping
@@ -258,6 +261,32 @@ def test_an_oversized_upload_is_refused(roots: rounds.RoundRoots, monkeypatch: p
         rounds.add_file(roots, "r1", "flat.csv", b"12345")
 
 
+def test_an_uploaded_table_comes_with_its_first_rows(roots: rounds.RoundRoots) -> None:
+    rounds.create_round(roots, "r1", "base")
+
+    uploaded = rounds.add_file(roots, "r1", "flat.csv", CSV.encode())
+
+    assert uploaded.preview_rows[0] == {
+        "Sector": "Marketing", "Role": "Brand Strategy", "Skill": "Underwater Welding",
+        "Desc": "Joining metal below water",
+    }
+    assert uploaded.sheet_columns == {}
+
+
+def test_a_workbook_lists_the_columns_of_each_of_its_sheets(roots: rounds.RoundRoots) -> None:
+    workbook = Workbook()
+    workbook.active.title = "Legend"
+    workbook.active.append(["Notes"])
+    workbook.create_sheet("Data").append(["Sector", None, "Role", "Skill"])
+    buffer = BytesIO()
+    workbook.save(buffer)
+    rounds.create_round(roots, "r1", "base")
+
+    uploaded = rounds.add_file(roots, "r1", "book.xlsx", buffer.getvalue())
+
+    assert uploaded.sheet_columns == {"Legend": ["Notes"], "Data": ["Sector", "Role", "Skill"]}
+
+
 def test_an_unreadable_table_reports_why_instead_of_failing_the_listing(roots: rounds.RoundRoots) -> None:
     rounds.create_round(roots, "r1", "base")
 
@@ -478,6 +507,36 @@ def test_new_parentless_tags_are_reported_when_llm_classification_is_off(
     assert case_b.status == "skipped"
     assert "Left out 1 new tag" in case_b.summary
     assert case_b.summary in state.warnings
+
+
+def test_llm_classification_reads_the_context_the_round_generated(
+    roots: rounds.RoundRoots, configured: str, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Case B checks a context file's titles against the imported tags; a round's own file must pass that check."""
+    monkeypatch.setenv("TAXONOMY_ALLOW_LLM", "true")
+    monkeypatch.setenv("OPENAI_API_KEY", "real-looking-key")
+    rounds.configure_round(roots, configured, _mapping(), RoundSettings(case_b=True))
+    sent: list[dict[str, str]] = []
+
+    async def classify(client: object, prompt: str, batch: list[dict[str, str]], model: str) -> list[dict[str, object]]:
+        sent.extend(batch)
+        return [{
+            "action": "classify", "tag_id": item["tag_id"], "tag": item["title"], "service": "Function",
+            "category": "Marketing", "speciality": "Brand Strategy", "confidence": 0.9, "reason": "Stubbed",
+            "needs_review": False,
+        } for item in batch]
+
+    monkeypatch.setattr(case_b, "_openai_client", lambda: object())
+    monkeypatch.setattr(case_b, "classify_batch", classify)
+
+    state = _run(roots, configured)
+
+    stage = next(stage for stage in state.stages if stage.id == "case_b")
+    assert stage.status == "done", stage.error
+    assert [item["title"] for item in sent] == ["Orphan Skill"]
+    context = json.loads((roots.rounds / configured / "demo_tag_context.json").read_text("utf-8"))
+    # #137 checks these titles against the imported tags; only described tags are in the file.
+    assert [tag["title"] for tag in context["tags"].values()] == ["Underwater Welding"]
 
 
 def test_a_running_round_never_reads_as_idle_between_stages(
@@ -764,6 +823,43 @@ def test_a_round_without_a_preview_has_no_queue(roots: rounds.RoundRoots) -> Non
 
     with pytest.raises(rounds.RoundConflict, match="no review queue"):
         rounds.get_review(roots, "r1")
+
+
+def test_a_decision_counts_as_held_only_once_a_preview_applied_it_and_left_the_tag_pending(
+    roots: rounds.RoundRoots, in_review: str,
+) -> None:
+    item = rounds.get_review(roots, in_review).tags[0]
+    rounds.save_decisions(roots, in_review, "Pat", [_create(item)])
+
+    assert rounds.get_review(roots, in_review).held == 0
+    assert rounds.get_review(roots, in_review, state="held").total == 0
+
+    rounds._write_queue(roots, rounds.get_round(roots, in_review))
+
+    assert rounds.get_review(roots, in_review).held == 1
+    assert [tag.tag for tag in rounds.get_review(roots, in_review, state="held").tags] == [item.tag]
+
+
+def test_changing_one_held_tag_leaves_the_others_held(roots: rounds.RoundRoots, in_review: str) -> None:
+    first, second = rounds.get_review(roots, in_review).tags[:2]
+    rounds.save_decisions(roots, in_review, "Pat", [_create(first), _create(second)])
+    rounds._write_queue(roots, rounds.get_round(roots, in_review))
+
+    rounds.save_decisions(roots, in_review, "Pat", [], clear_tags=[first.source])
+
+    assert [tag.tag for tag in rounds.get_review(roots, in_review, state="held").tags] == [second.tag]
+
+
+def test_a_new_decision_on_a_held_tag_is_not_held_until_a_preview_tries_it(
+    roots: rounds.RoundRoots, in_review: str,
+) -> None:
+    item = rounds.get_review(roots, in_review).tags[0]
+    rounds.save_decisions(roots, in_review, "Pat", [_create(item)])
+    rounds._write_queue(roots, rounds.get_round(roots, in_review))
+
+    rounds.save_decisions(roots, in_review, "Pat", [_create(item, reason="Thought again")])
+
+    assert rounds.get_review(roots, in_review).held == 0
 
 
 def test_a_saved_decision_moves_the_tag_and_needs_applying(roots: rounds.RoundRoots, in_review: str) -> None:

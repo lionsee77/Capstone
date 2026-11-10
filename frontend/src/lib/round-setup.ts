@@ -3,7 +3,7 @@
  * holds into the `SourceMapping` and `RoundSettings` the API expects. The API checks everything again; catching
  * the obvious here lets the form say what's missing before anything is imported.
  */
-import type { RoundSettings } from "@/lib/api/schemas";
+import type { RoundFile, RoundSettings } from "@/lib/api/schemas";
 
 export const UPLOADABLE_SUFFIXES = [".csv", ".tsv", ".xlsx", ".xlsm"];
 export const MAX_UPLOAD_BYTES = 50 * 1024 * 1024;
@@ -97,9 +97,128 @@ export function mappingProblems(draft: MappingDraft): string[] {
   return [...new Set(problems)];
 }
 
+/** Whether the names the form fills in from the file need attention, so the section holding them can open itself. */
+export function sourceNameProblem(draft: MappingDraft): boolean {
+  return !SOURCE_NAME.test(draft.name) || draft.name === RESERVED_SOURCE_NAME || !draft.displayName.trim();
+}
+
+export const SETUP_STEPS = [
+  { id: "name", label: "Name" },
+  { id: "files", label: "Files" },
+  { id: "columns", label: "Columns" },
+  { id: "options", label: "Options" },
+  { id: "import", label: "Import & run" },
+] as const;
+
+/** The steps of a round that already exists; its name can't change afterwards. */
+export type SetupStepId = Exclude<(typeof SETUP_STEPS)[number]["id"], "name">;
+
+/** Whether a step's inputs exist yet: files before columns, and a complete mapping before anything after it. */
+export function stepOpen(step: SetupStepId, readableFiles: number, problems: number): boolean {
+  if (step === "files") return true;
+  if (step === "columns") return readableFiles > 0;
+  return readableFiles > 0 && problems === 0;
+}
+
+/** Where coming back to a round should land: the first step still needing something, or the import. */
+export function firstStep(readableFiles: number, problems: number): SetupStepId {
+  if (readableFiles === 0) return "files";
+  return problems === 0 ? "import" : "columns";
+}
+
+/** The chosen step, unless a removed file or a cleared choice has since closed it. */
+export function currentStep(chosen: SetupStepId, readableFiles: number, problems: number): SetupStepId {
+  if (stepOpen(chosen, readableFiles, problems)) return chosen;
+  return readableFiles > 0 ? "columns" : "files";
+}
+
+/** A workbook with a bad first sheet can still have a good one, so it stays choosable; a CSV that can't be read can't. */
+export function readableFiles(files: RoundFile[]): RoundFile[] {
+  return files.filter((file) => !file.error || file.sheets.length > 0);
+}
+
+// A category, speciality and tag each need a column, so a sheet with fewer can't be the table.
+const MIN_TABLE_COLUMNS = 3;
+
+/** The sheet to start on: the first wide enough to be a table, which skips a leading legend. "" means the first sheet. */
+export function suggestSheet(file: RoundFile): string {
+  const suggested = file.sheets.find((sheet) => (file.sheet_columns[sheet]?.length ?? 0) >= MIN_TABLE_COLUMNS);
+  return suggested && suggested !== file.sheets[0] ? suggested : "";
+}
+
+function withoutColumns(draft: MappingDraft): MappingDraft {
+  return {
+    ...draft, category: emptyLevel(), speciality: emptyLevel(), tag: emptyLevel(), description: "", serviceColumn: "",
+    filters: [],
+  };
+}
+
+/** Moves to another file. Its columns differ, so earlier choices go; names follow unless someone typed their own. */
+export function chooseFile(draft: MappingDraft, file: RoundFile): MappingDraft {
+  const displayed = (name: string) => name.replace(/\.[^.]+$/, "");
+  return {
+    ...withoutColumns(draft),
+    source: file.name,
+    sheet: suggestSheet(file),
+    name: !draft.name || draft.name === suggestSourceName(draft.source) ? suggestSourceName(file.name) : draft.name,
+    displayName: !draft.displayName || draft.displayName === displayed(draft.source) ? displayed(file.name) : draft.displayName,
+  };
+}
+
+/** Moves to another sheet, which has its own columns. "" keeps meaning the first sheet, as it does when saved. */
+export function chooseSheet(draft: MappingDraft, file: RoundFile, sheet: string): MappingDraft {
+  return { ...withoutColumns(draft), sheet: sheet === file.sheets[0] ? "" : sheet };
+}
+
+/** Chooses the file when there is only one to choose, so the step doesn't open by asking the obvious. */
+export function withOnlyFile(draft: MappingDraft, files: RoundFile[]): MappingDraft {
+  return !draft.source && files.length === 1 ? chooseFile(draft, files[0]) : draft;
+}
+
+/** What each chosen column is being used for, to mark it on the table preview. */
+export function columnRoles(draft: MappingDraft): Record<string, string[]> {
+  const roles: Record<string, string[]> = {};
+  const mark = (column: string, role: string) => {
+    if (column) (roles[column] ??= []).push(role);
+  };
+  for (const [level, label] of LEVELS) mark(draft[level].column, label);
+  mark(draft.description, "Description");
+  if (draft.serviceMode === "column") mark(draft.serviceColumn, "Service");
+  for (const filter of draft.filters) mark(filter.column, "Filter");
+  return roles;
+}
+
+function exampleValue(spec: LevelDraft, row: Record<string, string>): string {
+  if (!spec.column) return "…";
+  const value = row[spec.column] || "(blank)";
+  if (spec.mode === "column") return value;
+  const length = Number(spec.prefix);
+  return Number.isInteger(length) && length > 0 ? `code ${value.slice(0, length)}` : `code ${value}`;
+}
+
+/** The first rows as the paths they'd become. A code stays a code: its label is in another file the form hasn't read. */
+export function examplePaths(draft: MappingDraft, rows: Record<string, string>[], serviceName?: string): string[][] {
+  if (!draft.category.column && !draft.speciality.column && !draft.tag.column) return [];
+  const paths = rows.map((row) => [
+    (draft.serviceMode === "id" ? serviceName : row[draft.serviceColumn]) || "…",
+    exampleValue(draft.category, row), exampleValue(draft.speciality, row), exampleValue(draft.tag, row),
+  ]);
+  return [...new Map(paths.map((path) => [path.join(">"), path])).values()].slice(0, 3);
+}
+
+export function filterHasValue(values: string, value: string): boolean {
+  return filterValues(values).includes(value);
+}
+
+/** Adds a value offered from the column to a filter, or takes it back out, keeping what was typed. */
+export function toggleFilterValue(values: string, value: string): string {
+  const current = filterValues(values);
+  return filterText(current.includes(value) ? current.filter((item) => item !== value) : [...current, value]);
+}
+
 /** Comma-separated values, where a value holding a comma is written in double quotes. */
 function filterValues(values: string): string[] {
-  return (values.match(/"[^"]*"|[^,]+/g) ?? [])
+  return (values.match(/\s*"[^"]*"|[^,]+/g) ?? [])
     .map((value) => value.trim().replace(/^"(.*)"$/, "$1").trim())
     .filter(Boolean);
 }

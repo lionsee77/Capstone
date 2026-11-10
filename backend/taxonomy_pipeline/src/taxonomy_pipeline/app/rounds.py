@@ -54,7 +54,7 @@ from ..models import (
     RoundState,
     utcnow,
 )
-from ..taxonomy.flat_import import SourceMapping, inspect_table, sheet_names
+from ..taxonomy.flat_import import SourceMapping, inspect_table, sheet_columns, sheet_names
 from . import enrichment as use_cases
 from .scoring import load_taxonomies, run_config, run_pipeline, write_report
 from .sources import DEFAULT_TEMPLATE, ROUND_BASELINE, import_source
@@ -335,7 +335,8 @@ def _describe(path: Path, sheet: str | None) -> RoundFile:
     described = RoundFile(name=path.name, size=path.stat().st_size)
     try:
         described.sheets = sheet_names(path)
-        described.columns, described.row_count, described.samples = inspect_table(path, sheet)
+        described.sheet_columns = sheet_columns(path)
+        described.columns, described.row_count, described.samples, described.preview_rows = inspect_table(path, sheet)
     except (OSError, ValueError, KeyError, zipfile.BadZipFile) as exc:
         described.error = _read_error(path.name, exc)
     return described
@@ -623,6 +624,8 @@ def _write_queue(roots: RoundRoots, state: RoundState) -> None:
         decided_sources={key for decision in decisions for key in _tag_keys(decision)},
         decided_proposals={decision.proposal_id for decision in decisions if decision.proposal_id},
     )
+    pending = {(tag.source.source_dataset, tag.source.tag_id) for tag in evidence.tags if tag.status == "pending"}
+    evidence.held_decisions = [decision for decision in decisions if _tag_keys(decision) & pending]
     (directory / QUEUE_FILE).write_text(evidence.model_dump_json(), encoding="utf-8")
 
 
@@ -630,10 +633,14 @@ def get_review(
     roots: RoundRoots, round_id: str, *, state: str = "undecided", query: str | None = None, offset: int = 0,
     limit: int = 50,
 ) -> ReviewQueue:
-    """One page of the review queue, with each item's saved decision; `state` is undecided, decided or all."""
+    """One page of the review queue, with each item's saved decision.
+
+    `state` is undecided, decided, held or all. Held tags have an applied decision that `merge-preview` still
+    can't act on, usually because their path sits under something deferred, so the reviewer has to choose again.
+    """
     get_round(roots, round_id)
-    if state not in {"undecided", "decided", "all"}:
-        raise ValueError("state must be undecided, decided or all")
+    if state not in {"undecided", "decided", "held", "all"}:
+        raise ValueError("state must be undecided, decided, held or all")
     if offset < 0 or not 1 <= limit <= 200:
         raise ValueError("offset must be nonnegative and limit must be between 1 and 200")
     directory = roots.directory(round_id)
@@ -645,16 +652,21 @@ def get_review(
         tag.decision = by_tag.get((tag.source.source_dataset, tag.source.tag_id))
     for proposal in evidence.proposals:
         proposal.decision = by_proposal.get(proposal.proposal_id)
-    selected = [
-        tag for tag in evidence.tags
-        if state == "all" or (tag.decision is not None) == (state == "decided")
-    ]
+    # A decision saved since the last preview hasn't been tried yet, so only one the preview applied counts.
+    held = [tag for tag in evidence.tags if tag.status == "pending" and tag.decision in evidence.held_decisions]
+    if state == "held":
+        selected = held
+    else:
+        selected = [
+            tag for tag in evidence.tags
+            if state == "all" or (tag.decision is not None) == (state == "decided")
+        ]
     if query:
         selected = [tag for tag in selected if query.casefold() in tag.tag.casefold()]
     decided = sum(tag.decision is not None for tag in evidence.tags)
     return ReviewQueue(
         tags=selected[offset:offset + limit], proposals=evidence.proposals, total=len(selected), offset=offset,
-        limit=limit, decided=decided, undecided=len(evidence.tags) - decided,
+        limit=limit, decided=decided, undecided=len(evidence.tags) - decided, held=len(held),
         proposals_undecided=sum(item.decision is None for item in evidence.proposals),
     )
 
