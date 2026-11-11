@@ -22,7 +22,7 @@ from ..models import MetricResult
 from ..models import NonBlankText as NonBlankText
 from ..models import TaxonomyId as TaxonomyId
 from ..taxonomy.base import TaxonomyDataset
-from .proposals.models import ProposalScreeningReport, ScreenedProposal, ScreeningSettings
+from .proposals.models import ProposalScreeningReport, RepeatedNameWarning, ScreenedProposal, ScreeningSettings
 
 Confidence = Annotated[float, Field(ge=0, le=1, allow_inf_nan=False)]
 CanonicalTagId = TaxonomyId | NonBlankText
@@ -371,6 +371,7 @@ class MergeRunInfo(BaseModel):
     baseline_snapshot_id: str | None = None
     blocked: bool = False
     pending_sources: int = 0
+    warning_count: int = 0
 
 
 class ResolutionReport(BaseModel):
@@ -387,6 +388,7 @@ class ResolutionReport(BaseModel):
     counts: dict[str, int]
     partial: bool
     screening: ProposalScreeningReport | None = None
+    effective_screening: ProposalScreeningReport | None = None
 
 
 class ReviewQueuePlacement(BaseModel):
@@ -447,7 +449,7 @@ class ReviewQueueProposalMatch(BaseModel):
 
 
 class ReviewQueueProposal(BaseModel):
-    """A proposed category or speciality that needs a decision before tags can be created under it."""
+    """A held, advised, or previously decided hierarchy proposal; only holds prevent creation."""
 
     proposal_id: str
     level: Literal["category", "speciality"]
@@ -468,6 +470,7 @@ class ReviewQueueEvidence(BaseModel):
 
     tags: list[ReviewQueueTag] = Field(default_factory=list)
     proposals: list[ReviewQueueProposal] = Field(default_factory=list)
+    repeated_names: list[RepeatedNameWarning] = Field(default_factory=list)
     # Decisions this preview applied whose tags stayed pending. Kept here because saving any later decision makes the
     # round "not applied", and these must stay visible while a reviewer works through them.
     held_decisions: list[ReviewDecision] = Field(default_factory=list)
@@ -478,6 +481,7 @@ class ReviewQueue(BaseModel):
 
     tags: list[ReviewQueueTag] = Field(default_factory=list)
     proposals: list[ReviewQueueProposal] = Field(default_factory=list)
+    repeated_names: list[RepeatedNameWarning] = Field(default_factory=list)
     total: int = 0
     offset: int = 0
     limit: int = 50

@@ -18,6 +18,7 @@ from taxonomy_pipeline.enrichment.proposals.models import (
     ScreenedProposal,
     ScreeningSettings,
 )
+from taxonomy_pipeline.enrichment.review import apply_hierarchy_decisions
 from taxonomy_pipeline.enrichment.review_queue import build_review_queue
 from taxonomy_pipeline.enrichment.routing import SaturationReport
 from taxonomy_pipeline.taxonomy.base import TaxonomyDataset
@@ -139,6 +140,7 @@ def _with_screening(*proposals: ScreenedProposal) -> ResolutionReport:
     resolution.screening = ProposalScreeningReport(
         baseline_snapshot_id="s", settings=ScreeningSettings(), semantic_status="disabled", proposals=list(proposals),
     )
+    resolution.effective_screening = resolution.screening.model_copy(deep=True)
     return resolution
 
 
@@ -167,6 +169,7 @@ def test_a_proposal_held_as_a_spelling_variant_says_so_until_one_is_left_out() -
     resolution.decisions = [ReviewDecision(
         proposal_id="Organization Design", action="exclude", reason="Same as the other spelling",
     )]
+    resolution.effective_screening = apply_hierarchy_decisions(resolution.screening, BASELINE, resolution.decisions)
     after = build_review_queue(resolution, None, BASELINE).proposals
     assert [item.name for item in after] == ["Organization Design"]  # the other spelling no longer needs a decision
 
@@ -178,7 +181,7 @@ def test_a_speciality_under_a_category_left_out_says_it_cannot_be_added() -> Non
     )
     resolution.decisions = [ReviewDecision(proposal_id="Law", action="exclude", reason="Not wanted")]
 
+    resolution.effective_screening = apply_hierarchy_decisions(resolution.screening, BASELINE, resolution.decisions)
     items = {item.name: item for item in build_review_queue(resolution, None, BASELINE).proposals}
 
     assert "left out" in items["Contracts"].create_blocked_reason
-

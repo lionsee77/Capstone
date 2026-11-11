@@ -44,6 +44,16 @@ verdict on screen is the API's.
   integrates and scores the round, and links to its before-and-after comparison. That one
   run scores both versions, so the round also appears on the Improvement page as a two-stage
   comparison. Earlier stages show as not scored until a whole-chain run covers them.
+  The review panel also shows advisory repeated category/speciality names from
+  effective screening, including automatically accepted proposals and affected tags. Full clusters
+  appear once, grouped by resolved parent with original proposal paths retained;
+  affected proposal cards carry a short reminder. These warnings do not block
+  integration or change approvals. Apply decisions to refresh them after resolving
+  a competing path. Older cached queues need a new merge preview/apply run.
+  **To decide** counts and lists only pending tags without a saved decision.
+  Accepted tags with warnings remain under **All** for individual review;
+  they cannot be bulk-selected or included in bulk actions. Advisory proposals
+  remain visible without increasing the number of undecided proposals.
 - **Tag lookup** (`/lookup`) - check whether a term already exists before proposing
   it. It reads `GET /lookup`, so it needs no run: the result names the snapshot it
   checked (the newest one under `integrations/`). Shown: a verdict, then exact and

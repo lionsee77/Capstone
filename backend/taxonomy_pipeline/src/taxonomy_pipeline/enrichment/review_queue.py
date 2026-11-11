@@ -17,6 +17,7 @@ from ..taxonomy.base import TaxonomyDataset
 from .bulk_decisions import closest_matches
 from .models import (
     ResolutionReport,
+    ReviewDecision,
     ReviewQueueDuplicate,
     ReviewQueueEvidence,
     ReviewQueueMatch,
@@ -26,19 +27,38 @@ from .models import (
     ReviewQueueTag,
     TagProposal,
 )
+from .proposals.models import ProposalScreeningReport
 from .proposals.screening import hold_incoming_variants
-from .review import apply_hierarchy_decisions, create_blocker
+from .repeated_names import live_placements
+from .resolution import resolve_outputs
+from .review import create_blocker
 from .routing import SaturationReport
 
 
+# Join shared effective screening with tag evidence for every reviewer-facing surface.
 def build_review_queue(
     resolution: ResolutionReport, saturation: SaturationReport | None, baseline: TaxonomyDataset,
     *, decided_sources: set[tuple[str, str]] = frozenset(), decided_proposals: set[str] = frozenset(),
 ) -> ReviewQueueEvidence:
     """Tags still held or dealt with by a reviewer, and proposals that need or had a decision.
 
-    Tags the pipeline accepted by itself aren't listed: nothing about them needs a person.
+    Automatically accepted tags appear only when a live path carries an advisory collision.
     """
+    effective = resolution.effective_screening
+    if effective is None and resolution.screening is not None:
+        # Older saved runs have only raw screening; replay once to rebuild the derived review evidence.
+        effective = resolve_outputs(
+            resolution.evidence, baseline, resolution.decisions, screening=resolution.screening,
+        ).effective_screening
+    warned_sources = set()
+    if effective is not None:
+        warned_ids = {identifier for warning in effective.repeated_names for identifier in warning.proposal_ids}
+        warned_paths = {tuple(item.path) for item in effective.proposals if item.proposal_id in warned_ids}
+        warned_sources = {
+            (source, tag_id) for source, tag_id, path in live_placements(
+                resolution.evidence, effective, resolution.decisions,
+            ) if path in warned_paths or path[:2] in warned_paths
+        }
     tags = {(tag.source.source_dataset, tag.source.tag_id): tag for tag in resolution.evidence.tags}
     tag_ids = _unique_tag_ids(baseline)
     matches = saturation.ambiguous_matches() if saturation else {}
@@ -46,7 +66,7 @@ def build_review_queue(
     items = []
     for disposition in resolution.dispositions:
         key = (disposition.source.source_dataset, disposition.source.tag_id)
-        if disposition.status == "accepted" and key not in decided_sources:
+        if disposition.status == "accepted" and key not in decided_sources and key not in warned_sources:
             continue
         tag = tags.get(key)
         concept = matches.get(key[1]) if saturation and key[0] == saturation.incoming else None
@@ -65,7 +85,8 @@ def build_review_queue(
         ))
     return ReviewQueueEvidence(
         tags=sorted(items, key=lambda item: (normalize(item.tag), item.source.tag_id)),
-        proposals=_proposals(resolution, baseline, decided_proposals),
+        proposals=_proposals(effective, decided_proposals, resolution.decisions),
+        repeated_names=effective.repeated_names if effective else [],
     )
 
 
@@ -114,24 +135,26 @@ _CREATE_BLOCKED = {
 }
 
 
+# Include advisory collisions even when screening has accepted their proposals automatically.
 def _proposals(
-    resolution: ResolutionReport, baseline: TaxonomyDataset, decided: set[str],
+    effective: ProposalScreeningReport | None, decided: set[str], decisions: list[ReviewDecision],
 ) -> list[ReviewQueueProposal]:
-    """Proposals screening is holding after the decisions so far, and any a reviewer already decided."""
-    if resolution.screening is None:
+    """Held, warned, or previously decided proposals, without turning advisories into review holds."""
+    if effective is None:
         return []
-    effective = apply_hierarchy_decisions(resolution.screening, baseline, resolution.decisions)
+    warned = {identifier for warning in effective.repeated_names for identifier in warning.proposal_ids}
+    visible = decided | warned
     by_path = {tuple(proposal.path): proposal for proposal in effective.proposals}
     semantic_failed = effective.semantic_status == "failed"
-    excluded = {decision.proposal_id for decision in resolution.decisions if decision.action == "exclude"}
-    set_aside = {decision.proposal_id for decision in resolution.decisions if decision.action in {"exclude", "defer"}}
+    excluded = {decision.proposal_id for decision in decisions if decision.action == "exclude"}
+    set_aside = {decision.proposal_id for decision in decisions if decision.action in {"exclude", "defer"}}
     # On copies, because this marks the proposals it holds and the queue only wants to know which ones.
     held = hold_incoming_variants(
         [proposal.model_copy(deep=True) for proposal in effective.proposals if proposal.proposal_id not in excluded],
     )
     items = []
     for proposal in effective.proposals:
-        if proposal.status != "review" and proposal.proposal_id not in decided:
+        if proposal.status != "review" and proposal.proposal_id not in visible:
             continue
         parent = by_path.get(tuple(proposal.path[:2])) if proposal.level == "speciality" else None
         if parent is not None and parent.blocks_creation:

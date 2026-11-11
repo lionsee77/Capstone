@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import csv
 import json
 import sqlite3
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
@@ -227,6 +229,77 @@ def test_case_a_then_merge_preview_run_end_to_end_from_the_cli(tmp_path, saturat
     assert manifest["merge_run"]["saturation_run_ids"] == [records[0]["saturation_run_id"]]
     # The snapshot's own config scores the enriched taxonomy.
     assert main(["run", "--config", str(snapshot / "enriched.yaml"), "--no-save"]) == 0
+
+
+# Carry repeated names from producer outputs through saved preview, integration replay and comparable scoring.
+def test_repeated_name_warnings_work_through_the_cli_pipeline(
+    tmp_path: Path, saturation_report: Callable[..., Path], capsys: pytest.CaptureFixture[str],
+) -> None:
+    config_path = _write_stage_config(tmp_path)
+    with (tmp_path / "baseline.sql").open("a", encoding="utf-8") as stream:
+        stream.write("\nINSERT INTO services (id,name) VALUES (2,'Subject');\n"
+                     "INSERT INTO categories (id,name,service_id) VALUES (2,'Marine',1);\n")
+    with (tmp_path / "incoming.sql").open("a", encoding="utf-8") as stream:
+        stream.write("\nINSERT INTO categories (id,name,service_id) VALUES (502,'Marine',1);\n"
+                     "INSERT INTO specialities (id,name,category_id) VALUES (602,'Deck Officer',502);\n"
+                     "INSERT INTO speciality_tags (id,speciality_id,tag_id) VALUES (702,602,9001);\n")
+    config = yaml.safe_load(config_path.read_text())
+    config["datasets"] = config["datasets"][:2]
+    config["metric_definitions_version"] = METRIC_DEFINITIONS_VERSION
+    config["metrics"] = [{"id": metric, "params": {"dataset": "original"}} for metric in ("integrity", "depth")]
+    config_path.write_text(yaml.safe_dump(config), encoding="utf-8")
+    report = saturation_report([
+        {"recommended_action": "ADD_CANDIDATE", "parent_status": "HAS_PARENT", "incoming_ids": [9001]},
+    ])
+    case_a = tmp_path / "case_a.json"
+    assert main(["case-a", "--config", str(config_path), "--report", str(report), "--semantic-model", "",
+                 "--output", str(case_a)]) == 0
+    assert len(json.loads(case_a.read_text(encoding="utf-8"))) == 2
+    # Synthetic Case B contract records avoid a paid model call while exercising the same downstream intake.
+    case_b = tmp_path / "case_b.json"
+    case_b.write_text(json.dumps([
+        {"source_dataset": "skillsfuture", "tag_id": str(index), "tag": tag,
+         "original_classification": "classified", "service": service, "category": "Beauty & Personal Care",
+         "speciality": speciality, "confidence": 0.8, "reason": "Synthetic producer placement",
+         "saturation_run_id": "run-1"}
+        for index, tag, service, speciality in [
+            (9100, "Anatomy", "Industry", "Skin treatments"), (9101, "Ergonomics", "Subject", "Massage"),
+        ]
+    ]), encoding="utf-8")
+    merge_run = tmp_path / "merge"
+    assert main(["merge-preview", "--config", str(config_path), "--input", str(case_a), "--input", str(case_b),
+                 "--out-dir", str(merge_run)]) == 0
+    printed = capsys.readouterr()
+    assert "[WARN] warning.repeated_category_name" in printed.err
+    assert "[WARN] warning.repeated_speciality_name" in printed.err
+    assert "2 warnings" in printed.err
+    info = json.loads((merge_run / "run.json").read_text(encoding="utf-8"))
+    assert info["warning_count"] == 2
+    with (merge_run / "preview.csv").open(encoding="utf-8-sig", newline="") as stream:
+        rows = list(csv.DictReader(stream))
+    warnings = [row for row in rows if row["row_type"] == "check" and row["status"].startswith("warning.repeated_")]
+    assert {row["status"] for row in warnings} == {
+        "warning.repeated_category_name", "warning.repeated_speciality_name",
+    }
+    placements = [row for row in rows if row["row_type"] == "placement"]
+    assert len(placements) == 4
+    assert all(row["status"] == "proposed" and "warning.repeated_" in row["note"] for row in placements)
+    saved = json.loads((merge_run / "resolution.json").read_text(encoding="utf-8"))
+    assert {item["code"] for item in saved["effective_screening"]["repeated_names"]} == {
+        item["status"] for item in warnings
+    }
+    assert saved["counts"]["pending_sources"] == 0 and saved["decisions"] == []
+    snapshot = tmp_path / "snapshot"
+    assert main(["integrate", "--config", str(config_path), "--merge-run", str(merge_run),
+                 "--out-dir", str(snapshot)]) == 0
+    manifest = json.loads((snapshot / "manifest.json").read_text(encoding="utf-8"))
+    assert manifest["counts"] == {"categories": 2, "specialities": 4, "tags": 3, "speciality_tags": 4}
+    assert manifest["exact_duplicate_rows"]["categories"] == {"baseline": 0, "enriched": 2}
+    assert manifest["exact_duplicate_rows"]["specialities"] == {"baseline": 0, "enriched": 2}
+    before, after = tmp_path / "before.json", tmp_path / "after.json"
+    assert main(["run", "--config", str(config_path), "--output", str(before), "--no-save"]) == 0
+    assert main(["run", "--config", str(snapshot / "enriched.yaml"), "--output", str(after), "--no-save"]) == 0
+    assert main(["check-comparable", str(before), str(after)]) == 0
 
 
 @pytest.mark.parametrize("delivery_error", [

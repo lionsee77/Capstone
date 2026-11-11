@@ -111,9 +111,14 @@ export function tagDecision(
   };
 }
 
-/** The same choice across a selection, each tag at its most confident placement. Tags it can't apply to are left out. */
+// Identify pending review work without treating advisory or already decided tags as bulk targets.
+export function tagNeedsDecision(tag: ReviewQueueTag): boolean {
+  return tag.status === "pending" && tag.decision === null;
+}
+
+/** Apply a bulk choice only to pending, undecided tags, even if the selection contains stale context rows. */
 export function bulkTagDecisions(tags: ReviewQueueTag[], action: Exclude<TagAction, "reuse">, reason?: string): DecisionInput[] {
-  return tags.flatMap((tag) => tagDecision(tag, action, { reason }) ?? []);
+  return tags.filter(tagNeedsDecision).flatMap((tag) => tagDecision(tag, action, { reason }) ?? []);
 }
 
 /**
@@ -160,7 +165,7 @@ export function reviewNextStep(round: RoundState, queue: Pick<ReviewQueue, "unde
   return "generate";
 }
 
-export type ReviewTab = "proposals" | "undecided" | "decided" | "held";
+export type ReviewTab = "proposals" | "undecided" | "decided" | "held" | "all";
 
 /**
  * The list to show. Until someone picks one it follows the work: groups first, because tags under an unsettled

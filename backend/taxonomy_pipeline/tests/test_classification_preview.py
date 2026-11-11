@@ -1,6 +1,7 @@
 """Check preview assembly independently of producer formats and database writes."""
 from __future__ import annotations
 
+import csv
 import json
 from pathlib import Path
 from typing import Any
@@ -8,6 +9,7 @@ from typing import Any
 import pytest
 
 from taxonomy_pipeline.enrichment.deduplication import deduplicate_outputs
+from taxonomy_pipeline.enrichment.export import export_preview_csv
 from taxonomy_pipeline.enrichment.models import MergePreview, PlacementPath, ResolutionReport, ReviewDecision
 from taxonomy_pipeline.enrichment.preview import build_preview
 from taxonomy_pipeline.enrichment.resolution import resolve_outputs
@@ -286,3 +288,157 @@ def test_shared_path_shows_needs_review_when_any_variant_is_flagged(baseline: Ta
     [row] = [row for row in preview.rows if row.row_type == "placement"]
     assert row.status == "pending"
     assert row.needs_review is True
+
+
+@pytest.fixture
+# Isolate incoming hierarchy collisions from baseline matches and existing tag review rules.
+def empty_baseline(baseline: TaxonomyDataset) -> TaxonomyDataset:
+    return baseline.model_copy(update={"categories": [], "specialities": [], "tags": [], "speciality_tags": []})
+
+
+@pytest.mark.parametrize("level", ["category", "speciality"])
+# Export one advisory cluster with both paths while leaving automatically accepted placements unchanged.
+def test_surfaces_repeated_new_names_across_parents(
+    empty_baseline: TaxonomyDataset, tmp_path: Path, level: str,
+) -> None:
+    rows = [
+        placement(tag_id="one", tag="Payroll", service="Industry", category="Marine", speciality="Navigation"),
+        placement(tag_id="two", tag="Diving", service="Function", category="Retail", speciality="Scheduling"),
+    ]
+    rows[1][level] = "  MARINE! " if level == "category" else "  NAVIGATION! "
+    resolution = resolve(rows, empty_baseline, [])
+    before = resolution.model_dump_json(), empty_baseline.model_dump_json()
+    preview = build_preview(resolution, empty_baseline)
+    warnings = [finding for finding in preview.validation.findings if finding.code.startswith("warning.repeated_")]
+    assert len(warnings) == 1
+    warning = warnings[0]
+    assert warning.code == f"warning.repeated_{level}_name"
+    assert "across 2 distinct parents" in warning.message
+    for proposal in resolution.screening.proposals:
+        if proposal.level == level:
+            assert proposal.proposal_id in warning.message
+            assert " > ".join(min(proposal.variants)) in warning.message
+    assert not preview.blocked and preview.validation.complete
+    assert preview.partial == resolution.partial
+    assert preview.counts.added_categories == preview.counts.added_specialities == 2
+    assert preview.counts.added_tags == preview.counts.added_links == 2
+    assert preview.counts.pending_sources == 0 and preview.decisions == []
+    assert (resolution.model_dump_json(), empty_baseline.model_dump_json()) == before
+    path = export_preview_csv(preview, tmp_path / "preview.csv")
+    with path.open(encoding="utf-8-sig", newline="") as stream:
+        exported = list(csv.DictReader(stream))
+    placements = [row for row in exported if row["row_type"] == "placement"]
+    assert len(placements) == 2
+    assert all(row["status"] == "proposed" and row["needs_review"] == "False" for row in placements)
+    assert all(warning.code in row["note"] and warning.message not in row["note"] for row in placements)
+    assert [row["note"] for row in exported if row["status"] == warning.code] == [warning.message]
+    reversed_preview = build_preview(resolve(list(reversed(rows)), empty_baseline, []), empty_baseline)
+    assert preview.rows == reversed_preview.rows
+
+
+@pytest.mark.parametrize("pending", [False, True])
+# Report a repeated speciality under two categories even when their tags are still awaiting review.
+def test_repeated_specialities_within_one_service_remain_visible(
+    empty_baseline: TaxonomyDataset, pending: bool,
+) -> None:
+    rows = [
+        placement(tag_id="one", tag="Payroll", category="Marine", speciality="Operations", needs_review=pending),
+        placement(tag_id="two", tag="Diving", category="Retail", speciality="Operations", needs_review=pending),
+    ]
+    preview = build_preview(resolve(rows, empty_baseline, []), empty_baseline)
+    warnings = [row for row in preview.rows if row.status == "warning.repeated_speciality_name"]
+    assert len(warnings) == 1
+    placements = [row for row in preview.rows if row.row_type == "placement"]
+    assert all("warning.repeated_speciality_name" in row.note for row in placements)
+    assert all(row.status == ("pending" if pending else "proposed") for row in placements)
+    assert all(row.needs_review == pending for row in placements)
+
+
+@pytest.mark.parametrize("second_path", [
+    {"category": " MARINE! ", "speciality": " NAVIGATION! "},
+    {"category": "Navigation", "speciality": "Scheduling"},
+    {"category": "Retail", "speciality": "Navigations"},
+])
+# Count hierarchy nodes rather than source references and keep levels and non-normalized matches separate.
+def test_does_not_warn_for_shared_paths_cross_level_names_or_spelling_matches(
+    empty_baseline: TaxonomyDataset, second_path: dict[str, str],
+) -> None:
+    rows = [
+        placement(tag_id="one", tag="Payroll", category="Marine", speciality="Navigation"),
+        placement(tag_id="two", tag="Diving", **second_path),
+    ]
+    preview = build_preview(resolve(rows, empty_baseline, []), empty_baseline)
+    assert not any(finding.code.startswith("warning.repeated_") for finding in preview.validation.findings)
+
+
+# Existing same-named hierarchy nodes are baseline screening's responsibility, not new-proposal clusters.
+def test_reused_baseline_names_do_not_count_as_new_repeated_names(empty_baseline: TaxonomyDataset) -> None:
+    empty_baseline.categories = [
+        {"id": 10, "name": "Marine", "service_id": 1}, {"id": 20, "name": "Marine", "service_id": 2},
+    ]
+    empty_baseline.specialities = [
+        {"id": 100, "name": "Operations", "category_id": 10},
+        {"id": 200, "name": "Operations", "category_id": 20},
+    ]
+    rows = [
+        placement(tag_id="one", tag="Payroll", category="Marine", speciality="Operations"),
+        placement(tag_id="two", tag="Diving", service="Industry", category="Marine", speciality="Operations"),
+    ]
+    preview = build_preview(resolve(rows, empty_baseline, []), empty_baseline)
+    assert preview.counts.reused_categories == preview.counts.reused_specialities == 2
+    assert not any(finding.code.startswith("warning.repeated_") for finding in preview.validation.findings)
+
+
+@pytest.mark.parametrize("action", ["exclude", "defer"])
+@pytest.mark.parametrize("hierarchy", [False, True])
+# Withdrawing a competing tag or parent proposal clears the advisory without reviving its children.
+def test_withdrawn_proposals_do_not_leave_repeated_name_warnings(
+    empty_baseline: TaxonomyDataset, action: str, hierarchy: bool,
+) -> None:
+    rows = [
+        placement(tag_id="one", tag="Payroll", category="Marine", speciality="Navigation"),
+        placement(tag_id="two", tag="Diving", service="Industry", category="Marine", speciality="Navigation"),
+    ]
+    if hierarchy:
+        initial = resolve(rows, empty_baseline, [])
+        proposal = next(item for item in initial.screening.proposals
+                        if item.level == "category" and item.path[0] == "Industry")
+        decisions = [ReviewDecision(proposal_id=proposal.proposal_id, action=action, reason="Withdraw this branch")]
+    else:
+        decisions = [approve([rows[1]], action=action, approved_paths=[])]
+    preview = build_preview(resolve(rows, empty_baseline, decisions), empty_baseline)
+    assert not any(finding.code.startswith("warning.repeated_") for finding in preview.validation.findings)
+
+
+# Reviewed aliases of one existing category still introduce only one same-named speciality.
+def test_reviewed_parent_aliases_do_not_create_a_false_repeated_name_cluster(empty_baseline: TaxonomyDataset) -> None:
+    empty_baseline.categories = [{"id": 10, "name": "Marine", "service_id": 1}]
+    rows = [
+        placement(tag_id="one", tag="Payroll", category="Marine", speciality="Navigation"),
+        placement(tag_id="two", tag="Diving", category="Seafaring", speciality="Navigation"),
+    ]
+    initial = resolve(rows, empty_baseline, [])
+    proposal = next(item for item in initial.screening.proposals
+                    if item.level == "category" and item.name == "Seafaring")
+    decisions = [ReviewDecision(
+        proposal_id=proposal.proposal_id, action="reuse", existing_concept_id=10, reason="Same category",
+    )]
+    preview = build_preview(resolve(rows, empty_baseline, decisions), empty_baseline)
+    assert preview.counts.added_specialities == 1 and preview.counts.added_links == 2
+    assert not any(finding.code.startswith("warning.repeated_") for finding in preview.validation.findings)
+
+
+# Approving both contextual placements preserves the warning as evidence without undoing either decision.
+def test_repeated_name_warning_survives_explicit_approval(empty_baseline: TaxonomyDataset) -> None:
+    rows = [
+        placement(tag_id="one", tag="Payroll", category="Marine", speciality="Navigation", needs_review=True),
+        placement(tag_id="two", tag="Diving", category="Retail", speciality="Navigation", needs_review=True),
+    ]
+    decisions = [approve([row]) for row in rows]
+    resolution = resolve(rows, empty_baseline, decisions)
+    preview = build_preview(resolution, empty_baseline)
+    assert preview.decisions == resolution.decisions
+    assert preview.counts.pending_sources == 0 and preview.counts.added_specialities == 2
+    assert not preview.blocked and preview.validation.complete
+    assert all("warning.repeated_speciality_name" in row.note and row.status == "proposed"
+               for row in preview.rows if row.row_type == "placement")

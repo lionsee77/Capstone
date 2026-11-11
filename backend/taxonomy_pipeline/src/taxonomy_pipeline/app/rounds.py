@@ -607,10 +607,13 @@ def _merge(roots: RoundRoots, state: RoundState) -> tuple[str, str]:
     state.merge_counts = counts.model_dump()
     state.pending_sources = counts.pending_sources
     state.decisions_applied = True
-    state.warnings = _unique([*state.warnings, *run.warnings])
+    state.warnings = _unique([
+        *(warning for warning in state.warnings if not warning.startswith("warning.repeated_")), *run.warnings,
+    ])
     _write_queue(roots, state)
     return "done", (
-        f"{counts.added_tags} new tags, {counts.reused_tags} reused, {counts.pending_sources} waiting for review"
+        f"{counts.added_tags} new tags, {counts.reused_tags} reused, {counts.pending_sources} waiting for review, "
+        f"{len(run.warnings)} warnings"
     )
 
 
@@ -629,6 +632,7 @@ def _write_queue(roots: RoundRoots, state: RoundState) -> None:
     (directory / QUEUE_FILE).write_text(evidence.model_dump_json(), encoding="utf-8")
 
 
+# Page review work separately from advisory context and already saved decisions.
 def get_review(
     roots: RoundRoots, round_id: str, *, state: str = "undecided", query: str | None = None, offset: int = 0,
     limit: int = 50,
@@ -652,22 +656,18 @@ def get_review(
         tag.decision = by_tag.get((tag.source.source_dataset, tag.source.tag_id))
     for proposal in evidence.proposals:
         proposal.decision = by_proposal.get(proposal.proposal_id)
-    # A decision saved since the last preview hasn't been tried yet, so only one the preview applied counts.
+    undecided_tags = [tag for tag in evidence.tags if tag.status == "pending" and tag.decision is None]
+    decided_tags = [tag for tag in evidence.tags if tag.decision is not None]
+    # Only decisions tried by the last preview count as held; new choices still need applying.
     held = [tag for tag in evidence.tags if tag.status == "pending" and tag.decision in evidence.held_decisions]
-    if state == "held":
-        selected = held
-    else:
-        selected = [
-            tag for tag in evidence.tags
-            if state == "all" or (tag.decision is not None) == (state == "decided")
-        ]
+    selected = {"all": evidence.tags, "undecided": undecided_tags, "decided": decided_tags, "held": held}[state]
     if query:
         selected = [tag for tag in selected if query.casefold() in tag.tag.casefold()]
-    decided = sum(tag.decision is not None for tag in evidence.tags)
     return ReviewQueue(
         tags=selected[offset:offset + limit], proposals=evidence.proposals, total=len(selected), offset=offset,
-        limit=limit, decided=decided, undecided=len(evidence.tags) - decided, held=len(held),
-        proposals_undecided=sum(item.decision is None for item in evidence.proposals),
+        limit=limit, decided=len(decided_tags), undecided=len(undecided_tags), held=len(held),
+        proposals_undecided=sum(item.status == "review" and item.decision is None for item in evidence.proposals),
+        repeated_names=evidence.repeated_names,
     )
 
 

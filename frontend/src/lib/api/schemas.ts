@@ -281,12 +281,20 @@ export const screeningSettingsSchema = z.object({
   synonyms: z.array(synonymMappingSchema).default([]),
 }).strict();
 
+export const repeatedNameWarningSchema = z.object({
+  code: z.enum(["warning.repeated_category_name", "warning.repeated_speciality_name"]),
+  name: z.string(),
+  message: z.string(),
+  proposal_ids: z.array(z.string()),
+});
+
 export const proposalScreeningReportSchema = z.object({
   baseline_snapshot_id: z.string(),
   settings: screeningSettingsSchema,
   semantic_status: z.enum(["disabled", "complete", "failed"]),
   skipped_checks: z.record(z.string(), z.string()).default({}),
   proposals: z.array(screenedProposalSchema),
+  repeated_names: z.array(repeatedNameWarningSchema).default([]),
 });
 export type ProposalScreeningReport = z.infer<typeof proposalScreeningReportSchema>;
 
@@ -575,6 +583,7 @@ export type ReviewQueueProposal = z.infer<typeof reviewQueueProposalSchema>;
 export const reviewQueueSchema = z.object({
   tags: z.array(reviewQueueTagSchema),
   proposals: z.array(reviewQueueProposalSchema),
+  repeated_names: z.array(repeatedNameWarningSchema).default([]),
   total: z.number(),
   offset: z.number(),
   limit: z.number(),

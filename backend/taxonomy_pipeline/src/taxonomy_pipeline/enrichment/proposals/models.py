@@ -84,6 +84,15 @@ class ScreeningSettings(BaseModel):
         return data
 
 
+class RepeatedNameWarning(BaseModel):
+    """One advisory cluster, stored once with references to its affected proposals."""
+
+    code: Literal["warning.repeated_category_name", "warning.repeated_speciality_name"]
+    name: str
+    message: str
+    proposal_ids: list[str]
+
+
 class ProposalScreeningReport(BaseModel):
     """Bind all proposed paths and matching coverage to one baseline snapshot."""
 
@@ -92,3 +101,4 @@ class ProposalScreeningReport(BaseModel):
     semantic_status: Literal["disabled", "complete", "failed"]
     skipped_checks: dict[str, str] = Field(default_factory=dict)
     proposals: list[ScreenedProposal]
+    repeated_names: list[RepeatedNameWarning] = Field(default_factory=list)

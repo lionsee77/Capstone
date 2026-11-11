@@ -24,6 +24,7 @@ import {
   reuseCandidateLabel,
   reuseCandidates,
   tagDecision,
+  tagNeedsDecision,
   type TagAction,
 } from "@/lib/review";
 
@@ -65,11 +66,14 @@ export function TagRow({
   return (
     <article className="flex flex-col gap-2 py-3">
       <div className="flex flex-wrap items-center gap-2">
-        <input type="checkbox" aria-label={`Select ${tag.tag}`} checked={selected} onChange={(e) => onToggle(e.target.checked)} />
+        <input type="checkbox" aria-label={`Select ${tag.tag}`} checked={selected} disabled={disabled || !tagNeedsDecision(tag)} onChange={(e) => onToggle(e.target.checked)} />
         <h3 className="font-medium">{tag.tag}</h3>
         {reasonLabels(tag).map((label) => <Badge key={label} variant="secondary">{label}</Badge>)}
       </div>
       {held && <p className="text-sm font-medium">{heldExplanation(tag)}</p>}
+      {tag.status === "accepted" && tag.decision === null && (
+        <p className="text-sm text-muted-foreground">Automatically accepted; review individually if needed.</p>
+      )}
       {tag.decision ? (
         <SavedDecision decision={tag.decision} disabled={disabled} onClear={onClear} />
       ) : (
@@ -139,10 +143,12 @@ export function TagRow({
   );
 }
 
+// Show the effective creation guard and advisory names alongside the proposal's review actions.
 export function ProposalCard({
-  proposal, disabled, onDecide, onClear,
+  proposal, repeatedNames = [], disabled, onDecide, onClear,
 }: {
   proposal: ReviewQueueProposal;
+  repeatedNames?: string[];
   disabled: boolean;
   onDecide: (decision: DecisionInput) => void;
   onClear: () => void;
@@ -162,8 +168,11 @@ export function ProposalCard({
       <div className="flex flex-wrap items-center gap-2">
         <h3 className="font-medium">{proposal.path.join(" › ")}</h3>
         <LevelTag level={proposal.level} />
-        <span className="text-sm text-muted-foreground">{proposal.source_tags.toLocaleString()} tag(s) wait on this</span>
+        <span className="text-sm text-muted-foreground">{proposal.source_tags.toLocaleString()} tag(s) use this path</span>
       </div>
+      {repeatedNames.length > 0 && (
+        <p className="text-sm font-medium">Repeated name: {repeatedNames.join(", ")}. See the parent groups above.</p>
+      )}
       {proposal.decision ? (
         <SavedDecision decision={proposal.decision} disabled={disabled} onClear={onClear} />
       ) : (

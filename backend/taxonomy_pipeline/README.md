@@ -87,6 +87,8 @@ taxonomy_pipeline/
 │   │   ├── validation.py             #   merge 1: combine producer files, check paths against the baseline
 │   │   ├── deduplication.py          #   merge 2: group hierarchy paths, suggest duplicate tag pairs
 │   │   ├── resolution.py             #   merge 3: apply review decisions, assign temporary IDs
+│   │   ├── paths.py                  #   shared normalized placement identity
+│   │   ├── repeated_names.py         #   live cross-parent name warnings for screening and review
 │   │   ├── review.py                 #   hierarchy decisions applied to screened proposals
 │   │   ├── review_queue.py           #   held tags and proposals with their evidence, for dashboard review
 │   │   ├── review_view.py            #   saved proposal review view behind `review-proposals` and /proposals
@@ -417,6 +419,52 @@ records, plus `valid_rate` and `review_rate`.
   seven-field formats are reported as invalid rows, not adapted.
 - Exit code is non-zero if an input file is unreadable or the preview is
   blocked because the merge would introduce structural errors.
+
+Repeated **new hierarchy names** are surfaced as advisory warnings (#132).
+Effective screening groups proposed categories and specialities separately by integrity's
+`normalize(name)`, across all parent paths. Multiple tags or evidence records
+referencing one proposed node count once; categories and specialities never
+form a shared cluster. Names that only share a `match_key` or a similarity score
+are handled by the existing screening rules, not this exact-name warning.
+
+In `preview.csv`, each cluster has a `row_type=check` row with status
+`warning.repeated_category_name` or `warning.repeated_speciality_name`. Its
+`note` lists the normalised name, number of distinct parents, proposal IDs
+and full proposed paths, grouped by parent. Reviewed aliases are grouped under
+the resolved category's name and ID; held spelling variants of a parent count
+as one unresolved parent. Affected placement rows carry only the warning code
+and normalised name in their `note`, including pending placements, so large
+clusters do not repeat their full member list on every row. These are proposal warnings, not
+counts of duplicates actually integrated. Nodes resolved to existing baseline
+IDs, excluded/deferred tags, declined paths and excluded/deferred hierarchy branches are omitted
+from these clusters; matches against baseline names remain visible through
+hierarchy screening.
+
+`resolution.json` retains original `screening` for replay and the derived
+`effective_screening`, including `repeated_names`. The round review queue and
+dashboard show these same clusters, including automatically accepted proposals
+and tags whose live paths are affected, so reviewers can choose a retained path;
+each cluster is stored once with its affected proposal IDs. Older resolutions
+without effective screening are replayed when rebuilding their review queue.
+After upgrading, rerun merge-preview/apply decisions to refresh saved round queues.
+The CLI prints each advisory with `[WARN]` and includes a warning count in its
+summary; `run.json.warning_count` records all run warnings, including missing
+input run stamps. Integration replay recomputes findings from source evidence
+and decisions, rather than trusting cached effective screening.
+
+The review queue's default `undecided` filter and count include only pending
+tags without a saved decision. Advisory accepted tags remain available under
+`all` for individual review, but are excluded from dashboard bulk selection
+and bulk actions. `proposals_undecided` counts only proposals with screening
+status `review` and no saved decision; accepted advisory proposals remain
+visible as context. `decided` counts saved decisions, so advisory context can
+make the `all` total larger than `undecided + decided`.
+
+Warnings do not merge nodes, choose a parent, change `needs_review`, add review
+holds, or alter approvals, counts, completeness or exit status. They remain
+visible when reviewers approve both new paths. Resolve the repeated-name policy
+and review the affected paths separately; surfacing a cluster alone does not
+satisfy the integrity or depth guard rails.
 
 ### Hierarchy proposal screening
 

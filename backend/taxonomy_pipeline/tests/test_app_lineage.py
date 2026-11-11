@@ -196,5 +196,3 @@ def test_an_enriched_baseline_a_round_built_on_is_not_called_original(
     stages = taxonomy_lineage(tmp_path / "integrations", tmp_path / "merge_runs", original=dumps).stages
 
     assert stages[0].name == "round_baseline"
-
-

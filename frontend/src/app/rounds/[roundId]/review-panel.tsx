@@ -19,6 +19,7 @@ import {
   type ReviewTab,
   reviewTab,
   savedMessage,
+  tagNeedsDecision,
 } from "@/lib/review";
 import { useDebouncedValue } from "@/lib/use-debounced-value";
 
@@ -74,9 +75,11 @@ export function ReviewPanel({ round }: { round: RoundState }) {
     ...(queue.proposals.length > 0 ? [{ id: "proposals" as const, label: "Categories & specialities", count: queue.proposals_undecided }] : []),
     { id: "undecided", label: "To decide", count: queue.undecided },
     { id: "decided", label: "Decided", count: queue.decided },
+    { id: "all", label: "All" },
     ...(queue.held > 0 ? [{ id: "held" as const, label: "Still held", count: queue.held }] : []),
   ] : [];
-  const selectedTags = (queue?.tags ?? []).filter((tag) => selected.has(tag.source.tag_id));
+  const selectableTags = (queue?.tags ?? []).filter(tagNeedsDecision);
+  const selectedTags = selectableTags.filter((tag) => selected.has(tag.source.tag_id));
   const showTags = tab !== "proposals";
 
   return (
@@ -138,6 +141,12 @@ export function ReviewPanel({ round }: { round: RoundState }) {
 
       {queue && (
         <div className="flex flex-col gap-3">
+          {queue.repeated_names.map((warning) => (
+            <Notice key={`${warning.code}:${warning.name}`} title={`Repeated name: ${warning.name}`}>
+              <p className="break-words">{warning.message}</p>
+              <p>Automatically accepted tags are available under All for individual review.</p>
+            </Notice>
+          ))}
           <div className="flex flex-wrap items-center gap-1 border-b border-rule pb-2" role="group" aria-label="Review lists">
             {tabs.map(({ id, label, count }) => (
               <Button key={id} size="sm" variant={tab === id ? "secondary" : "ghost"} aria-pressed={tab === id} onClick={() => changeTab(id)}>
@@ -162,12 +171,14 @@ export function ReviewPanel({ round }: { round: RoundState }) {
           {tab === "proposals" && (
             <div className="flex flex-col gap-3">
               <p className="text-sm text-muted-foreground">
-                These are new groups the source would add. Tags under them can only go in once each group is settled, so start here.
+                Held groups need a decision before tags can go under them. Repeated-name warnings are advisory;
+                accepted groups remain visible as context without blocking the snapshot.
               </p>
               {queue.proposals.map((proposal) => (
                 <ProposalCard
                   key={proposal.proposal_id}
                   proposal={proposal}
+                  repeatedNames={queue.repeated_names.filter((warning) => warning.proposal_ids.includes(proposal.proposal_id)).map((warning) => warning.name)}
                   disabled={!canEdit}
                   onDecide={(decision) => submit([decision])}
                   onClear={() => submit([], [], [proposal.proposal_id])}
@@ -176,15 +187,16 @@ export function ReviewPanel({ round }: { round: RoundState }) {
             </div>
           )}
 
-          {showTags && queue.tags.length > 0 && (
+          {showTags && selectableTags.length > 0 && (
             <div className="flex flex-wrap items-center gap-2">
               <label className="flex shrink-0 items-center gap-2 text-sm whitespace-nowrap">
                 <input
                   type="checkbox"
-                  checked={selectedTags.length === queue.tags.length}
-                  onChange={(e) => setSelected(new Set(e.target.checked ? queue.tags.map((tag) => tag.source.tag_id) : []))}
+                  disabled={!canEdit}
+                  checked={selectedTags.length === selectableTags.length}
+                  onChange={(e) => setSelected(new Set(e.target.checked ? selectableTags.map((tag) => tag.source.tag_id) : []))}
                 />
-                Select all on this page
+                Select pending tags on this page
               </label>
             </div>
           )}
@@ -197,7 +209,7 @@ export function ReviewPanel({ round }: { round: RoundState }) {
                   key={`${tag.source.source_dataset}-${tag.source.tag_id}`}
                   tag={tag}
                   held={tab === "held"}
-                  selected={selected.has(tag.source.tag_id)}
+                  selected={tagNeedsDecision(tag) && selected.has(tag.source.tag_id)}
                   disabled={!canEdit}
                   onToggle={(checked) => {
                     const next = new Set(selected);
@@ -231,6 +243,7 @@ export function ReviewPanel({ round }: { round: RoundState }) {
 function EmptyTab({ tab, searching, round }: { tab: ReviewTab; searching: boolean; round: RoundState }) {
   if (searching) return <Notice title="No tags match">Try another search or list.</Notice>;
   if (tab === "decided") return <Notice title="Nothing decided yet">Decisions you make appear here, and can be changed until the snapshot is generated.</Notice>;
+  if (tab === "all") return <Notice title="No tags in this review queue">Advisory and reviewed tags appear here when available.</Notice>;
   return (
     <Notice title="Nothing left to decide here">
       {round.decisions_applied ? "Use the bar at the top to finish." : "Apply your decisions, using the bar at the top."}

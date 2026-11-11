@@ -94,6 +94,17 @@ describe("choosing a tag to reuse", () => {
 });
 
 describe("bulkTagDecisions", () => {
+  it.each(["create", "exclude", "defer"] as const)("keeps advisory and already decided tags out of bulk %s", (action) => {
+    const pending = tag();
+    const context = [
+      tag({ status: "accepted" }), tag({ status: "excluded" }), tag({ status: "deferred" }),
+      tag({ decision: { action: "create", reason: "Already reviewed" } }),
+    ];
+    expect(bulkTagDecisions(context, action)).toEqual([]);
+    expect(bulkTagDecisions([pending, ...context], action)).toEqual([tagDecision(pending, action)]);
+    expect(tagDecision(context[0], action)).not.toBeNull(); // An individual override remains available.
+  });
+
   it("applies one choice across a selection at each tag's best placement", () => {
     const decisions = bulkTagDecisions([tag(), tag({ source: { source_dataset: "onet", tag_id: "8" } })], "create", "Tools");
     expect(decisions.map((decision) => decision.approved_paths?.[0].category)).toEqual(["First", "First"]);

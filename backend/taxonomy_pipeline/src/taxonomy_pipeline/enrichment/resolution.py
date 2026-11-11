@@ -29,13 +29,14 @@ from .models import (
     SourceTagRef,
     TagProposal,
 )
+from .paths import PathKey, placement_path
 from .proposals.models import ProposalScreeningReport, ScreeningSettings
 from .proposals.screening import screen_proposals
+from .repeated_names import live_placements, repeated_name_warnings
 from .review import apply_hierarchy_decisions, prepare_hierarchy_decisions
 from .validation import resolve_placement_path
 
 SourceKey = tuple[str, str]
-PathKey = tuple[str, str, str]
 
 
 # Encode structured identities without delimiter collisions or dependence on iteration order.
@@ -47,11 +48,6 @@ def _digest(value: Any) -> str:
 # Keep equal source IDs from different datasets distinct throughout consolidation.
 def _source_key(source: SourceTagRef) -> SourceKey:
     return source.source_dataset, source.tag_id
-
-
-# Match reviewed paths using the same parent-scoped normalization as intake and deduplication.
-def _path_key(path: PlacementPath) -> PathKey:
-    return path.service, normalize(path.category), normalize(path.speciality)
 
 
 # Index eligible source evidence and reject contradictory or unresolved deduplication records.
@@ -77,7 +73,7 @@ def _tag_paths(tag: TagProposal) -> dict[PathKey, PlacementPath]:
     paths = {}
     for row in sorted(tag.placements, key=lambda row: row.model_dump_json()):
         path = PlacementPath(service=row.service, category=row.category, speciality=row.speciality)
-        paths.setdefault(_path_key(path), path)
+        paths.setdefault(placement_path(path), path)
     return paths
 
 
@@ -189,8 +185,7 @@ def _baseline_match_reasons(tags: dict[SourceKey, TagProposal], taxonomy: Taxono
 def _producer_review_reasons(tags: dict[SourceKey, TagProposal]) -> dict[SourceKey, str]:
     reasons = {}
     for key, tag in tags.items():
-        flagged = {_path_key(PlacementPath(service=row.service, category=row.category, speciality=row.speciality))
-                   for row in tag.placements if row.needs_review}
+        flagged = {placement_path(row) for row in tag.placements if row.needs_review}
         if flagged:
             reasons[key] = (
                 f"Producer requested review: {len(flagged)} candidate placement(s); each placement's reason says "
@@ -279,7 +274,7 @@ def _approved_paths(
     nodes: dict[tuple[str, ...], ResolvedHierarchyNode],
 ) -> set[PathKey]:
     proposed = {path for source in decision.members for path in _tag_paths(tags[_source_key(source)])}
-    approved = {_path_key(path) for path in decision.approved_paths}
+    approved = {placement_path(path) for path in decision.approved_paths}
     if approved - proposed:
         raise ValueError("Approved paths must be proposed placements of this decision's members")
     by_id: dict[int | str, set[PathKey]] = {}
@@ -353,6 +348,9 @@ def resolve_outputs(
     prepared = _prepare_decisions(decisions, tags)
     hierarchy_decisions = prepare_hierarchy_decisions(decisions, screening)
     effective = apply_hierarchy_decisions(screening, taxonomy, hierarchy_decisions)
+    effective.repeated_names = repeated_name_warnings(
+        effective, live_placements(report, effective, prepared + hierarchy_decisions), taxonomy,
+    )
     nodes = _resolve_hierarchy(report, taxonomy, tags, effective)
     blocked_paths = {tuple(proposal.path) for proposal in effective.proposals if proposal.blocks_creation}
     flagged_reasons, flagged_codes = _combined_review_reasons(tags, taxonomy, effective)
@@ -438,7 +436,7 @@ def resolve_outputs(
     return ResolutionReport(
         baseline_snapshot_id=snapshot_id, evidence=report.model_copy(deep=True),
         decisions=prepared + hierarchy_decisions,
-        screening=screening,
+        screening=screening, effective_screening=effective,
         hierarchy=hierarchy, tags=resolved_tags,
         mappings=sorted(mappings, key=lambda mapping: _source_key(mapping.source)), links=resolved_links,
         dispositions=[dispositions[key] for key in sorted(dispositions)], counts=counts,
