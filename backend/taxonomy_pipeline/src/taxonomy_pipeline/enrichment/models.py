@@ -55,6 +55,10 @@ class HierarchyGroup(BaseModel):
     origins: list[InputLocation]
 
 
+# Why a producer needs a person, not bulk-decide, to settle a placement (see `ClassificationOutput.review_hold`).
+ReviewHold = Literal["generated_name", "single_tag_speciality", "category_scoped_match"]
+
+
 class ClassificationOutput(BaseModel):
     """One proposed placement; unresolved records keep the path and confidence null."""
 
@@ -91,6 +95,13 @@ class ClassificationOutput(BaseModel):
         "propose, or a tag saturation could not confirm as new. The tag stays pending until a reviewer "
         "decides. Omitted when false."
     ))
+    # Why only a person may decide this placement. `needs_review` alone can be settled by
+    # bulk-decide (a tag saturation couldn't confirm is often clear-cut by score); a hold
+    # marks what no score checks - a generated name, a one-tag speciality, a looser match.
+    review_hold: ReviewHold | None = Field(default=None, description=(
+        "Optional, with needs_review. Why a person, not bulk-decide, must decide this placement: "
+        "generated_name, single_tag_speciality or category_scoped_match. Omitted when null."
+    ))
 
     @model_validator(mode="after")
     # Require either a complete placement or an explicitly unresolved record.
@@ -100,6 +111,8 @@ class ClassificationOutput(BaseModel):
             raise ValueError("service, category, speciality, and confidence must be all present or all null")
         if self.needs_review and self.category is None:
             raise ValueError("needs_review requires a proposed placement for a reviewer to approve")
+        if self.review_hold is not None and not self.needs_review:
+            raise ValueError("review_hold requires needs_review: a hold only says why a placement is held")
         return self
 
     @model_serializer(mode="wrap")
@@ -108,6 +121,8 @@ class ClassificationOutput(BaseModel):
         data = handler(self)
         if not self.needs_review:
             data.pop("needs_review", None)
+        if self.review_hold is None:
+            data.pop("review_hold", None)
         return data
 
 
@@ -320,6 +335,7 @@ ReasonCode = Literal[
     "hierarchy_review",     # hierarchy screening wants a reviewer to look at a proposed path
     "baseline_name_match",  # the tag's normalized name matches an existing baseline tag
     "producer_flagged",     # the producer marked a placement needs_review
+    "producer_hold",        # ...and gave a review_hold: a person must decide, bulk-decide never does
     "hierarchy_blocked",    # hierarchy screening blocked a path the decision approved
     "duplicate_candidate",  # deduplication paired the tag with another incoming tag
 ]

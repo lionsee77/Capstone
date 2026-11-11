@@ -82,6 +82,7 @@ taxonomy_pipeline/
 │   │   ├── case_a.py                 #   Case A: category_adaptation -> contract records
 │   │   ├── category_adaptation.py    #   Case A: place new tags by content, else via their source category (see below)
 │   │   ├── from_category_adaptation.py #  serializes category_adaptation's placements into the contract
+│   │   ├── speciality_names.py       #   Case A: name grouped new specialities with the LLM, held for review (#132)
 │   │   ├── case_b.py                 #   Case B: LLM placement for tags with no source category
 │   │   ├── validation.py             #   merge 1: combine producer files, check paths against the baseline
 │   │   ├── deduplication.py          #   merge 2: group hierarchy paths, suggest duplicate tag pairs
@@ -842,7 +843,10 @@ taxonomy-pipeline bulk-decide --merge-run merge_runs/<timestamp> --report judged
   that are held for nothing else: their `resolution.json` disposition's
   `reason_codes` is exactly `["producer_flagged"]`. Tags in a duplicate candidate pair, tags
   matching a baseline tag by name, hierarchy screening holds, Case A's review
-  candidates for new tags, and tags already in `--decisions` are left as they are.
+  candidates for new tags, tags a producer held for a person (`review_hold`, so
+  `reason_codes` also has `producer_hold`: Case A's generated names, one-tag
+  specialities and category-scoped matches), and tags already in `--decisions`
+  are left as they are.
   A merge run saved before `reason_codes` existed is read from its reason text instead.
 - The output starts with `--decisions` and every decision the merge run already
   applied (its `resolution.json` `decisions`, hierarchy decisions included), so
@@ -876,7 +880,8 @@ integrations/<timestamp>/
 ├── baseline/*.sql   byte-for-byte copies of the baseline dumps
 ├── additions.sql    INSERT-only new categories, specialities, tags and links
 ├── enriched.yaml    config loading baseline + additions as dataset `enriched`, with the round's metrics
-└── manifest.json    provenance, counts, ID ranges, duplicate counts, temporary -> real IDs
+└── manifest.json    provenance, counts, ID ranges, duplicate counts, tags per speciality
+                     (existing vs new), temporary -> real IDs
 ```
 
 - It reruns the preview's checks against the current baseline first, and
@@ -905,6 +910,12 @@ integrations/<timestamp>/
   ends. New exact-duplicate names don't block (the baseline already reuses
   speciality names across categories), but the before/after counts are in the
   manifest and printed as a warning.
+- The manifest's `tags_per_speciality` gives depth's tags-per-speciality figure
+  for the baseline and the snapshot. The snapshot's figure is also split into
+  existing and new specialities, each with its count, mean and number holding a
+  single tag. When the snapshot's mean falls below the baseline's, the split is
+  printed as a warning, so a drop can be traced to new one-tag specialities
+  rather than shallower existing ones (#132).
 - Records validation set aside before review (invalid, unresolved, flagged)
   are not in the snapshot; their counts are in the manifest and printed as a
   warning.
@@ -1525,6 +1536,100 @@ Defaults come from `CategoryAdaptationMetric.default_params`
 | `semantic_threshold` | 0.6 | Cosine similarity for a meaning match, used for both categories and specialities. Lower than saturation's tag default (0.70): categories are broader, less precisely-worded concepts, and real runs show correct matches scoring as low as 0.63-0.69 |
 | `add_candidate_lexical_threshold` | 60 | Below this *and* the semantic threshold, nothing is even close - `NEW_CATEGORY`/`NEW_SPECIALITY` instead of `REVIEW_AMBIGUOUS` |
 | `add_candidate_semantic_threshold` | 0.5 | See above |
+| `category_scoped_semantic_threshold` | none (off) | Before proposing a new speciality under a *matched* category, join that category's closest existing speciality at or above this cosine score (`placement_basis: category_content`), held for a person (`review_hold: category_scoped_match`). Needs `semantic_model`. See below (#132) |
+| `one_category_per_tag` | false | Place a tag via its best-evidenced source category only, not one per source category. See below (#132) |
+| `group_new_specialities_threshold` | none (off) | Group the tags proposed as new specialities under one category, each group within this cosine score of its most central tag, which names it. Needs `semantic_model`. See below (#132) |
+| `group_name_model` | none | Name each group from all its tags with this OpenAI chat model instead of after its central tag; the name is held for review. Needs `group_new_specialities_threshold` and `OPENAI_API_KEY` (`pip install -e ".[llm]"`). See below (#132) |
+| `group_name_cache` | none | JSON file caching generated names by request, so a rerun gives the same names without paying again |
+| `flag_single_tag_specialities` | false | Flag `needs_review` on every new speciality left holding only its own tag. See below (#132) |
+
+### Fewer one-tag and repeated specialities (#132)
+
+Round 1 failed two of #88's guard rails because step 2 proposes every unmatched
+tag as its own speciality (486 of 487 new specialities held one tag), once per
+source category (18 repeated names). Five opt-in options address this. All are
+off by default, so existing rounds give the same output:
+
+```bash
+taxonomy-pipeline case-a --report judged_report.json --output case_a_output.json \
+    --one-category-per-tag --category-scoped-semantic-threshold 0.55 \
+    --group-new-specialities-threshold 0.5 --group-name-model gpt-4o-mini \
+    --group-name-cache group_names.json --flag-single-tag-specialities
+```
+
+They run in this order:
+
+- **`--one-category-per-tag`** keeps the source category with the most evidence:
+  a matched category before a new one before one only offered for review, then
+  the one with the most source specialities linking the tag to it, ties by
+  name. The rest are named in the record's `reason`.
+- **`--category-scoped-semantic-threshold`** compares the tag with the existing
+  specialities of its matched category only. The tags reaching step 2 already
+  scored low against *every* speciality in saturation, so few have a good home:
+  of 578 such placements, the best in-category match is ≥ 0.55 for about 20.
+  At 0.55 or above (20 matches), most read right (*Merchandise Buying* →
+  *Merchandising & Assortment*), but a few are only loosely related (*Patient
+  Care Delivery in Nursing* → *Patient Experience*). Between 0.50 and 0.55 some
+  are wrong (*Pricing for Cargo Services* → *Inventory Optimisation*). So 0.55
+  is the suggested value, and every such match is held for a person.
+- **`--group-new-specialities-threshold`** groups the tags still proposed as new
+  specialities under one category. Only a tag's first review candidate is
+  grouped, so one tag can't name specialities in several categories. A group
+  forms around its leader, the tag with the most others at or above the
+  threshold (ties by name). Each member is within the threshold of the leader,
+  so a group can't drift along a chain of near neighbours. Without
+  `--group-name-model`, the leader's name becomes the speciality's. That reads
+  well for tight groups (*Non-destructive Testing* over its six inspection
+  methods) and poorly for loose ones (*Bus Electrical and Electronic Systems
+  Maintenance* over *Bus Interchange Operations*).
+- **`--group-name-model`** is the naming rule for grouped specialities
+  (`enrichment/speciality_names.py`):
+  1. The model names each group from all its tags and its category, in one
+     request per group at temperature 0, cached by request in
+     `--group-name-cache`.
+  2. A generated name is held for review (`needs_review`), and the reason
+     credits the model.
+  3. The central tag's name is the fallback when the answer is unusable, or
+     when the generated name repeats an existing speciality or another new one,
+     because a repeat is what #88's integrity guard rail counts. The reason
+     says which fallback applied.
+
+  On a sample of real groups at 0.5, `gpt-4o-mini` named the loose groups
+  correctly where the central tag couldn't: *Gas Network Operations
+  Management* became *Gas and Electricity Network Management*, and *Asian Cold
+  Dish and Dessert Preparation* became *Asian and Western Cuisine
+  Preparation*. Some names add words the tags don't support (*Advanced* Camera
+  Operations), which is why every generated name goes to review.
+- **Holds:** every generated name, single-tag flag and category-scoped match
+  carries a `review_hold` besides `needs_review`. Merge-preview then records the
+  `producer_hold` reason code, and `bulk-decide` leaves the tag for a person. A
+  plain `needs_review` doesn't do this: bulk-decide settles ambiguous tags by
+  score, and no score checks these choices.
+- **`--flag-single-tag-specialities`** flags `needs_review` on any new speciality
+  still holding only its own tag, so none is integrated unseen. It adds review
+  items. It doesn't change depth.
+
+Measured on SkillsFuture against the original taxonomy (unjudged report),
+counting what integration would add if a reviewer accepted every tag's first
+proposal (#88's depth bar is ≥ 2.31):
+
+| Options | new specialities | one-tag | repeated names | tags per speciality |
+|---|---|---|---|---|
+| none (today) | 1,135 | 1,135 | 0* | 1.67 |
+| one category + scoped 0.55 | 1,115 | 1,115 | 0 | 1.69 |
+| ... + group 0.6 | 748 | 607 | 0 | 2.15 |
+| ... + group 0.55 | 675 | 522 | 0 | 2.28 |
+| ... + group 0.5 | 590 | 434 | 0 | 2.44 |
+
+\* On clear-cut placements alone, the default has 12 repeated-name rows. The
+first two options remove them and cut Case A's records from 2,894 to 2,074.
+
+Grouping reaches the bar only at 0.5, where groups get broad (gas and
+electricity network skills in one). A central tag's name mislabels such
+groups, but a generated name can cover them. So the suggested setting is
+grouping at 0.5 with `--group-name-model`. Names don't change depth, so the
+table holds either way. `/rounds` runs Case A with defaults until the team
+picks the options.
 
 ### Actions
 
@@ -1535,8 +1640,9 @@ placement also has a `speciality_action`:
 | Action | Level | Meaning |
 |---|---|---|
 | `SKIP_DUPLICATE` / `SKIP_SEMANTIC_DUPLICATE` | category, speciality | Matched an existing baseline node; reuse its real ID |
+| `SKIP_CATEGORY_SCOPED_MATCH` | speciality | Opt-in (#132): the matched category's closest existing speciality by meaning, at or above `category_scoped_semantic_threshold`; reuse its real ID |
 | `NEW_CATEGORY` | category | No existing category matches the source category; propose it as a new one |
-| `NEW_SPECIALITY` | speciality | The tag matches no existing speciality; propose the tag itself as one, under the resolved category |
+| `NEW_SPECIALITY` | speciality | The tag matches no existing speciality; propose the tag itself as one, under the resolved category. With `group_new_specialities_threshold`, a grouped tag is proposed under its group's speciality instead, named after the group's leader tag (`speciality_group_*` fields) |
 | `REVIEW_AMBIGUOUS` | category | Partial similarity at best; both the closest lexical and closest semantic baseline names are surfaced, and the tag is offered under the closest categories for review |
 | `REVIEW_NEW_PLACEMENT` | category | Matches a known category, but under a different parent than the source gives it (`unmatched_incoming_parents` vs `existing_parents`); offered for review as above |
 | `REVIEW_OTHER_LEVEL` | category | Matches a known concept at a different taxonomy level; offered for review as above |

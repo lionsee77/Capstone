@@ -86,8 +86,8 @@ def test_extra_fields_stay_in_raw_evidence_only(taxonomy: TaxonomyDataset, filen
     assert first.raw == enriched
     assert first.output == second.output
     assert first.candidate == second.candidate == first.output.model_dump()
-    # needs_review is optional and omitted when false, so the candidate keeps the nine contract fields.
-    assert set(first.candidate) == set(ClassificationOutput.model_fields) - {"needs_review"}
+    # needs_review and review_hold are optional and omitted when unset, so the candidate keeps the nine fields.
+    assert set(first.candidate) == set(ClassificationOutput.model_fields) - {"needs_review", "review_hold"}
     assert report.merged_outputs == [first.output]
     serialized = json.loads(report.model_dump_json())
     assert serialized["records"][0]["raw"] == enriched

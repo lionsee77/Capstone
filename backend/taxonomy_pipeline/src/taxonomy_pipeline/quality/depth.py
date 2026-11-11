@@ -8,8 +8,26 @@ from collections import Counter
 from typing import Any
 
 from ..models import Measure, MetricResult
-from ..taxonomy.base import LoadedDataset
+from ..taxonomy.base import LoadedDataset, TaxonomyDataset
 from .base import Metric
+
+
+def speciality_tag_counts(ds: TaxonomyDataset) -> dict[Any, int]:
+    """Tags linked to each speciality, by speciality ID, counting zero for an unlinked one.
+
+    Both ends of a link must resolve, matching integrity.py's dangling-link
+    check - otherwise a link to a nonexistent tag still counts as a real tag
+    here, inflating the branching-factor baseline. Public so integrate can split
+    the same count into existing vs new specialities.
+    """
+    speciality_ids = {row.get("id") for row in ds.specialities}
+    tag_ids = {row.get("id") for row in ds.tags}
+    linked = Counter(
+        link.get("speciality_id")
+        for link in ds.speciality_tags
+        if link.get("speciality_id") in speciality_ids and link.get("tag_id") in tag_ids
+    )
+    return {row.get("id"): linked.get(row.get("id"), 0) for row in ds.specialities}
 
 
 def _stats(counts: list[int]) -> dict[str, Any]:
@@ -60,17 +78,7 @@ class DepthMetric(Metric):
         specialities_per_category = Counter(row.get("category_id") for row in ds.specialities)
         category_counts = [specialities_per_category.get(row.get("id"), 0) for row in ds.categories]
 
-        speciality_ids = {row.get("id") for row in ds.specialities}
-        tag_ids = {row.get("id") for row in ds.tags}
-        tags_per_speciality = Counter(
-            link.get("speciality_id")
-            for link in ds.speciality_tags
-            # Both ends must resolve, matching integrity.py's dangling-link
-            # check - otherwise a link to a nonexistent tag still counts as
-            # a real tag here, inflating the branching-factor baseline.
-            if link.get("speciality_id") in speciality_ids and link.get("tag_id") in tag_ids
-        )
-        speciality_counts = [tags_per_speciality.get(row.get("id"), 0) for row in ds.specialities]
+        speciality_counts = list(speciality_tag_counts(ds).values())
 
         details = {
             "category_to_speciality": _stats(category_counts),

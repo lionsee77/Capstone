@@ -684,3 +684,33 @@ def test_lookup_prints_the_same_result_as_the_api_and_exits_zero_either_way(
 def test_lookup_fails_clearly_when_there_is_nothing_to_check_against(tmp_path: Path, capsys) -> None:
     assert main(["lookup", "tax", "--integrations-root", str(tmp_path / "none")]) == 1
     assert "[FAILED] lookup" in capsys.readouterr().err
+
+
+def test_case_a_passes_its_placement_options_through_and_refuses_scoped_search_without_a_model(
+    tmp_path, saturation_report, capsys,
+):
+    config_path = _write_stage_config(tmp_path)
+    report = saturation_report([
+        {"recommended_action": "ADD_CANDIDATE", "parent_status": "HAS_PARENT", "incoming_ids": [9001]},
+    ])
+    output = tmp_path / "case_a_output.json"
+
+    assert main(["case-a", "--config", str(config_path), "--report", str(report), "--semantic-model", "",
+                 "--one-category-per-tag", "--output", str(output)]) == 0
+    assert [record["speciality"] for record in json.loads(output.read_text())] == ["campaign planning"]
+
+    assert main(["case-a", "--config", str(config_path), "--report", str(report), "--semantic-model", "",
+                 "--category-scoped-semantic-threshold", "0.55", "--output", str(output)]) == 1
+    assert "needs a semantic_model" in capsys.readouterr().err
+
+    assert main(["case-a", "--config", str(config_path), "--report", str(report), "--semantic-model", "",
+                 "--flag-single-tag-specialities", "--output", str(output)]) == 0
+    assert [record["needs_review"] for record in json.loads(output.read_text())] == [True]
+
+    assert main(["case-a", "--config", str(config_path), "--report", str(report), "--semantic-model", "",
+                 "--group-new-specialities-threshold", "0.6", "--output", str(output)]) == 1
+    assert "group_new_specialities_threshold needs a semantic_model" in capsys.readouterr().err
+
+    assert main(["case-a", "--config", str(config_path), "--report", str(report), "--semantic-model", "",
+                 "--group-name-model", "gpt-test", "--output", str(output)]) == 1
+    assert "set group_new_specialities_threshold too" in capsys.readouterr().err

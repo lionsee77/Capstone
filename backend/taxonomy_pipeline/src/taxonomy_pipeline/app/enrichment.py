@@ -47,12 +47,20 @@ def _timestamped(parent: str) -> str:
 
 def case_a(
     config_path: str | Path, report: str | Path, *, baseline: str, incoming: str, output: str | Path,
-    semantic_model: str | None = None,
+    semantic_model: str | None = None, category_scoped_semantic_threshold: float | None = None,
+    one_category_per_tag: bool = False, group_new_specialities_threshold: float | None = None,
+    flag_single_tag_specialities: bool = False, group_name_model: str | None = None,
+    group_name_cache: str | Path | None = None,
 ) -> list[dict[str, Any]]:
     """Place the incoming tags saturation routed to Case A and write them to `output`."""
     records = run_case_a(
         load_taxonomies(config_path, baseline, incoming), report,
         baseline=baseline, incoming=incoming, semantic_model=semantic_model or None,
+        category_scoped_semantic_threshold=category_scoped_semantic_threshold,
+        one_category_per_tag=one_category_per_tag,
+        group_new_specialities_threshold=group_new_specialities_threshold,
+        flag_single_tag_specialities=flag_single_tag_specialities,
+        group_name_model=group_name_model, group_name_cache=group_name_cache,
     )
     Path(output).write_text(json.dumps(records, indent=2, ensure_ascii=False), encoding="utf-8")
     return records
@@ -192,4 +200,12 @@ def integrate(
         if rows["enriched"] > rows["baseline"]:
             warnings.append(f"{table}: rows in exact-duplicate name clusters rose from {rows['baseline']} to "
                             f"{rows['enriched']}; check the new names before using this snapshot")
+    depth = result.manifest["tags_per_speciality"]
+    if depth["baseline"]["mean"] is not None and depth["enriched"]["mean"] < depth["baseline"]["mean"]:
+        new = depth["enriched_new"]
+        warnings.append(
+            f"tags per speciality fell from {depth['baseline']['mean']} to {depth['enriched']['mean']}: existing "
+            f"specialities average {depth['enriched_existing']['mean']}, the {new['specialities']} new ones "
+            f"{new['mean']} ({new['single_tag']} hold a single tag)"
+        )
     return IntegrateResult(integration=result, warnings=warnings)

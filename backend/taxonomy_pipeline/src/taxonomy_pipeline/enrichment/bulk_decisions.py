@@ -17,8 +17,8 @@ the middle band pending for a person:
 The result is a draft decisions file, not an approval: it is fed back through
 `merge-preview --decisions` like a hand-written one, so every bulk decision
 appears in `preview.csv` with its reason and can be edited or removed. Tags held
-for another reason (a duplicate candidate pair, a baseline name match) or that
-already have a decision are never touched.
+for another reason (a duplicate candidate pair, a baseline name match, a
+producer's `review_hold`) or that already have a decision are never touched.
 """
 from __future__ import annotations
 

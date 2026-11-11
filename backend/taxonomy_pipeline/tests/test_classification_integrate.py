@@ -283,6 +283,25 @@ def test_manifest_records_where_the_snapshot_came_from(tmp_path, baseline):
     assert all(set(rows) == {"baseline", "enriched"} for rows in manifest["exact_duplicate_rows"].values())
 
 
+def test_manifest_splits_tags_per_speciality_into_existing_and_new_specialities(tmp_path, baseline):
+    result = integrate(_resolution(tmp_path, baseline), baseline, out_dir=tmp_path / "out")
+    depth = result.manifest["tags_per_speciality"]
+
+    enriched = load_datasets(load_config(tmp_path / "out" / "enriched.yaml"))["enriched"]
+    original = SqlDumpSource(baseline.name, baseline.paths).load()
+    existing_ids = {row["id"] for row in original.specialities}
+    links = [link for link in enriched.speciality_tags if link["speciality_id"] in existing_ids]
+    assert depth["enriched_existing"] == {
+        "specialities": len(existing_ids), "mean": round(len(links) / len(existing_ids), 2),
+        "single_tag": sum(
+            sum(link["speciality_id"] == sid for link in links) == 1 for sid in existing_ids
+        ),
+    }
+    assert depth["enriched_new"]["specialities"] == result.counts["specialities"]
+    assert depth["enriched"]["specialities"] == len(enriched.specialities)
+    assert depth["baseline"]["mean"] == round(len(original.speciality_tags) / len(existing_ids), 2)
+
+
 def test_refuses_while_sources_are_pending_review(tmp_path, baseline):
     resolution = _resolution(tmp_path, baseline, decisions=[])
 
