@@ -89,6 +89,8 @@ docker-compose.override.yml
 
 # Generated taxonomy pipeline output
 backend/taxonomy_pipeline/report.json
+# docs/generalization-findings.md's reproduce command (~60 MB)
+backend/taxonomy_pipeline/generalization_v1.json
 judged_report.json
 # Classification stage outputs land in whichever folder the command runs from
 case_a_output.json
@@ -120,3 +122,6 @@ judge_cache_*.json
 
 # O*NET raw download (backend/onet/README.md)
 backend/onet/raw/
+
+# ESCO raw download and its flattened join (backend/esco/README.md)
+backend/esco/raw/

@@ -43,6 +43,7 @@ jobs:
         run: |
           python -m py_compile \
             backend/audit/taxonomy_audit.py \
+            backend/esco/flatten_esco.py \
             backend/skillsfuture/generate_skillsfuture_taxonomy.py
 
       - name: Check the snapshot loader
@@ -122,6 +123,12 @@ jobs:
 
       - name: Lint
         run: python -m ruff check .
+
+      # backend/esco/ is a data-prep folder, not a subproject (like onet/ and
+      # skillsfuture/); its one script is tested in tests/test_flatten_esco.py
+      # here, so lint it here too, with this project's ruff settings.
+      - name: Lint the ESCO flatten script
+        run: python -m ruff check --config pyproject.toml ../esco
 
       - name: Run tests
         run: python -m pytest -q

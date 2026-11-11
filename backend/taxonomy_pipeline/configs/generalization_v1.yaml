@@ -1,0 +1,109 @@
+# Generalisation check (#101): score the two external sources nobody tuned the
+# matching on (O*NET from #119, ESCO from backend/esco/) next to the original
+# taxonomy and SkillsFuture, with exactly the metric settings of the baseline of
+# record (configs/baseline_v1.yaml). Findings: docs/generalization-findings.md.
+# Paths are resolved relative to this file.
+metric_definitions_version: 1
+
+datasets:
+  - name: original
+    type: sql_dump
+    paths:
+      - ../../sql-files-nus/services.sql
+      - ../../sql-files-nus/categories.sql
+      - ../../sql-files-nus/specialities.sql
+      - ../../sql-files-nus/tags.sql
+      - ../../sql-files-nus/speciality_tags.sql
+
+  - name: skillsfuture
+    type: sql_dump
+    paths:
+      - ../../skillsfuture/skillsfuture_taxonomy.sql
+    table_map:
+      categories: sf_categories
+      specialities: sf_specialities
+      tags: sf_tags
+      speciality_tags: sf_speciality_tags
+
+  - name: onet
+    type: sql_dump
+    paths:
+      - ../../onet/onet_taxonomy.sql
+    table_map:
+      categories: onet_categories
+      specialities: onet_specialities
+      tags: onet_tags
+      speciality_tags: onet_speciality_tags
+
+  - name: esco
+    type: sql_dump
+    paths:
+      - ../../esco/esco_taxonomy.sql
+    table_map:
+      categories: esco_categories
+      specialities: esco_specialities
+      tags: esco_tags
+      speciality_tags: esco_speciality_tags
+
+  - name: ssic
+    type: ssic
+    paths: [../../reference_data/ssic/ssic2025-classification-structure.xlsx]
+
+  - name: ssoc
+    type: ssoc
+    paths: [../../reference_data/ssoc/ssoc2024-classification-structure.xlsx]
+
+metrics:
+  - {id: integrity, params: {dataset: original, fuzzy_threshold: 85}}
+  - {id: integrity, params: {dataset: skillsfuture, fuzzy_threshold: 85}}
+  - {id: integrity, params: {dataset: onet, fuzzy_threshold: 85}}
+  - {id: integrity, params: {dataset: esco, fuzzy_threshold: 85}}
+
+  - {id: depth, params: {dataset: original}}
+  - {id: depth, params: {dataset: skillsfuture}}
+  - {id: depth, params: {dataset: onet}}
+  - {id: depth, params: {dataset: esco}}
+
+  - id: breadth
+    params: &breadth
+      target: original
+      ssic_reference: ssic
+      ssoc_reference: ssoc
+      industry_level: division
+      occupational_level: minor_group
+      industry_service_id: 1
+      matching_method: semantic
+      semantic_threshold: 0.60  # provisional and uncalibrated (#47)
+      top_k: 5
+  - {id: breadth, params: {<<: *breadth, target: skillsfuture}}
+  - {id: breadth, params: {<<: *breadth, target: onet}}
+  - {id: breadth, params: {<<: *breadth, target: esco}}
+
+  # Side check, NOT definitions v1: count O*NET's and ESCO's own categories as
+  # industry candidates (their mappings put them under Function, service 2).
+  - {id: breadth, params: {<<: *breadth, target: onet, industry_service_id: 2}}
+  - {id: breadth, params: {<<: *breadth, target: esco, industry_service_id: 2}}
+
+  # Cumulative curve: each incoming source is compared against the original plus
+  # every earlier source, so O*NET and ESCO face far more known concepts than
+  # SkillsFuture does. Use it for "how much does each source still add".
+  - id: saturation
+    params: &saturation
+      baseline: original
+      incoming: [skillsfuture, onet, esco]
+      threshold: 90
+      semantic_model: sentence-transformers/all-MiniLM-L6-v2
+      semantic_model_revision: 1110a243fdf4706b3f48f1d95db1a4f5529b4d41
+      semantic_threshold: 0.70
+      semantic_threshold_by_level:
+        specialities: 0.80
+      add_candidate_lexical_threshold: 60
+      add_candidate_semantic_threshold: 0.50
+      cross_level: true
+      judge: null
+
+  # Like-for-like: each source against the original alone, so all three face the
+  # same known concepts. Use these to compare how the thresholds behave across
+  # sources (step 1 of the curve above is already SkillsFuture against the original).
+  - {id: saturation, params: {<<: *saturation, incoming: [onet]}}
+  - {id: saturation, params: {<<: *saturation, incoming: [esco]}}
