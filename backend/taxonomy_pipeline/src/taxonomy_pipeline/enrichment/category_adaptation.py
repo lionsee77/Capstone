@@ -678,6 +678,8 @@ class CategoryAdaptationMetric(Metric):
                             "target_speciality_id": speciality.get("id"),
                             "target_speciality_name": speciality.get("name"),
                             "speciality_semantic_score": score,
+                            # Looser than the global bar, so a person checks it (review_hold).
+                            "needs_review": True,
                         })
                 candidates = review_candidates.get(category.get("id")) or []
                 if not candidates:

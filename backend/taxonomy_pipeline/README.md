@@ -825,7 +825,10 @@ taxonomy-pipeline bulk-decide --merge-run merge_runs/<timestamp> --report judged
   that are held for nothing else: their `resolution.json` disposition's
   `reason_codes` is exactly `["producer_flagged"]`. Tags in a duplicate candidate pair, tags
   matching a baseline tag by name, hierarchy screening holds, Case A's review
-  candidates for new tags, and tags already in `--decisions` are left as they are.
+  candidates for new tags, tags a producer held for a person (`review_hold`, so
+  `reason_codes` also has `producer_hold`: Case A's generated names, one-tag
+  specialities and category-scoped matches), and tags already in `--decisions`
+  are left as they are.
   A merge run saved before `reason_codes` existed is read from its reason text instead.
 - The output starts with `--decisions` and every decision the merge run already
   applied (its `resolution.json` `decisions`, hierarchy decisions included), so
@@ -1514,7 +1517,7 @@ Defaults come from `CategoryAdaptationMetric.default_params`
 | `semantic_threshold` | 0.6 | Cosine similarity for a meaning match, used for both categories and specialities. Lower than saturation's tag default (0.70): categories are broader, less precisely-worded concepts, and real runs show correct matches scoring as low as 0.63-0.69 |
 | `add_candidate_lexical_threshold` | 60 | Below this *and* the semantic threshold, nothing is even close - `NEW_CATEGORY`/`NEW_SPECIALITY` instead of `REVIEW_AMBIGUOUS` |
 | `add_candidate_semantic_threshold` | 0.5 | See above |
-| `category_scoped_semantic_threshold` | none (off) | Before proposing a new speciality under a *matched* category, join that category's closest existing speciality at or above this cosine score (`placement_basis: category_content`). Needs `semantic_model`. See below (#132) |
+| `category_scoped_semantic_threshold` | none (off) | Before proposing a new speciality under a *matched* category, join that category's closest existing speciality at or above this cosine score (`placement_basis: category_content`), held for a person (`review_hold: category_scoped_match`). Needs `semantic_model`. See below (#132) |
 | `one_category_per_tag` | false | Place a tag via its best-evidenced source category only, not one per source category. See below (#132) |
 | `group_new_specialities_threshold` | none (off) | Group the tags proposed as new specialities under one category, each group within this cosine score of its most central tag, which names it. Needs `semantic_model`. See below (#132) |
 | `group_name_model` | none | Name each group from all its tags with this OpenAI chat model instead of after its central tag; the name is held for review. Needs `group_new_specialities_threshold` and `OPENAI_API_KEY` (`pip install -e ".[llm]"`). See below (#132) |
@@ -1545,9 +1548,11 @@ They run in this order:
   specialities of its matched category only. The tags reaching step 2 already
   scored low against *every* speciality in saturation, so few have a good home:
   of 578 such placements, the best in-category match is ≥ 0.55 for about 20.
-  Above 0.55 the matches read right (*Merchandise Buying* → *Merchandising &
-  Assortment*); between 0.50 and 0.55 some are wrong (*Pricing for Cargo
-  Services* → *Inventory Optimisation*), so 0.55 is the suggested value.
+  At 0.55 or above (20 matches), most read right (*Merchandise Buying* →
+  *Merchandising & Assortment*), but a few are only loosely related (*Patient
+  Care Delivery in Nursing* → *Patient Experience*). Between 0.50 and 0.55 some
+  are wrong (*Pricing for Cargo Services* → *Inventory Optimisation*). So 0.55
+  is the suggested value, and every such match is held for a person.
 - **`--group-new-specialities-threshold`** groups the tags still proposed as new
   specialities under one category. Only a tag's first review candidate is
   grouped, so one tag can't name specialities in several categories. A group
@@ -1576,6 +1581,11 @@ They run in this order:
   Dish and Dessert Preparation* became *Asian and Western Cuisine
   Preparation*. Some names add words the tags don't support (*Advanced* Camera
   Operations), which is why every generated name goes to review.
+- **Holds:** every generated name, single-tag flag and category-scoped match
+  carries a `review_hold` besides `needs_review`. Merge-preview then records the
+  `producer_hold` reason code, and `bulk-decide` leaves the tag for a person. A
+  plain `needs_review` doesn't do this: bulk-decide settles ambiguous tags by
+  score, and no score checks these choices.
 - **`--flag-single-tag-specialities`** flags `needs_review` on any new speciality
   still holding only its own tag, so none is integrated unseen. It adds review
   items. It doesn't change depth.

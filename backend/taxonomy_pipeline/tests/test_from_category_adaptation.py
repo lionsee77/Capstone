@@ -280,7 +280,7 @@ def test_output_validates_against_the_shared_contract():
     assert [record.needs_review for record in validated] == [False, False, True]
 
 
-def test_category_scoped_match_becomes_a_resolved_record_in_the_existing_speciality():
+def test_category_scoped_match_is_held_for_a_person_in_the_existing_speciality():
     placement = _base(
         placement_basis="category_content",
         speciality_action="SKIP_CATEGORY_SCOPED_MATCH",
@@ -293,7 +293,7 @@ def test_category_scoped_match_becomes_a_resolved_record_in_the_existing_special
 
     assert (record.service, record.category, record.speciality) == ("Industry", "Banking", "Loan Servicing")
     assert record.confidence == 0.61
-    assert record.needs_review is False
+    assert (record.needs_review, record.review_hold) == (True, "category_scoped_match")
     assert "closest in meaning to existing speciality 'Loan Servicing' (semantic 0.61)" in record.reason
     CLASSIFICATION_OUTPUTS.validate_python(
         CLASSIFICATION_OUTPUTS.dump_python([record], mode="json")
@@ -331,6 +331,7 @@ def test_grouped_tag_joins_the_group_speciality_and_says_which_tag_names_it():
     member_record, leader_record = build_classification_outputs([member, leader], source_dataset="skillsfuture")
 
     assert member_record.speciality == "loan approval" and member_record.needs_review is False
+    assert member_record.review_hold is None
     assert "Grouped with 2 other new tags close in meaning (semantic 0.72 to 'loan approval')" in member_record.reason
     assert "named after its most central tag, 'loan approval'" in member_record.reason
     assert "Groups 3 new tags" in leader_record.reason and "'loan review'" in leader_record.reason
@@ -345,6 +346,7 @@ def test_generated_group_name_is_held_for_review_and_credits_the_model():
     )], source_dataset="skillsfuture")
 
     assert record.speciality == "Loan Origination" and record.needs_review is True
+    assert record.review_hold == "generated_name"
     assert "named 'Loan Origination' by gpt-test from all its tags; check the name" in record.reason
 
 
@@ -365,5 +367,6 @@ def test_single_tag_speciality_flag_holds_the_record_for_review():
     )
 
     assert record.needs_review is True and record.speciality == "loan processing"
+    assert record.review_hold == "single_tag_speciality"
     assert "would hold only this tag, so it is flagged for review" in record.reason
     CLASSIFICATION_OUTPUTS.validate_python([record.model_dump()])

@@ -124,6 +124,24 @@
           "description": "Optional. True when this placement needs a human decision: a candidate the producer could only propose, or a tag saturation could not confirm as new. The tag stays pending until a reviewer decides. Omitted when false.",
           "title": "Needs Review",
           "type": "boolean"
+        },
+        "review_hold": {
+          "anyOf": [
+            {
+              "enum": [
+                "generated_name",
+                "single_tag_speciality",
+                "category_scoped_match"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional, with needs_review. Why a person, not bulk-decide, must decide this placement: generated_name, single_tag_speciality or category_scoped_match. Omitted when null.",
+          "title": "Review Hold"
         }
       },
       "required": [

@@ -137,6 +137,17 @@ def _other_categories_reason(placement: dict[str, Any]) -> str:
     )
 
 
+def _review_hold(placement: dict[str, Any]) -> str | None:
+    """Why only a person may decide this placement (`ClassificationOutput.review_hold`), if anything."""
+    if placement.get("placement_basis") == CATEGORY_CONTENT_BASIS:
+        return "category_scoped_match"
+    if placement.get("speciality_name_source") == "generated":
+        return "generated_name"
+    if placement.get("single_tag_speciality"):
+        return "single_tag_speciality"
+    return None
+
+
 def _speciality_group_reason(placement: dict[str, Any]) -> str:
     """How grouping, naming and `flag_single_tag_specialities` shaped the new speciality (#132)."""
     reason = ""
@@ -189,9 +200,11 @@ def _category_content_output(placement: dict[str, Any], source_dataset: str) -> 
             f"Source category '{placement['source_category_name']}' matches existing category '{category}' "
             f"({placement['category_match_type']} match). Among that category's specialities the tag is closest "
             f"in meaning to existing speciality '{speciality}' (semantic {score}), so it joins it instead of "
-            "becoming a new one-tag speciality."
+            "becoming a new one-tag speciality. That is below the global match threshold, so a person checks it."
             + _other_categories_reason(placement)
         ),
+        needs_review=True,
+        review_hold="category_scoped_match",
     )
 
 
@@ -243,6 +256,7 @@ def _review_candidate_output(placement: dict[str, Any], source_dataset: str) -> 
             + _evidence_reason(placement)
         ),
         needs_review=True,
+        review_hold=_review_hold(placement),
     )
 
 
@@ -313,11 +327,10 @@ def build_classification_outputs(placements: list[dict[str, Any]], source_datase
                 speciality=speciality,
                 confidence=confidence,
                 reason=reason,
-                # The contract allows the flag only on a placement. A single-tag
-                # flag or a generated name is only ever set on one.
-                needs_review=bool(
-                    placement.get("single_tag_speciality") or placement.get("speciality_name_source") == "generated"
-                ) and category is not None,
+                # The contract allows the flag only on a placement. A hold is only
+                # ever set on one; it keeps bulk-decide from settling the tag.
+                needs_review=_review_hold(placement) is not None and category is not None,
+                review_hold=_review_hold(placement) if category is not None else None,
             )
         )
     return records

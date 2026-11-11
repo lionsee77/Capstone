@@ -488,7 +488,7 @@ def test_category_scoped_search_joins_an_existing_speciality_in_the_matched_cate
     assert placement["target_speciality_id"] == 3
     assert placement["target_speciality_name"] == "Loan Servicing"
     assert placement["speciality_semantic_score"] == 0.7
-    assert placement["needs_review"] is False
+    assert placement["needs_review"] is True  # looser than the global bar, so a person checks it
 
 
 def test_category_scoped_search_below_its_threshold_still_proposes_a_new_speciality(monkeypatch):
@@ -635,7 +635,7 @@ def test_flagging_single_tag_specialities_leaves_matches_to_existing_ones_alone(
     ).details["placements"][0]
 
     assert placement["speciality_action"] == "SKIP_CATEGORY_SCOPED_MATCH"
-    assert placement["needs_review"] is False and "single_tag_speciality" not in placement
+    assert "single_tag_speciality" not in placement
 
 
 def test_flag_single_tag_specialities_must_be_a_boolean():
