@@ -45,9 +45,11 @@ verdict on screen is the API's.
   run scores both versions, so the round also appears on the Improvement page as a two-stage
   comparison. Earlier stages show as not scored until a whole-chain run covers them.
   The review panel also shows advisory repeated category/speciality names from
-  effective screening, including automatically accepted proposals and affected tags. Full clusters
-  appear once, grouped by resolved parent with original proposal paths retained;
-  affected proposal cards carry a short reminder. These warnings do not block
+  effective screening, including automatically accepted proposals and affected tags. They appear
+  once, as a short list of names with how many parents each would go under (widest first, eight
+  shown until "Show all"); a name expands to its parents. The round page shows the same list
+  from the round's warnings when there is no review panel, and keeps other warnings under
+  "Worth checking". Affected proposal cards carry a short reminder. These warnings do not block
   integration or change approvals. Apply decisions to refresh them after resolving
   a competing path. Older cached queues need a new merge preview/apply run.
   **To decide** counts and lists only pending tags without a saved decision.
@@ -193,6 +195,7 @@ frontend/
 │   │   ├── layout/                   #   app shell: sidebar nav, API status, PageHeader / Section / Notice
 │   │   ├── viz/                      #   SVG trend chart, sparkline, meter, verdict chip
 │   │   ├── run-status-badge.tsx      #   run and metric status as a coloured dot and label
+│   │   ├── repeated-names.tsx        #   repeated-name warnings as names with parent counts
 │   │   └── level-tag.tsx             #   a concept's level as a small mono tag
 │   ├── lib/
 │   │   ├── api/
@@ -203,6 +206,7 @@ frontend/
 │   │   ├── metric-labels.ts          #   labels repeated metrics by their differing params
 │   │   ├── improvement.ts            #   lines stage comparisons up into trend rows (no metric logic)
 │   │   ├── run-view.ts               #   which taxonomies a run scored
+│   │   ├── repeated-names.ts         #   splits repeated-name warning text into name and parents
 │   │   ├── format.ts                 #   values by unit (rate -> %, change -> pts), verdict wording, dates, short run ids
 │   │   └── utils.ts                  #   `cn` class-name helper (shadcn)
 │   └── stores/
