@@ -287,6 +287,7 @@ export const repeatedNameWarningSchema = z.object({
   message: z.string(),
   proposal_ids: z.array(z.string()),
 });
+export type RepeatedNameWarning = z.infer<typeof repeatedNameWarningSchema>;
 
 export const proposalScreeningReportSchema = z.object({
   baseline_snapshot_id: z.string(),
