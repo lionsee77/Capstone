@@ -153,6 +153,11 @@ the non-Docker setup uses. The sentence model is built into the image, so nothin
 Paths saved by a run inside the container start with `/app/backend`, so use either Docker or a local
 install for a given round, not both.
 
+The API runs as user and group 1000, so on Linux the files it writes into `backend/` belong to you rather
+than root. If `id -u` or `id -g` prints something else, set them once in a `.env` file at the repository root:
+`printf 'HOST_UID=%s\nHOST_GID=%s\n' "$(id -u)" "$(id -g)" > .env`. Docker Desktop on macOS and Windows
+doesn't need this.
+
 ```bash
 docker compose --profile test run --rm backend-tests     # pytest
 docker compose --profile test run --rm dashboard-tests   # vitest

@@ -18,6 +18,11 @@ x-api: &api
   volumes:
     - ./backend:/app/backend
   working_dir: /app/backend/taxonomy_pipeline
+  # Run as the host user so what the API writes into backend/ (rounds, snapshots, the run database) isn't
+  # root-owned on a Linux host. Set HOST_UID/HOST_GID in a root .env when `id -u` / `id -g` aren't 1000.
+  user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
+  environment:
+    HOME: /tmp
 
 services:
   api:
