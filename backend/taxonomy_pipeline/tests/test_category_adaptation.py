@@ -394,7 +394,7 @@ def test_category_with_a_mismatched_service_is_flagged_for_review_not_crashed():
     assert placement["candidate_score_type"] == "lexical"
 
 
-# --- #132: opt-in placement options -----------------------------------------
+# --- opt-in placement options -----------------------------------------------
 
 
 class _ScopedMatcher:

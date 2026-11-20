@@ -261,7 +261,7 @@ def test_synonym_check_lists_synonyms_stored_before_the_ambiguity_rules(
 ) -> None:
     from taxonomy_pipeline.synonyms import add_synonym as store_add
 
-    for concept_id, name in (("101", "gst"), ("102", "unused-tag")):  # what #59 allowed: one term, two concepts
+    for concept_id, name in (("101", "gst"), ("102", "unused-tag")):  # one term, two concepts
         store_add(_request(concept_id=concept_id, term="Levy"), canonical_name=name, snapshot_id="s")
     problems = use_cases.synonym_problems("original", config_path=config)
     assert sorted((p.concept_id, p.problem) for p in problems) == [

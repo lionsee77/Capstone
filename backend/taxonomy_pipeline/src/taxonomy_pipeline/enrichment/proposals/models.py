@@ -64,8 +64,8 @@ class ScreenedProposal(BaseModel):
 class ScreeningSettings(BaseModel):
     """Explicit thresholds are persisted so saved reports can be replayed consistently.
 
-    `synonyms` are the approved synonyms screening applied (`merge-preview --synonyms`,
-    #60), saved with the report for the same reason: a replay must not change because a
+    `synonyms` are the approved synonyms screening applied (`merge-preview --synonyms`),
+    saved with the report for the same reason: a replay must not change because a
     reviewer approved another synonym in the meantime. Empty means none were applied.
     """
 

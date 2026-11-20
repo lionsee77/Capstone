@@ -300,7 +300,7 @@ All in `src/taxonomy_pipeline/quality/saturation.py` and the comparison engine i
   metric. They belong in whatever consumes `details.curve` (a notebook or
   the dashboard), so the metric stays a data producer.
 
-Each change needs tests and a README update in the same PR, per `AGENTS.md`.
+Each change needs tests and a README update.
 
 ## References
 

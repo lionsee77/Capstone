@@ -5,7 +5,7 @@ taxonomy row of its own: it lives in its own table and points at the concept by
 dataset, level and ID. Concept IDs are strings, as in the audit log, because
 they are scoped by dataset rather than being foreign keys into a client table.
 
-A synonym is global, or scoped to one category or speciality branch (#61): a scoped
+A synonym is global, or scoped to one category or speciality branch: a scoped
 synonym only resolves for lookups made inside that branch, which is how one word can
 mean different things in different parts of the taxonomy ("pitch" in Sales vs. Sports).
 
@@ -75,7 +75,7 @@ class Synonym(_Scoped):
     synonym_id: Text
     term: Text
     normalized_term: Text
-    # `match_key(term)`: what duplicates and lookups compare, so "Audits" is the same term as "audit" (#59).
+    # `match_key(term)`: what duplicates and lookups compare, so "Audits" is the same term as "audit".
     term_key: Text
     dataset: Text
     concept_level: SynonymLevel

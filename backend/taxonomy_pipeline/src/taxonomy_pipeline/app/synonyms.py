@@ -4,7 +4,7 @@
 Adding a synonym first checks the concept exists in the named taxonomy, found either
 through a config file (the CLI) or through a past run's config (the API, the same
 way `/taxonomy` resolves a dataset), then that the term won't become ambiguous
-(`SynonymIndex.check_new`, #61). The synonym records that taxonomy's snapshot
+(`SynonymIndex.check_new`). The synonym records that taxonomy's snapshot
 fingerprint, so its audit event identifies exactly which version of the concept it
 was checked against. Neither path writes to a taxonomy file.
 
@@ -13,7 +13,7 @@ as a missing concept: UnknownConcept (no such run, dataset or concept) and
 TaxonomyUnavailable (the config can't be read, or the dataset's files can't be loaded).
 
 `resolve_term` answers "what does this term mean here?" from the live approved
-synonyms (#60). `export_synonyms` freezes them into a `synonym_set` file, which is
+synonyms. `export_synonyms` freezes them into a `synonym_set` file, which is
 what a scoring config names: scores must not move when a reviewer approves a synonym.
 
 `suggest_synonyms` runs one source (`synonyms/sources/`) and stores what it suggests as
@@ -95,7 +95,7 @@ def synonym_problems(dataset: str, *, config_path: str | Path | None = None,
                      run_id: str | None = None) -> list[SynonymProblem]:
     """`dataset`'s approved synonyms that don't resolve as recorded against its taxonomy (found as for
     `add_synonym`): stale ones (concept gone, renamed or moved out of scope), and global synonyms that are
-    another concept's name or that two concepts share, e.g. from before the #61 rules existed."""
+    another concept's name or that two concepts share, e.g. from before these rules existed."""
     taxonomy = _taxonomy(dataset, config_path=config_path, run_id=run_id)
     return SynonymIndex(taxonomy, approved_synonyms(dataset)).problems()
 

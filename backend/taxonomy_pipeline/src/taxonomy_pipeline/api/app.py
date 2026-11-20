@@ -137,7 +137,7 @@ def get_run(run_id: str, details: bool = True) -> RunReport:
 def compare_runs(
     before_id: str, after_id: str, before_subject: str | None = None, after_subject: str | None = None,
 ) -> RunComparison:
-    """Compare two stored runs metric by metric (#69): values, changes and verdicts, embedding the
+    """Compare two stored runs metric by metric: values, changes and verdicts, embedding the
     comparability check. Runs come from run history only - never a file path - so a request can't
     read reports elsewhere on the server. Read `comparable` before any verdict."""
     before = scoring.get_run(before_id)

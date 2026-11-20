@@ -94,8 +94,8 @@ class IntegrityMetric(Metric):
 
     def measures(self, result: MetricResult) -> list[Measure]:
         """Every defect count, lower is better. Counts, not rates, so they grow with the taxonomy: an
-        enrichment that adds rows can add defects too, and that is what a reviewer needs to see (#68 adds
-        size-independent duplication rates). A check the run skipped (no services table) has no value."""
+        enrichment that adds rows can add defects too, and that is what a reviewer needs to see (size-independent
+        duplication rates are future work). A check the run skipped (no services table) has no value."""
         details = result.details
         exact, fuzzy = details.get("exact_duplicates") or {}, details.get("fuzzy_duplicates") or {}
         measures = [

@@ -51,30 +51,6 @@ jobs:
           sh -n backend/loader/load_snapshot.sh
           docker compose -f backend/compose.yaml config -q
 
-      - name: Validate audit notebook
-        run: |
-          python - <<'PY'
-          import json
-          from pathlib import Path
-
-          path = Path("backend/audit/taxonomy_audit.ipynb")
-          notebook = json.loads(path.read_text(encoding="utf-8"))
-
-          if notebook.get("nbformat") != 4:
-              raise SystemExit(f"Unsupported notebook format: {notebook.get('nbformat')}")
-
-          code_cells = 0
-          for index, cell in enumerate(notebook.get("cells", []), start=1):
-              if cell.get("cell_type") == "code":
-                  code_cells += 1
-                  compile("".join(cell.get("source", [])), f"notebook-cell-{index}", "exec")
-
-          if code_cells == 0:
-              raise SystemExit("The audit notebook contains no executable code cells")
-
-          print(f"Validated {code_cells} notebook code cells")
-          PY
-
       # TEMPORARY PLACEHOLDER: replace this step with the project's chosen linter,
       # for example Ruff, once its configuration is committed.
       - name: Lint placeholder

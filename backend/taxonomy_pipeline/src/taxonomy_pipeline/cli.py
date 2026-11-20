@@ -480,18 +480,18 @@ def build_parser() -> argparse.ArgumentParser:
     case_a.add_argument("--output", default="case_a_output.json")
     case_a.add_argument("--category-scoped-semantic-threshold", type=float, default=None,
                         help="before proposing a new speciality under a matched category, join the category's "
-                             "closest existing speciality at or above this cosine score (off by default; #132)")
+                             "closest existing speciality at or above this cosine score (off by default)")
     case_a.add_argument("--one-category-per-tag", action="store_true",
-                        help="place a tag via its best-evidenced source category only, not one per category (#132)")
+                        help="place a tag via its best-evidenced source category only, not one per category")
     case_a.add_argument("--group-new-specialities-threshold", type=float, default=None,
                         help="group tags proposed as new specialities under one category when within this cosine "
-                             "score of the group's most central tag, which names it (off by default; #132)")
+                             "score of the group's most central tag, which names it (off by default)")
     case_a.add_argument("--group-name-model",
                         help="name each grouped speciality from all its tags with this OpenAI chat model, held for "
-                             "review (needs --group-new-specialities-threshold and OPENAI_API_KEY; #132)")
+                             "review (needs --group-new-specialities-threshold and OPENAI_API_KEY)")
     case_a.add_argument("--group-name-cache", help="JSON file caching generated names, so a rerun doesn't pay again")
     case_a.add_argument("--flag-single-tag-specialities", action="store_true",
-                        help="flag for review every new speciality left holding only its own tag (#132)")
+                        help="flag for review every new speciality left holding only its own tag")
     case_a.set_defaults(func=_cmd_case_a)
 
     case_b = subparsers.add_parser("case-b", help="propose placements for parentless new tags with an LLM")

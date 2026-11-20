@@ -3,7 +3,7 @@
 Prepares [ESCO](https://esco.ec.europa.eu/) (the European Commission's
 classification of occupations and skills) as an incoming source for the
 taxonomy pipeline. It is the second external source after O*NET (`../onet/`),
-added to test whether matching tuned on SkillsFuture generalises (#101); the
+added to test whether matching tuned on SkillsFuture generalises; the
 results are in `../taxonomy_pipeline/docs/generalization-findings.md`.
 
 Unlike O*NET, ESCO is published as separate files linked by concept URI, so

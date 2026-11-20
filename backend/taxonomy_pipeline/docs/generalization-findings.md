@@ -1,12 +1,12 @@
 # Does the pipeline generalise past SkillsFuture? (O*NET, ESCO)
 
-Issue #101. SkillsFuture is the only external source the pipeline was built
+SkillsFuture is the only external source the pipeline was built
 and tuned on. That covers the lexical rules in `matching/names.py`, breadth's
 matching, saturation's thresholds and Case A/B placement. This note runs two
 independent, officially maintained taxonomies through the same metrics,
 unchanged, and records what holds and what doesn't:
 
-- **O*NET**: the US occupation database, as imported by #119 (`backend/onet/`, hot technologies only).
+- **O*NET**: the US occupation database, as imported by `import-source` (`backend/onet/`, hot technologies only).
 - **ESCO**: the European Commission's occupations and skills classification (`backend/esco/`).
 
 ## How the numbers were produced
@@ -34,7 +34,7 @@ Section 5 explains why both are needed.
 |---|---|---|---|---|
 | original | 110 | 593 | 676 | 1,439 |
 | SkillsFuture | 41 | 1,948 | 2,387 | 43,346 |
-| O*NET (#119, hot technologies) | 22 | 904 | 176 | 11,571 |
+| O*NET (hot technologies) | 22 | 904 | 176 | 11,571 |
 | ESCO (essential links) | 10 | 3,039 | 11,378 | 67,600 |
 
 ## 1. Adding a source: works without pipeline changes
@@ -46,7 +46,7 @@ Neither source needed a change to the pipeline itself:
 Every metric then ran on both dumps as-is.
 
 Two quirks in ESCO's export needed handling:
-- **Repeated rows.** In the copy used here, v1.2.1 repeats 4 occupation rows and 21 skill rows, each with identical values in the columns the join reads. The script drops these repeats and stops on a repeat whose values differ. The importer can't do this itself, because it reads one table and the repeats sit in the files being joined (#118).
+- **Repeated rows.** In the copy used here, v1.2.1 repeats 4 occupation rows and 21 skill rows, each with identical values in the columns the join reads. The script drops these repeats and stops on a repeat whose values differ. The importer can't do this itself, because it reads one table and the repeats sit in the files being joined.
 - **Essential and optional links.** Each link is marked `essential` or `optional`. The script carries the type through as a `relation_type` column, and the mapping's ordinary `filters` keeps essential links only.
 
 ## 2. Integrity: structural checks reflect how a source was imported
@@ -69,7 +69,7 @@ Two quirks in ESCO's export needed handling:
 - *provide advice … export restrictions* / *… import restrictions*
 - *chemistry teachers, postsecondary* / *history teachers, postsecondary*
 
-At a RapidFuzz threshold of 85, long names that differ by one word score as near-duplicates. This matters for the integrity guard rail drafted in #88 (fuzzy pairs per 100 concepts must not rise more than 10%). Adding external rows can raise that rate without adding any real duplicates, so a rise needs a look at the pairs before it counts as a failure.
+At a RapidFuzz threshold of 85, long names that differ by one word score as near-duplicates. This matters for the integrity guard rail in the success criteria (fuzzy pairs per 100 concepts must not rise more than 10%). Adding external rows can raise that rate without adding any real duplicates, so a rise needs a look at the pairs before it counts as a failure.
 
 ## 3. Depth: not comparable across sources of different shape
 
@@ -142,7 +142,7 @@ What the two comparisons show:
 - **At every level, against every pool, roughly half or more of each source goes to review.** The one exception is O*NET's tags (39.2%).
 - **On the cumulative curve, O*NET's review share is driven by its specialities, not its tags.** Specialities are 904 of its 1,102 concepts. 746 of them (82.5%) are `REVIEW_AMBIGUOUS`, which is 88% of its 845 ambiguous items. Only 88 of its 176 tags (50%) are. The occupation-title matches land between the thresholds, and that is the part of the source that matters for placement.
 
-This **corrects the earlier note** on `feat/onet-generalization-testing` and the #118 comment. Those said O*NET and ESCO showed far higher ambiguous rates than SkillsFuture, so the thresholds looked overfit to SkillsFuture. That came from the cumulative comparison. Against the same baseline the unseen sources don't show higher review rates. That doesn't prove the thresholds fit them either. A review share says how often a score falls between two thresholds, not whether the concepts on either side are classified correctly. Only labelled pairs from each source can tell whether the thresholds are miscalibrated, and whether that differs by source (#47).
+This **corrects a note from initial O*NET testing**, which said O*NET and ESCO showed far higher ambiguous rates than SkillsFuture, so the thresholds looked overfit to SkillsFuture. That came from the cumulative comparison. Against the same baseline the unseen sources don't show higher review rates. That doesn't prove the thresholds fit them either. A review share says how often a score falls between two thresholds, not whether the concepts on either side are classified correctly. Only labelled pairs from each source can tell whether the thresholds are miscalibrated, and whether that differs by source.
 
 **ESCO's new-placement rate is most likely a side effect of the parent check, not a finding about placement. This is untested.**
 - On the cumulative curve, 613 of 635 ESCO occupations that matched a known concept were flagged as a known concept in a new placement (96.5%).
@@ -156,15 +156,15 @@ Read these rates as "the source's categories are built on a different axis". Don
 
 1. **Adding a source is cheap.** A linked-file source needs a short join script and a mapping. Nothing in the pipeline changes.
 2. **Integrity's unused-tag and dead-end counts, and depth, describe a source's shape.** Use them to compare versions of the same taxonomy (baseline vs enriched), not to rank sources.
-3. **Read fuzzy-duplicate counts with the pairs in hand.** At threshold 85 they overcount on long, curated names. Factor this into the #88 integrity guard rail.
+3. **Read fuzzy-duplicate counts with the pairs in hand.** At threshold 85 they overcount on long, curated names. Factor this into the integrity guard rail.
 4. **Whether a source's categories count toward industry coverage is set by its `service_id` in the mapping.** Choose it on purpose.
-5. **Compare saturation across sources against one baseline, and calibrate it on labelled pairs (#47).** Against the original alone, the unseen sources aren't sent to review more often than SkillsFuture. The cumulative curve's higher shares come from its growing pool. The review band is still wide on all three, and it widens as the taxonomy grows. Whether the thresholds misclassify, and whether by source, needs labelled pairs. SkillsFuture, O*NET and ESCO are the three sources #47 asks for.
+5. **Compare saturation across sources against one baseline, and calibrate it on labelled pairs.** Against the original alone, the unseen sources aren't sent to review more often than SkillsFuture. The cumulative curve's higher shares come from its growing pool. The review band is still wide on all three, and it widens as the taxonomy grows. Whether the thresholds misclassify, and whether by source, needs labelled pairs. SkillsFuture, O*NET and ESCO are the three sources that calibration asks for.
 6. **Don't read the new-placement rate across sources whose categories are built on different axes.** It mostly reflects the parent check comparing skill levels with sectors.
 
 ## Limitations
 
-- ESCO was imported from a trimmed copy of the v1.2.1 export: essential links only, no skill descriptions (see `backend/esco/README.md`). A full download hasn't been run through the script. O*NET is #119's hot-technology slice (176 of 8,753 software).
+- ESCO was imported from a trimmed copy of the v1.2.1 export: essential links only, no skill descriptions (see `backend/esco/README.md`). A full download hasn't been run through the script. O*NET is the hot-technology slice (176 of 8,753 software).
 - The like-for-like comparison holds the baseline fixed, but not how much each source overlaps it. Lower review shares on O*NET and ESCO partly reflect that they share less with the original.
-- Breadth's 0.60 cut-off and saturation's thresholds are provisional and uncalibrated (#47).
+- Breadth's 0.60 cut-off and saturation's thresholds are provisional and uncalibrated.
 - No LLM judge was used. With a judge, part of every review band would be settled, so the review shares above are an upper bound for a judged round.
 - Neither source has been through Case A/B or integrated. This note covers scoring and matching, not placement.

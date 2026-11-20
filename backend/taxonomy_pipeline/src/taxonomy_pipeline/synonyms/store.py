@@ -21,7 +21,7 @@ different taxonomy. Readers apply the same check (`SynonymIndex`, the tag lookup
 
 Nothing here writes to taxonomy files or the client's database. The schema is versioned
 in `taxonomy_synonym_schema` (as the audit log versions its own): version 2 added the
-scope columns (#61) and version 3 the reviewer columns for suggested synonyms; an older
+scope columns and version 3 the reviewer columns for suggested synonyms; an older
 table is migrated in place on the next write. A global synonym stores its scope as empty
 strings, because SQLite treats NULLs as distinct in a unique index and would let
 duplicate global mappings through. Every write then reruns the idempotent `CREATE ... IF
@@ -395,7 +395,7 @@ def _ensure_schema(connection: sqlite3.Connection) -> None:
     connection.execute(VERSION_TABLE)
     row = connection.execute("SELECT version FROM taxonomy_synonym_schema WHERE singleton = 1").fetchone()
     version = row[0] if row else None
-    if version == 1:  # #59's table: add the scope columns; the unique mapping is recreated with them below
+    if version == 1:  # the first version's table: add scope columns; the unique mapping is recreated below
         connection.execute("ALTER TABLE taxonomy_synonyms ADD COLUMN scope_level TEXT NOT NULL DEFAULT ''")
         connection.execute("ALTER TABLE taxonomy_synonyms ADD COLUMN scope_id TEXT NOT NULL DEFAULT ''")
         connection.execute("DROP INDEX IF EXISTS synonym_approved_mapping")

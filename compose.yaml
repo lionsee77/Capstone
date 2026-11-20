@@ -6,7 +6,7 @@
 #   docker compose --profile test run --rm dashboard-tests
 #   docker compose run --rm api taxonomy-pipeline run --config configs/baseline_v1.yaml
 #
-# MySQL (optional, for inspecting snapshots) is separate: see backend/compose.yaml and backend/README.md.
+# MySQL (optional, for inspecting snapshots) is separate: see backend/compose.yaml and SNAPSHOTS.md.
 
 name: taxonomy-pipeline
 

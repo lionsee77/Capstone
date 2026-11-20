@@ -70,7 +70,7 @@ ambiguous tags held only by their producer's flag, because a clear-cut similarit
 score decides them. `review_hold` marks a placement no score checks, so a person must
 look at it: a speciality name a model generated, a new speciality holding only this
 tag, or a match to an existing speciality looser than the usual threshold (all from
-Case A's #132 options). Resolution adds the `producer_hold` reason code for it, and
+Case A's opt-in grouping options). Resolution adds the `producer_hold` reason code for it, and
 `bulk-decide` leaves the tag pending.
 
 `original_classification` describes the tag **in its source dataset**, before Case
@@ -302,7 +302,7 @@ whose only exact matches are specialities under other categories. A category
 `reuse` must target a category in the proposal's own service. Near matches may be
 approved as distinct, but failed semantic checks and unresolved incoming variant
 clusters cannot be bypassed. Excluding a competing variant allows the retained
-proposal to be considered again. Synonym evidence depends on #56/PB07.
+proposal to be considered again. Synonym evidence depends on PB07.
 
 Hierarchy rejection/deferral blocks its placements; it does not implicitly reject
 the source tag. Tag decisions remain separate entries in the **same list**.

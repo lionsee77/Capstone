@@ -1,4 +1,4 @@
-"""ESCO's flatten script joins its linked CSVs into one table that `import-source` turns into a dump (#101)."""
+"""ESCO's flatten script joins its linked CSVs into one table that `import-source` turns into a dump."""
 from __future__ import annotations
 
 import csv

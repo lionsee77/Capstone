@@ -1,4 +1,4 @@
-"""British/American spelling variants of concept names: the seed set (#60).
+"""British/American spelling variants of concept names: the seed set.
 
 `match_key` already folds '-isation'/'-ization' and '&'/'and', so those variants match
 without a synonym and aren't suggested. What it doesn't fold are whole-word spellings

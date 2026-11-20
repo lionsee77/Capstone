@@ -71,7 +71,7 @@ def test_the_same_normalised_term_for_the_same_concept_is_rejected(isolated_db: 
 
 
 def test_one_term_can_be_a_synonym_of_two_different_concepts(isolated_db: Path) -> None:
-    # Ambiguous terms are #61's concern; storage only rejects exact repeats of one mapping.
+    # Ambiguous terms are resolution's concern; storage only rejects exact repeats of one mapping.
     _add("Script", "100")
     _add("Script", "101")
     assert list_synonyms(SynonymQuery(term="script")).total == 2
@@ -179,7 +179,7 @@ def test_a_refusing_check_sees_only_the_approved_synonyms_with_its_term_and_stor
 
 
 def _version_1_table(path: Path) -> None:
-    """#59's table, with one approved synonym, as a database upgraded from that PR has it."""
+    """The first version's table, with one approved synonym, as an upgraded database has it."""
     with closing(sqlite3.connect(path)) as connection, connection:
         connection.execute("""CREATE TABLE taxonomy_synonyms (synonym_id TEXT PRIMARY KEY, term TEXT NOT NULL,
             normalized_term TEXT NOT NULL, term_key TEXT NOT NULL, dataset TEXT NOT NULL,
@@ -191,7 +191,7 @@ def _version_1_table(path: Path) -> None:
         connection.execute("CREATE TABLE taxonomy_synonym_schema (singleton INTEGER PRIMARY KEY, version INTEGER)")
         connection.execute("INSERT INTO taxonomy_synonym_schema VALUES (1, 1)")
         connection.execute("""INSERT INTO taxonomy_synonyms VALUES ('old', 'JS', 'js', 'js', 'original', 'tags',
-            '100', 'JavaScript', 's', 'approved', 'manual', 'From #59', 'reviewer', '2026-11-01T00:00:00+00:00',
+            '100', 'JavaScript', 's', 'approved', 'manual', 'From version 1', 'reviewer', '2026-11-01T00:00:00+00:00',
             NULL, NULL, NULL)""")
 
 
@@ -333,7 +333,7 @@ def test_a_removed_synonym_is_not_proposed_again(isolated_db: Path) -> None:
 
 def test_a_version_2_table_reads_before_anything_migrates_it(isolated_db: Path) -> None:
     _version_1_table(isolated_db)
-    with closing(sqlite3.connect(isolated_db)) as connection, connection:  # what #134's migration leaves
+    with closing(sqlite3.connect(isolated_db)) as connection, connection:  # what the version 2 migration leaves
         connection.execute("ALTER TABLE taxonomy_synonyms ADD COLUMN scope_level TEXT NOT NULL DEFAULT ''")
         connection.execute("ALTER TABLE taxonomy_synonyms ADD COLUMN scope_id TEXT NOT NULL DEFAULT ''")
         connection.execute("UPDATE taxonomy_synonym_schema SET version = 2")

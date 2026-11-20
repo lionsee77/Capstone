@@ -1,6 +1,6 @@
 """Record every pipeline stage's output on the real data, and diff two recordings.
 
-The bounded-context refactor (#104) must not change behaviour. `record` runs
+The bounded-context refactor must not change behaviour. `record` runs
 one full classification round through the CLI, writing every stage's output
 into one folder; `compare` diffs two such folders, ignoring what legitimately
 differs between runs (run/event IDs, timestamps, the folder's own path). Record

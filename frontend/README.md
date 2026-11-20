@@ -225,7 +225,7 @@ decisions: tag groups use `members`, hierarchy proposals use `proposal_id`, and
 both use `create` / `exclude` / `reuse` / `defer`. `reviewDecisionEventSchema`
 mirrors the local decision-log event.
 
-For #58, `api.listProposals(mergeRun, { level, offset, limit })` and
+For proposal review, `api.listProposals(mergeRun, { level, offset, limit })` and
 `api.getProposal(mergeRun, proposalId)` read saved proposal evidence through the
 allowlisted proxy. `proposalReviewReportSchema` mirrors the shared CLI/API
 response: original proposed branches, all existing matches and scores, screening
@@ -237,7 +237,7 @@ does not establish approval or database insertion.
 saturation run ID or an arbitrary path. Lists support category/speciality filters
 and pagination (default 50, maximum 200); detail returns the same envelope with
 one item. The proxy permits reads only. No dashboard approval controls or new
-decision-submission flow are introduced; screen layout remains #54 follow-up.
+decision-submission flow are introduced; screen layout remains follow-up work.
 
 - **Server state goes through TanStack Query, client state goes in zustand.**
   Components call the hooks in `lib/api/queries.ts`. They never call `fetch`
@@ -254,7 +254,7 @@ decision-submission flow are introduced; screen layout remains #54 follow-up.
   rather than editing them heavily.
 - **Next.js 16 differs from older versions** (`params` is a Promise, global
   `PageProps`/`LayoutProps` route types, and more). Check
-  `node_modules/next/dist/docs/` before relying on memory. See `AGENTS.md`.
+  `node_modules/next/dist/docs/` before relying on memory.
 
 ## Development
 
@@ -265,7 +265,7 @@ bun run test        # vitest
 bun run build       # production build
 ```
 
-CI runs all four. See the `frontend` job in `.github/workflows/ci.yml`.
+Run all four before accepting a change.
 
 ## Known gaps
 

@@ -1,4 +1,4 @@
-"""Grouped Case A specialities get a name generated from all their tags, cached and checked (#132)."""
+"""Grouped Case A specialities get a name generated from all their tags, cached and checked."""
 from __future__ import annotations
 
 import json

@@ -1,5 +1,5 @@
 """Version-to-version comparison: each metric's headline numbers in two runs, the
-change, and whether it got better (PB10, #69).
+change, and whether it got better (PB10).
 
 It builds on `definitions.check_comparable`, which pairs each scoring result
 of one run with the result of the other scored the same way and lists what
@@ -11,7 +11,7 @@ the verdict "not_compared".
 Which numbers are compared, and which way is better, belongs to each metric
 (`Metric.measures`), so a new scoring metric joins comparisons by overriding
 that one method. The verdict here is strict - any change in a direction counts.
-Tolerances for "unchanged" (PB11, #73) are applied on top of this report, not
+Tolerances for "unchanged" (PB11) are applied on top of this report, not
 inside it, so the raw change is always visible.
 """
 from __future__ import annotations

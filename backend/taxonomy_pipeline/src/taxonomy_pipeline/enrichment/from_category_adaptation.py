@@ -149,7 +149,7 @@ def _review_hold(placement: dict[str, Any]) -> str | None:
 
 
 def _speciality_group_reason(placement: dict[str, Any]) -> str:
-    """How grouping, naming and `flag_single_tag_specialities` shaped the new speciality (#132)."""
+    """How grouping, naming and `flag_single_tag_specialities` shaped the new speciality."""
     reason = ""
     size = placement.get("speciality_group_size")
     if size:
@@ -184,7 +184,7 @@ def _speciality_group_reason(placement: dict[str, Any]) -> str:
 
 
 def _category_content_output(placement: dict[str, Any], source_dataset: str) -> ClassificationOutput:
-    """A tag matched by meaning to an existing speciality inside its matched category (#132)."""
+    """A tag matched by meaning to an existing speciality inside its matched category."""
     speciality, category = placement["target_speciality_name"], placement["target_category_name"]
     score = placement["speciality_semantic_score"]
     return ClassificationOutput(

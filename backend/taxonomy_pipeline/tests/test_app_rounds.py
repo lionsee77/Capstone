@@ -535,7 +535,7 @@ def test_llm_classification_reads_the_context_the_round_generated(
     assert stage.status == "done", stage.error
     assert [item["title"] for item in sent] == ["Orphan Skill"]
     context = json.loads((roots.rounds / configured / "demo_tag_context.json").read_text("utf-8"))
-    # #137 checks these titles against the imported tags; only described tags are in the file.
+    # The importer checks these titles against the imported tags; only described tags are in the file.
     assert [tag["title"] for tag in context["tags"].values()] == ["Underwater Welding"]
 
 

@@ -24,7 +24,7 @@ taxonomy_pipeline/
 │   └── baseline_v1.json.gz           #   the original taxonomy scored with definitions v1
 ├── configs/                          # pipeline configs
 │   ├── baseline_v1.yaml              #   pinned config that produced baselines/baseline_v1.json.gz
-│   ├── generalization_v1.yaml        #   original, SkillsFuture, O*NET and ESCO scored with definitions v1, plus labelled side checks (#101)
+│   ├── generalization_v1.yaml        #   original, SkillsFuture, O*NET and ESCO scored with definitions v1, plus labelled side checks
 │   ├── lineage_scorecard.yaml        #   every enrichment stage scored in one run, judge on (/lineage reads it)
 │   └── original_vs_skillsfuture.yaml #   classification rounds: scores both taxonomies, saturation judge on
 ├── docs/                             # design notes and future-work references
@@ -55,7 +55,7 @@ taxonomy_pipeline/
 │   │   └── engine.py                 #   the comparison engine saturation and Case A share
 │   ├── synonyms/                     # PB07: other names for existing concepts, stored beside the taxonomy
 │   │   ├── models.py                 #   SynonymCreate, Synonym, SynonymQuery, SynonymList, Resolution contracts
-│   │   ├── resolver.py               #   SynonymIndex: what a term means (scopes, ambiguity) and check_new (#61)
+│   │   ├── resolver.py               #   SynonymIndex: what a term means (scopes, ambiguity) and check_new
 │   │   ├── store.py                  #   SQLite table + audit event per change; propose/review; concept_name check
 │   │   └── sources/                  #   suggestion sources - register new ones in registry.py
 │   │       ├── base.py               #     SynonymSource ABC and Suggestion
@@ -71,7 +71,7 @@ taxonomy_pipeline/
 │   │   ├── breadth.py                #   coverage vs. a reference dataset
 │   │   ├── saturation.py             #   new-items curve across ordered incoming sources
 │   │   ├── definitions.py            #   METRIC_DEFINITIONS_VERSION and check_comparable (see "Official metric definitions")
-│   │   ├── comparison.py             #   compare_reports: each metric's measures in two runs, change and verdict (#69)
+│   │   ├── comparison.py             #   compare_reports: each metric's measures in two runs, change and verdict
 │   │   └── registry.py               #   METRICS dict - register new metrics here
 │   ├── providers/                    # what is specific to one external source
 │   │   ├── base.py                   #   SourceProvider ABC: per-tag context and display name for Case B
@@ -84,7 +84,7 @@ taxonomy_pipeline/
 │   │   ├── case_a.py                 #   Case A: category_adaptation -> contract records
 │   │   ├── category_adaptation.py    #   Case A: place new tags by content, else via their source category (see below)
 │   │   ├── from_category_adaptation.py #  serializes category_adaptation's placements into the contract
-│   │   ├── speciality_names.py       #   Case A: name grouped new specialities with the LLM, held for review (#132)
+│   │   ├── speciality_names.py       #   Case A: name grouped new specialities with the LLM, held for review
 │   │   ├── case_b.py                 #   Case B: LLM placement for tags with no source category
 │   │   ├── validation.py             #   merge 1: combine producer files, check paths against the baseline
 │   │   ├── deduplication.py          #   merge 2: group hierarchy paths, suggest duplicate tag pairs
@@ -142,12 +142,12 @@ taxonomy_pipeline/
         └── classification/           #   synthetic producer outputs, taxonomy and review decisions
 ```
 
-## Moved in the bounded-context refactor (#104)
+## Moved in the bounded-context refactor
 
-The package was reorganised in two PRs: #110 moved files into the context
-folders above, and #111 added the interfaces (`app/`, `llm.py`, `providers/`
+The package was reorganised in two steps: the first moved files into the context
+folders above, and the second added the interfaces (`app/`, `llm.py`, `providers/`
 adapters, the hierarchy helper). Pipeline outputs did not change - a golden run
-(`experiments/golden_run.py`) on the code before #110 and after #111 matches on
+(`experiments/golden_run.py`) on the code before and after the reorganisation matches on
 every file, command output and Case B prompt, except the new `reason_codes`
 field in `resolution.json`. Paths below are under `src/taxonomy_pipeline/`.
 
@@ -422,7 +422,7 @@ records, plus `valid_rate` and `review_rate`.
 - Exit code is non-zero if an input file is unreadable or the preview is
   blocked because the merge would introduce structural errors.
 
-Repeated **new hierarchy names** are surfaced as advisory warnings (#132).
+Repeated **new hierarchy names** are surfaced as advisory warnings.
 Effective screening groups proposed categories and specialities separately by integrity's
 `normalize(name)`, across all parent paths. Multiple tags or evidence records
 referencing one proposed node count once; categories and specialities never
@@ -498,7 +498,7 @@ Thresholds default to 0.9 lexical and 0.7 semantic; scores are review evidence,
 not probabilities or confirmation of equivalence. Override them with
 `merge-preview --screening-lexical 0.95 --screening-semantic 0.8` (finite values
 from 0 to 1). Semantic screening also requires `--semantic-model`. These thresholds
-are **uncalibrated (#47)** and independent of saturation, Case A and tag
+are **uncalibrated** and independent of saturation, Case A and tag
 deduplication thresholds: those stages serve different purposes and can disagree.
 Settings are saved in `resolution.json` and reused by preview and integration.
 The Python runner and resolver accept `screening_settings=ScreeningSettings(...)`.
@@ -517,7 +517,7 @@ safe paths proceed while blocked paths stay in `unapproved_paths` and appear as
 `unapproved` in `preview.csv`. If every approved path is blocked, the sources stay
 pending. Review reasons retain producer, baseline-tag and hierarchy context.
 Near matches can still be accepted through explicit placement decisions. Issue
-#57 also supports explicit hierarchy decisions using the same `ReviewDecision`
+Review also supports explicit hierarchy decisions using the same `ReviewDecision`
 model and `--decisions` file as tag decisions; see below. No existing nodes move.
 
 `--semantic-model` enables hierarchy screening with the same matcher used for
@@ -532,7 +532,7 @@ with screening evidence from an older screening algorithm may also need regenera
 A new speciality's temporary ID (`new:speciality:<digest>`) is now derived from its
 parent category's baseline service name, so runs whose path spells the service
 differently (case or spacing) get new IDs: replaying a `resolution.json` saved
-before #57 then makes `integrate` report `introduced.resolution_mismatch`. Rerun
+before hierarchy decisions existed then makes `integrate` report `introduced.resolution_mismatch`. Rerun
 `merge-preview` with the same inputs and decisions before integrating.
 `deduplication.json` also retains `screening_hierarchy`,
 including complete proposals that intake held outside eligible tag resolution.
@@ -544,12 +544,12 @@ src/taxonomy_pipeline/enrichment/proposals/
   screening.py  # baseline candidates, parent-aware reuse and creation holds
 ```
 
-The producer contract and JSON Schema are unchanged. Synonym relationships (#56,
-after PB07) remain later PB06 work. The saved review API/CLI view is described below.
+The producer contract and JSON Schema are unchanged. Synonym relationships (after
+PB07) remain later PB06 work. The saved review API/CLI view is described below.
 See the [screening benchmark](docs/proposal-screening-benchmark.md) for full saved
 Case A/B input counts, before/after timings and semantic-run measurements.
 
-### Review category and speciality proposals (#57)
+### Review category and speciality proposals
 
 Every screened proposal exposes `suggested_action`: `new` suggests `create`,
 `reuse` suggests `reuse`, and `review` suggests `defer`. These are suggestions;
@@ -596,7 +596,7 @@ taxonomy-pipeline merge-preview --input case_a_output.json --input case_b_output
 - Decisions that resolve one of a cluster of incoming spelling variants (`reuse`,
   `exclude`) are applied before the cluster is re-checked, so the remaining
   variant is no longer held for it and can be created or left to resolve. Approved synonyms
-  will supply additional equivalence evidence when #56/PB07 is connected.
+  will supply additional equivalence evidence when PB07 is connected.
 - `exclude` and `defer` block dependent placements, even if a tag decision approves
   them. They do not reject the source tag itself; use a tag decision to exclude
   that source, or keep another proposed path. Hierarchy approval does not clear
@@ -631,14 +631,14 @@ src/taxonomy_pipeline/enrichment/
   change_log.py  # append submitted decisions to the run's local audit log
 ```
 
-### Audit history and storage decision (PB09: #89, #65, #66)
+### Audit history and storage decision (PB09)
 
 **Decision recorded 30 October 2026:** governance storage is pipeline-owned SQLite,
 in the existing `taxonomy_pipeline.sqlite3`, pending migration to the client DB.
 The user confirmed that Ankit's `taxonomy_proposals` schema has **not been received**;
 use provisional pipeline proposal references until it arrives. Client-schema alignment
-is pending, not claimed complete. Synonym storage and management (PB07, #59) now writes `synonym_add` and
-`synonym_remove` events (see [Synonyms](#synonyms-pb07)); matching through synonyms (#60) is not built yet.
+is pending, not claimed complete. Synonym storage and management (PB07) now writes `synonym_add` and
+`synonym_remove` events (see [Synonyms](#synonyms-pb07)); matching through synonyms is not built yet.
 
 `audit/` has no dependency on enrichment. `enrichment/audit.py` translates workflow
 evidence into its contract; `app/changes.py` is the shared CLI/API use case. The
@@ -790,7 +790,7 @@ are no HTTP audit mutation routes. Tests verify unchanged database/taxonomy byte
 after querying, authenticated access, all action types, filtering, lineage,
 append-only enforcement, concurrent retries and recovery after failed delivery.
 
-**Storage sketches for the remaining #89 coordination:** review decisions live in
+**Storage sketches for the remaining coordination:** review decisions live in
 audit event payloads and run artifacts; screened proposals remain in saved
 `resolution.json` until a client proposal adapter is agreed. The following are
 proposed future SQLite tables, not created or claimed agreed with the client:
@@ -801,10 +801,9 @@ proposed future SQLite tables, not created or claimed agreed with the client:
 | `taxonomy_deprecations` (PB08) | ID PK; dataset, snapshot, level, concept ID, replacement reference (nullable), reason, actor, timestamp, event ID; unique (dataset, snapshot, level, concept ID) for a current-state projection; deprecation/reactivation history always stays append-only in the log. |
 
 Client schema mapping, agreement on these deferred table sketches, and propagating
-the decision to GitHub issues #55–#66 remain coordination work. No remote issues
-were updated by this implementation. Synonym behavior remains paused.
+the decision remain coordination work. Synonym behavior remains paused.
 
-### Read the proposal review view (#58)
+### Read the proposal review view
 
 Read a saved merge run to see each category/speciality proposal beside every
 screening match, with parent branches, concept IDs, match types, lexical and
@@ -834,7 +833,7 @@ from `backend/taxonomy_pipeline`, whatever directory the server starts in). `mer
 directory name beneath that root, not a filesystem path. For custom output
 locations, configure the root to their parent directory. The CLI accepts a
 local `--merge-run` path as usual. This uses existing files and does not choose
-the future governance storage being agreed in #89.
+the future governance storage being agreed.
 
 - Each `proposals` item contains `proposed_path` and `proposed_parent` using
   original labels, the full `proposal` screening evidence, the submitted
@@ -856,14 +855,14 @@ the future governance storage being agreed in #89.
   the same envelope with one item and `limit=1`.
 - Reads do not reload the taxonomy, rerun matching, submit decisions or append
   audit events. They show the saved run, not the current database. Submit choices
-  through #57's existing `merge-preview --decisions` and then read the new run.
+  through the existing `merge-preview --decisions` and then read the new run.
 - Missing runs/proposals return HTTP 404; invalid query parameters return 422.
   Invalid reports, mismatched fingerprints or older runs without screening
   return 409 with an instruction to rerun `merge-preview`; they are not silently
   re-screened. CLI errors return a nonzero exit code.
 
 The dashboard client and proxy accept these read endpoints and share matching
-Zod schemas. Review controls and screen layout remain follow-up UI work in #54.
+Zod schemas. Review controls and screen layout remain follow-up UI work.
 
 ```text
 src/taxonomy_pipeline/
@@ -916,7 +915,7 @@ taxonomy-pipeline bulk-decide --merge-run merge_runs/<timestamp> --report judged
   drafted 737 creates and left 625 ambiguous tags for review; pending sources
   dropped from 1,749 to 1,012. These counts do not describe the current screening flow.
   No ambiguous tag scored 0.9 against a baseline tag,
-  so no reuses. Thresholds are uncalibrated (#47): spot-check a sample of the
+  so no reuses. Thresholds are uncalibrated: spot-check a sample of the
   drafted creates before applying them.
 
 ### Integrate
@@ -965,7 +964,7 @@ integrations/<timestamp>/
   existing and new specialities, each with its count, mean and number holding a
   single tag. When the snapshot's mean falls below the baseline's, the split is
   printed as a warning, so a drop can be traced to new one-tag specialities
-  rather than shallower existing ones (#132).
+  rather than shallower existing ones.
 - Records validation set aside before review (invalid, unresolved, flagged)
   are not in the snapshot; their counts are in the manifest and printed as a
   warning.
@@ -977,7 +976,7 @@ integrations/<timestamp>/
   saturation's incoming sources, models and judge settings. The datasets those
   entries read are copied in with their absolute paths, so one
   `taxonomy-pipeline run --config integrations/<timestamp>/enriched.yaml` from
-  any directory gives the full scorecard (#72 compares it with the baseline's).
+  any directory gives the full scorecard, ready to compare with the baseline's.
   Entries scoring other datasets are left out, and integrity and depth are added
   with defaults if `--config` has none. The snapshot is named `enriched`, or
   `enriched_2`, ... if a dataset those entries read already has that name (e.g.
@@ -1131,10 +1130,10 @@ taxonomy - the numbers a before/after comparison uses - comes from
 ## Official metric definitions and the baseline of record
 
 A score depends on the method as much as on the taxonomy: switching breadth to
-semantic matching (#79) moved the original taxonomy's industry coverage from 0%
+semantic matching moved the original taxonomy's industry coverage from 0%
 to 22%, and SkillsFuture's occupational coverage from 6.9% to 57.9%, with
 neither taxonomy changed. A before/after comparison of an enriched taxonomy
-(PB11, #29) only shows the enrichment if both runs were scored the same way, so
+(PB11) only shows the enrichment if both runs were scored the same way, so
 the pipeline makes that checkable:
 
 - **Every report records `metric_definitions_version`**, the version of every
@@ -1153,16 +1152,16 @@ the pipeline makes that checkable:
 
 ### Definitions v1
 
-The official settings for PB10 (#28). The formulas are documented in #67.
+The official settings for PB10.
 
 | Metric | v1 method and settings | Why |
 |---|---|---|
 | `integrity` | Exact duplicates after `normalize`; fuzzy duplicates at RapidFuzz `fuzzy_threshold` 85; orphans; dead ends | Same method and threshold as the audit that first measured the original taxonomy |
 | `depth` | Specialities per category and tags per speciality (links with both ends present) | No settings |
-| `breadth` | **Semantic.** `sentence-transformers/all-MiniLM-L6-v2` at revision `1110a243fdf4706b3f48f1d95db1a4f5529b4d41`, labels only (`semantic_labels_v1`), match at cosine >= 0.60, top 5 candidates kept. SSIC 2025 divisions vs industry categories (`service_id` 1); SSOC 2024 minor groups vs all specialities | Lexical matching (fuzzy 75) scores the original's industry coverage at 0%, so it can't register an improvement. 0.60 is provisional until calibrated (#47) |
+| `breadth` | **Semantic.** `sentence-transformers/all-MiniLM-L6-v2` at revision `1110a243fdf4706b3f48f1d95db1a4f5529b4d41`, labels only (`semantic_labels_v1`), match at cosine >= 0.60, top 5 candidates kept. SSIC 2025 divisions vs industry categories (`service_id` 1); SSOC 2024 minor groups vs all specialities | Lexical matching (fuzzy 75) scores the original's industry coverage at 0%, so it can't register an improvement. 0.60 is provisional until calibrated |
 | `saturation` | Incoming `skillsfuture`, compared at every level. Close spelling (>= 90) counts only when meaning agrees (>= 0.70; 0.80 for specialities). Add candidate below 60 spelling and 0.50 meaning. The same pinned sentence model as breadth. **Judge off** | The judge is an LLM in public beta, so its verdicts can't be reproduced, and judged ambiguous counts don't compare with unjudged ones. Classification rounds still use it (`judged_report.json`); the scorecard doesn't |
 
-Thresholds are uncalibrated (#47): calibrating them is a definitions change,
+Thresholds are uncalibrated: calibrating them is a definitions change,
 so it becomes v2 and the baseline is re-scored.
 
 ### Baseline of record (v1)
@@ -1255,14 +1254,14 @@ report) goes uncompared with a `result_status` issue instead of failing the
 comparison; the JSON's top-level `comparable` counts it, so read that rather
 than `comparability.comparable`. The verdict is deliberately strict; the
 tolerance for calling a small change "unchanged" belongs to the PB11
-evaluation (#73, from the criteria agreed in #88), applied on top of this
+evaluation (from the agreed success criteria), applied on top of this
 report so the raw change stays visible.
 
 What each metric compares, and which way is better, is its `measures()`:
 
 | Metric | Measures (better direction) |
 |---|---|
-| `integrity` | Rows in exact-duplicate clusters and fuzzy-duplicate pairs per level; orphans; unused tags; dangling links; dead ends and dead-end rates (all lower). Counts grow with the taxonomy; size-independent duplication rates are #68 |
+| `integrity` | Rows in exact-duplicate clusters and fuzzy-duplicate pairs per level; orphans; unused tags; dangling links; dead ends and dead-end rates (all lower). Counts grow with the taxonomy; size-independent duplication rates are future work |
 | `depth` | Tags per speciality, mean and median (higher); specialities per category, and the category and speciality counts (no direction) |
 | `breadth` | SSIC and SSOC nodes covered, and coverage (higher) |
 | `saturation` | After the last incoming source: add candidates, concepts needing review, new-items rate min and max (lower); concepts reviewed, new placements, other-level matches (no direction) |
@@ -1587,16 +1586,16 @@ Defaults come from `CategoryAdaptationMetric.default_params`
 | `semantic_threshold` | 0.6 | Cosine similarity for a meaning match, used for both categories and specialities. Lower than saturation's tag default (0.70): categories are broader, less precisely-worded concepts, and real runs show correct matches scoring as low as 0.63-0.69 |
 | `add_candidate_lexical_threshold` | 60 | Below this *and* the semantic threshold, nothing is even close - `NEW_CATEGORY`/`NEW_SPECIALITY` instead of `REVIEW_AMBIGUOUS` |
 | `add_candidate_semantic_threshold` | 0.5 | See above |
-| `category_scoped_semantic_threshold` | none (off) | Before proposing a new speciality under a *matched* category, join that category's closest existing speciality at or above this cosine score (`placement_basis: category_content`), held for a person (`review_hold: category_scoped_match`). Needs `semantic_model`. See below (#132) |
-| `one_category_per_tag` | false | Place a tag via its best-evidenced source category only, not one per source category. See below (#132) |
-| `group_new_specialities_threshold` | none (off) | Group the tags proposed as new specialities under one category, each group within this cosine score of its most central tag, which names it. Needs `semantic_model`. See below (#132) |
-| `group_name_model` | none | Name each group from all its tags with this OpenAI chat model instead of after its central tag; the name is held for review. Needs `group_new_specialities_threshold` and `OPENAI_API_KEY` (`pip install -e ".[llm]"`). See below (#132) |
+| `category_scoped_semantic_threshold` | none (off) | Before proposing a new speciality under a *matched* category, join that category's closest existing speciality at or above this cosine score (`placement_basis: category_content`), held for a person (`review_hold: category_scoped_match`). Needs `semantic_model`. See below |
+| `one_category_per_tag` | false | Place a tag via its best-evidenced source category only, not one per source category. See below |
+| `group_new_specialities_threshold` | none (off) | Group the tags proposed as new specialities under one category, each group within this cosine score of its most central tag, which names it. Needs `semantic_model`. See below |
+| `group_name_model` | none | Name each group from all its tags with this OpenAI chat model instead of after its central tag; the name is held for review. Needs `group_new_specialities_threshold` and `OPENAI_API_KEY` (`pip install -e ".[llm]"`). See below |
 | `group_name_cache` | none | JSON file caching generated names by request, so a rerun gives the same names without paying again |
-| `flag_single_tag_specialities` | false | Flag `needs_review` on every new speciality left holding only its own tag. See below (#132) |
+| `flag_single_tag_specialities` | false | Flag `needs_review` on every new speciality left holding only its own tag. See below |
 
-### Fewer one-tag and repeated specialities (#132)
+### Fewer one-tag and repeated specialities
 
-Round 1 failed two of #88's guard rails because step 2 proposes every unmatched
+Round 1 failed two of the agreed guard rails because step 2 proposes every unmatched
 tag as its own speciality (486 of 487 new specialities held one tag), once per
 source category (18 repeated names). Five opt-in options address this. All are
 off by default, so existing rounds give the same output:
@@ -1642,7 +1641,7 @@ They run in this order:
      credits the model.
   3. The central tag's name is the fallback when the answer is unusable, or
      when the generated name repeats an existing speciality or another new one,
-     because a repeat is what #88's integrity guard rail counts. The reason
+     because a repeat is what the integrity guard rail counts. The reason
      says which fallback applied.
 
   On a sample of real groups at 0.5, `gpt-4o-mini` named the loose groups
@@ -1662,7 +1661,7 @@ They run in this order:
 
 Measured on SkillsFuture against the original taxonomy (unjudged report),
 counting what integration would add if a reviewer accepted every tag's first
-proposal (#88's depth bar is ≥ 2.31):
+proposal (the depth bar is ≥ 2.31):
 
 | Options | new specialities | one-tag | repeated names | tags per speciality |
 |---|---|---|---|---|
@@ -1691,7 +1690,7 @@ placement also has a `speciality_action`:
 | Action | Level | Meaning |
 |---|---|---|
 | `SKIP_DUPLICATE` / `SKIP_SEMANTIC_DUPLICATE` | category, speciality | Matched an existing baseline node; reuse its real ID |
-| `SKIP_CATEGORY_SCOPED_MATCH` | speciality | Opt-in (#132): the matched category's closest existing speciality by meaning, at or above `category_scoped_semantic_threshold`; reuse its real ID |
+| `SKIP_CATEGORY_SCOPED_MATCH` | speciality | Opt-in: the matched category's closest existing speciality by meaning, at or above `category_scoped_semantic_threshold`; reuse its real ID |
 | `NEW_CATEGORY` | category | No existing category matches the source category; propose it as a new one |
 | `NEW_SPECIALITY` | speciality | The tag matches no existing speciality; propose the tag itself as one, under the resolved category. With `group_new_specialities_threshold`, a grouped tag is proposed under its group's speciality instead, named after the group's leader tag (`speciality_group_*` fields) |
 | `REVIEW_AMBIGUOUS` | category | Partial similarity at best; both the closest lexical and closest semantic baseline names are surfaced, and the tag is offered under the closest categories for review |
@@ -1900,7 +1899,7 @@ the token, so use curl or the dashboard to call endpoints.
   from the API" below.
 - `GET /proposals?merge_run=&level=&offset=&limit=` and
   `GET /proposals/{proposal_id}?merge_run=` - saved hierarchy proposals with
-  parent branches, matching evidence and decisions (see the #58 review view above).
+  parent branches, matching evidence and decisions (see the proposal review view above).
 - `GET /taxonomy/search?run_id=&dataset=&q=&level=&limit=` - name search
   (case/punctuation-insensitive, via the same `normalize` `integrity` uses)
   over a dataset loaded by a past run, optionally filtered by `level`
@@ -1988,7 +1987,7 @@ a hand-run round.
 - **`status`:** `setup`, `ready`, `running`, `failed`, `review`, `ready_to_integrate` or `complete`.
 
 Set `TAXONOMY_ROUNDS_ROOT` to keep rounds elsewhere. Uploads are limited to 20 files per round.
-A source split across linked files still needs a script to flatten it first (#118), as
+A source split across linked files still needs a script to flatten it first, as
 `backend/esco/flatten_esco.py` does for ESCO; upload its flat output.
 
 ### Enrichment lineage
@@ -2079,7 +2078,7 @@ taxonomy-pipeline lookup "Tax Advisory"    # run from backend/taxonomy_pipeline,
 | `variant` | `exact` | Same `match_key`: also `&`/`and`, `-isation`/`-ization` and a trailing plural |
 | `lexical` | `near` | RapidFuzz ratio on `match_key` of at least `min_score` |
 | `semantic` | `near` | Only with `semantic=true`: cosine of at least 0.7 |
-| `synonym` | `exact` | The term is an approved global synonym of the concept; `synonym` names it (#60) |
+| `synonym` | `exact` | The term is an approved global synonym of the concept; `synonym` names it |
 
 | Param | Default | Meaning |
 |---|---|---|
@@ -2099,19 +2098,19 @@ meaning matching can't load its model.
 Worth knowing when reading a result:
 
 - **Which taxonomy:** the round with the newest `created_at` answers, because there is no
-  promotion step yet (#49). The result's `snapshot` names it. A newer experimental round
+  promotion step yet. The result's `snapshot` names it. A newer experimental round
   becomes the default, so name a snapshot if that matters. Snapshots are local data (not in
   git), so a server needs one copied to it; lookup reads these files, not MySQL.
-- **Scores aren't calibrated (#47):** treat a near match as "look at this". `lexical`
+- **Scores aren't calibrated:** treat a near match as "look at this". `lexical`
   compares spelling, so "Project Managment" also finds "Product Management" (85.7).
   `semantic` can be wrong too: "Bookkeeping" finds "housekeeping" (0.74).
 - **A part of a longer name isn't a near match:** "data analysis" doesn't find "Data
-  Analysis and Interpretation", and broader or narrower relationships are #56's scope.
+  Analysis and Interpretation", and broader or narrower relationships are future work.
   `GET /taxonomy/search` does substring search over a past run's dataset.
 - **Duplicate rows all come back:** a name held by several rows returns each one, and their
   `paths` show where each sits.
 - **Retired rows count as existing:** a row with `status` 0 is returned with `active: false`.
-  Deprecation replacements (#64) aren't applied.
+  Deprecation replacements aren't applied.
 - **Synonyms:** approved *global* synonyms recorded against `TAXONOMY_SYNONYM_DATASET`
   (default `original`; CLI `--synonym-dataset`, `''` to leave them out) count as exact
   matches. A synonym only applies where the snapshot still has its concept ID with the
@@ -2121,9 +2120,9 @@ Worth knowing when reading a result:
 ### Synonyms (PB07)
 
 Records other names for existing concepts, such as "Assurance review" for the tag *audit*, so
-lookups and scoring can later resolve them (#60). A synonym never becomes a taxonomy
+lookups and scoring can later resolve them. A synonym never becomes a taxonomy
 row: it lives in its own `taxonomy_synonyms` table in `taxonomy_pipeline.sqlite3` and
-points at one concept by dataset, level and ID (#59). The commands and routes call the
+points at one concept by dataset, level and ID. The commands and routes call the
 same use cases (`app/synonyms.py`):
 
 ```bash
@@ -2159,7 +2158,7 @@ Rules:
   that concept in the same scope is refused (409 over HTTP); so is the concept's own name
   or a spelling of it ("Audits" for *audit*), and a term with no letters or digits or a
   placeholder ("test", "new") (422).
-- **A global synonym can't have two meanings** (#61). It is refused (409) when the term
+- **A global synonym can't have two meanings**. It is refused (409) when the term
   is already another concept's name, or another concept's global synonym. A word that
   means different things in different branches must be scoped instead.
 - **The concept must exist and be active.** An unknown run, dataset or concept ID is
@@ -2180,7 +2179,7 @@ Rules:
   the concept was checked against. Read them with `taxonomy-pipeline changes
   --action synonym_add`.
 
-#### Scopes and ambiguity (#61)
+#### Scopes and ambiguity
 
 A synonym is **global**, or **scoped** to one category or speciality the concept sits
 in: "pitch" can mean the tag *Sales Pitch* only inside the *Sales* category, while
@@ -2215,7 +2214,7 @@ A stored synonym only applies where it still fits the taxonomy: its concept exis
 the name the synonym was recorded against, and a scoped one's concept still sits in its
 scope. One that doesn't fit (renamed, removed, moved) is set aside instead of resolving
 to the wrong concept, and doesn't block new synonyms. Synonyms from before these rules
-(#59 allowed one term on two concepts) can also be shadowed by a name or ambiguous.
+(an earlier version allowed one term on two concepts) can also be shadowed by a name or ambiguous.
 `synonym-check` (or `GET /synonyms/problems?run_id=...&dataset=...`) lists every such
 synonym with the reason, and exits 1 when there is any:
 
@@ -2223,10 +2222,10 @@ synonym with the reason, and exits 1 when there is any:
 taxonomy-pipeline synonym-check            # configs/baseline_v1.yaml, dataset original
 ```
 
-The table's schema is now version 2 (scope columns). A version 1 table from #59 is
+The table's schema is now version 2 (scope columns). A version 1 table from an earlier version is
 migrated on the next write, and its synonyms become global.
 
-#### Where synonyms are used (#60)
+#### Where synonyms are used
 
 | Where | How | Synonyms |
 |---|---|---|
@@ -2310,7 +2309,7 @@ Rules:
   guessed.
 - **Approving** runs the same checks as `synonym-add` against the current taxonomy (the
   concept still exists and is active; the term isn't its current name; a global synonym
-  can't already mean another concept, #61). The approved row and its `synonym_add` event
+  can't already mean another concept). The approved row and its `synonym_add` event
   record the concept's *current* name and snapshot, not the proposal's, and the reviewer
   as actor. **Rejecting** logs a `review_decision`. Proposing logs nothing,
   because nothing has changed yet.
@@ -2466,8 +2465,7 @@ or across tests. Helpers several test modules share (e.g. `breadth_datasets`,
 `review_candidate_file`) also live in `conftest.py`; a test module never imports
 another test module.
 
-Ruff linting and the test suite run in CI (see the root
-`.github/workflows/ci.yml`).
+Run `python -m ruff check .` and the test suite before accepting a change.
 
 ## Known gaps
 
@@ -2481,7 +2479,7 @@ Ruff linting and the test suite run in CI (see the root
   flagged Case A records (up to 48 for one tag: 16 partly matched sectors x 3 candidates).
   `bulk-decide` settled the clear-cut ones (1,749 -> 1,012 pending at
   `--create-below 0.7`), but its thresholds are uncalibrated; calibrating
-  saturation's thresholds (#47) so clearly new tags become `ADD_CANDIDATE` is
+  saturation's thresholds so clearly new tags become `ADD_CANDIDATE` is
   what shrinks the queue properly.
 - **Every created ambiguous tag becomes its own speciality:** Case A proposes a
   skill with no matching speciality as a new speciality named after itself, so
@@ -2501,9 +2499,9 @@ Ruff linting and the test suite run in CI (see the root
   validate the complete service/category/speciality path.
 - **No promotion step:** `integrate` writes and checks an enriched snapshot,
   `enriched.yaml` scores it, and `check-comparable` confirms that run is scored
-  like the baseline of record, and `compare` reports what changed (#69).
-  Applying agreed tolerances (#73) and promoting the snapshot to the next
-  baseline are still the incremental flow in #49 (and the PB11 evaluation, #29).
+  like the baseline of record, and `compare` reports what changed.
+  Applying agreed tolerances and promoting the snapshot to the next
+  baseline are still future work (with the PB11 evaluation).
 
 - **`saturation`** recommendations are review aids, not database
   operations. Its thresholds are not yet calibrated against a hand-labelled

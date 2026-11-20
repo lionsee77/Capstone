@@ -27,7 +27,7 @@ never uses source specialities as placement targets. It asks what the tag
 A resolved placement always carries both a category and a speciality, as the
 classification output contract (CLASSIFICATION_OUTPUT_CONTRACT.md) requires.
 
-Five opt-in params (#132) cut the one-tag and repeated specialities step 2
+Five opt-in params cut the one-tag and repeated specialities step 2
 creates; all are off by default, so the output is unchanged unless a round
 asks for them:
 
@@ -423,7 +423,7 @@ class CategoryAdaptationMetric(Metric):
         "semantic_threshold": 0.6,
         "add_candidate_lexical_threshold": 60.0,
         "add_candidate_semantic_threshold": 0.5,
-        # #132, both off by default - see the module docstring.
+        # Both off by default - see the module docstring.
         "category_scoped_semantic_threshold": None,
         "one_category_per_tag": False,
         "group_new_specialities_threshold": None,

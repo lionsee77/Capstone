@@ -212,7 +212,7 @@ class SaturationMetric(Metric):
         synonyms: list[SynonymMapping] = []
         synonym_set: SynonymSet | None = None
         if p.get("synonyms") is not None:
-            # Opt-in and read from a frozen `synonym_set` dataset, so the same config always scores the same (#60).
+            # Opt-in and read from a frozen `synonym_set` dataset, so the same config always scores the same.
             found = self.require_datasets(datasets, {"synonyms": p["synonyms"]}, {"synonyms": SynonymSet})
             if isinstance(found, MetricResult):
                 return found

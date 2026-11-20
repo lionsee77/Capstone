@@ -2,7 +2,7 @@
 
 Why a script: ESCO is published as separate files joined by concept URI, not
 as one row per occupation-skill link the way O*NET's Software Skills file is.
-`import-source` only reads one flat table (#118 tracks generalising that), so
+`import-source` only reads one flat table, so
 this script only joins. It doesn't choose rows. Each link's `relationType` goes
 into the output as `relation_type`, and `esco_mapping.yaml` decides which links
 to keep (`filters`). The mapping also decides which column is the category,

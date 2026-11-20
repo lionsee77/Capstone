@@ -110,7 +110,7 @@ class Comparability(BaseModel):
     Built by `definitions.check_comparable`. `issues` concern the whole run (a
     failed run, different metric definitions); each entry in `metrics` pairs
     one scoring result with its counterpart and lists what stops that pair
-    comparing. A version-to-version comparison report (#69) should only show
+    comparing. A version-to-version comparison report should only show
     deltas for pairs without issues, and none at all when `issues` is not empty.
     """
 
@@ -141,7 +141,7 @@ class Measure(BaseModel):
     """One headline number read from a metric result, and which way is better.
 
     Each metric says which of its numbers matter for a version comparison by
-    overriding `Metric.measures` (`quality/base.py`); the comparison report (#69)
+    overriding `Metric.measures` (`quality/base.py`); the comparison report
     only diffs these, never a metric's raw `details`. `better` is None for a
     number whose change is worth showing but isn't good or bad in itself (e.g.
     how many concepts saturation reviewed). `value` is None when the result
@@ -188,8 +188,8 @@ class MetricChange(BaseModel):
 
 
 class RunComparison(BaseModel):
-    """A version-to-version quality comparison of two runs (PB10, #69): what a reviewer
-    reads instead of two raw reports, and what PB11's verdicts (#73) build on.
+    """A version-to-version quality comparison of two runs (PB10): what a reviewer
+    reads instead of two raw reports, and what PB11's verdicts build on.
 
     Built by `quality.comparison.compare_reports` on top of `check_comparable`,
     which it embeds as `comparability`: no measure gets a change or a verdict
@@ -311,8 +311,8 @@ class LookupMatch(TaxonomyConceptSummary):
 
     `lexical_score` is a 0-100 spelling ratio and `semantic_score` a -1 to 1 cosine,
     present only when meaning matching was requested. Both are uncalibrated review
-    evidence (#47). A `synonym` match names the approved synonym the term matched; its
-    `lexical_score` is 100 because the term is that synonym, spelled alike (#60).
+    evidence. A `synonym` match names the approved synonym the term matched; its
+    `lexical_score` is 100 because the term is that synonym, spelled alike.
     `active` is false for a retired row, which is still returned: the term does exist,
     and proposing it again would duplicate that row.
     """
@@ -343,7 +343,7 @@ class SourceImport(BaseModel):
 
     `round_config` is set only when a previous snapshot was given; `warnings`
     lists skipped rows, merged tag spellings, unlabelled code prefixes and
-    undescribed tags. The CLI prints it; #117's dashboard route will return it.
+    undescribed tags. The CLI prints it; a dashboard route may return it later.
     """
 
     name: str

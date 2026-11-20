@@ -385,7 +385,7 @@ def _verify(
 def _depth_split(baseline: TaxonomyDataset, enriched: TaxonomyDataset) -> dict[str, Any]:
     """Tags per speciality before and after, with the enriched figure split into
     existing and new specialities, so a drop in depth's mean can be traced to
-    its cause (#132): new one-tag specialities, not shallower existing ones."""
+    its cause: new one-tag specialities, not shallower existing ones."""
     existing_ids = {row.get("id") for row in baseline.specialities}
     after = speciality_tag_counts(enriched)
 
