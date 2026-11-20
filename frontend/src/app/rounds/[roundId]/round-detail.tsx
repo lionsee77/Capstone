@@ -49,7 +49,7 @@ export function RoundDetail({ roundId }: { roundId: string }) {
           </ul>
         </Notice>
       )}
-      {/* The review panel lists the same names from its live queue, so show them here only without it. */}
+      {/* The review panel lists these itself (from its queue, or these warnings until that loads), so only without it. */}
       {!showReview && warnings.repeated.length > 0 && (
         <Notice title="Repeated names">
           <RepeatedNames names={warnings.repeated} />

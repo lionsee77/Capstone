@@ -20,27 +20,42 @@ export type RepeatedName = {
 };
 
 const CODE_PREFIX = /^warning\.repeated_(category|speciality)_name:\s*/;
-const HEADLINE = /Repeated new (category|speciality) name (['"])(.*?)\2 across \d+ distinct parents\./;
-const PARENT = /Parent (.+?): \[([^\]]*)\]/g;
+const HEADLINE = /^Repeated new (category|speciality) name (['"])(.*?)\2 across (\d+) distinct parents\. /;
+// Names may hold "]" or "; ", so groups and members are found by the proposal IDs (sha256 hex) that open them.
+const PROPOSAL_ID = "[0-9a-f]{64}";
+const GROUP = new RegExp(`(?:^|\\]; )Parent (.+?): \\[(?=${PROPOSAL_ID}: )`, "g");
+const MEMBER = new RegExp(`; (?=${PROPOSAL_ID}: )`);
+const MEMBER_ID = new RegExp(`^${PROPOSAL_ID}: `);
+const TAIL = "]. Advisory only";
 const CATEGORY_ID = /\s*\(category ID \d+\)$/;
 
 export function isRepeatedNameWarning(warning: string): boolean {
   return CODE_PREFIX.test(warning);
 }
 
-/** Split one warning message into its name and parents; `null` when it isn't a repeated-name warning. */
+/**
+ * Split one warning message into its name and parents; `null` when it isn't a repeated-name warning.
+ * When the parents found don't add up to the count the message states, they are dropped so the list
+ * falls back to the message itself rather than showing a split it can't vouch for.
+ */
 export function parseRepeatedName(message: string): RepeatedName | null {
   const text = message.replace(CODE_PREFIX, "");
   const headline = HEADLINE.exec(text);
   if (!headline) return null;
-  const parents: string[] = [];
-  let spelled: string | undefined;
-  for (const [, label, members] of text.matchAll(PARENT)) {
-    parents.push(label.replace(CATEGORY_ID, ""));
-    // A member is "<proposal id>: Service > Category > Name"; its last part is the name as written.
-    spelled ??= members.split("; ")[0]?.split(" > ").at(-1)?.trim() || undefined;
-  }
-  return { level: headline[1] as RepeatedName["level"], name: spelled ?? headline[3], parents, message: text };
+  const [, level, , key, count] = headline;
+  const fallback: RepeatedName = { level: level as RepeatedName["level"], name: key, parents: [], message: text };
+  const body = text.slice(headline[0].length);
+  const end = body.lastIndexOf(TAIL);
+  if (end < 0) return fallback;
+  const groups = [...body.slice(0, end).matchAll(GROUP)];
+  if (groups.length === 0 || groups.length !== Number(count)) return fallback;
+  // The first member reads "<proposal id>: Service > Category > Name"; keep as many trailing parts as the
+  // name itself has, so a name containing " > " stays whole.
+  const first = groups[0];
+  const members = body.slice(first.index + first[0].length, groups[1]?.index ?? end);
+  const path = members.split(MEMBER)[0].replace(MEMBER_ID, "");
+  const spelled = path.split(" > ").slice(-key.split(" > ").length).join(" > ").trim();
+  return { ...fallback, name: spelled || key, parents: groups.map((group) => group[1].replace(CATEGORY_ID, "")) };
 }
 
 /** The review queue's structured warning, with its parents read from the message. */
