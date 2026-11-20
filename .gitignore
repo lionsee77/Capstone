@@ -98,10 +98,9 @@ case_b_output.json
 case_b_output.csv
 .case_b_output.checkpoint.json
 merge_runs/
-# Snapshots that rounds create; the two shipped ones (SNAPSHOTS.md) are committed.
-**/integrations/*
-!backend/taxonomy_pipeline/integrations/judged-1015/
-!backend/taxonomy_pipeline/integrations/onet-1031/
+# Snapshots that rounds create. The two shipped ones (SNAPSHOTS.md) are committed with `git add -f`:
+# git keeps tracking them, and anything new in their folders stays ignored.
+integrations/
 backend/taxonomy_pipeline/rounds/
 backend/taxonomy_pipeline/experiments/results/*.json
 backend/taxonomy_pipeline/experiments/results/*.csv
@@ -122,6 +121,10 @@ case_b_*.json
 case_b_*.csv
 .case_b_*.checkpoint.json
 judge_cache_*.json
+
+# O*NET raw download (backend/onet/README.md). The shipped Software Skills.xlsx is committed with
+# `git add -f`; other downloads stay ignored.
+backend/onet/raw/
 
 # ESCO raw download and its flattened join (backend/esco/README.md)
 backend/esco/raw/
