@@ -7,9 +7,27 @@ import statistics
 from collections import Counter
 from typing import Any
 
-from ..models import MetricResult
-from ..taxonomy.base import LoadedDataset
+from ..models import Measure, MetricResult
+from ..taxonomy.base import LoadedDataset, TaxonomyDataset
 from .base import Metric
+
+
+def speciality_tag_counts(ds: TaxonomyDataset) -> dict[Any, int]:
+    """Tags linked to each speciality, by speciality ID, counting zero for an unlinked one.
+
+    Both ends of a link must resolve, matching integrity.py's dangling-link
+    check - otherwise a link to a nonexistent tag still counts as a real tag
+    here, inflating the branching-factor baseline. Public so integrate can split
+    the same count into existing vs new specialities.
+    """
+    speciality_ids = {row.get("id") for row in ds.specialities}
+    tag_ids = {row.get("id") for row in ds.tags}
+    linked = Counter(
+        link.get("speciality_id")
+        for link in ds.speciality_tags
+        if link.get("speciality_id") in speciality_ids and link.get("tag_id") in tag_ids
+    )
+    return {row.get("id"): linked.get(row.get("id"), 0) for row in ds.specialities}
 
 
 def _stats(counts: list[int]) -> dict[str, Any]:
@@ -30,6 +48,25 @@ class DepthMetric(Metric):
     description = "Category -> speciality and speciality -> tag branching factor."
     default_params = {"dataset": None}
 
+    def measures(self, result: MetricResult) -> list[Measure]:
+        """Tags per speciality, higher is better: a speciality with more tags gives matching more to go on.
+        Specialities per category has no better direction (adding categories with few specialities lowers
+        it), and the row counts give the size the means are over."""
+        to_speciality = result.details.get("category_to_speciality", {})
+        to_tag = result.details.get("speciality_to_tag", {})
+        return [
+            Measure(key="speciality_to_tag.mean", label="Tags per speciality (mean)",
+                    value=to_tag.get("mean"), better="higher"),
+            Measure(key="speciality_to_tag.median", label="Tags per speciality (median)",
+                    value=to_tag.get("median"), better="higher"),
+            Measure(key="category_to_speciality.mean", label="Specialities per category (mean)",
+                    value=to_speciality.get("mean")),
+            Measure(key="category_to_speciality.median", label="Specialities per category (median)",
+                    value=to_speciality.get("median")),
+            Measure(key="category_to_speciality.n", label="Categories", value=to_speciality.get("n")),
+            Measure(key="speciality_to_tag.n", label="Specialities", value=to_tag.get("n")),
+        ]
+
     def run(self, datasets: dict[str, LoadedDataset], params: dict[str, Any]) -> MetricResult:
         p = self.resolve_params(params)
         dataset_name = p.get("dataset")
@@ -41,17 +78,7 @@ class DepthMetric(Metric):
         specialities_per_category = Counter(row.get("category_id") for row in ds.specialities)
         category_counts = [specialities_per_category.get(row.get("id"), 0) for row in ds.categories]
 
-        speciality_ids = {row.get("id") for row in ds.specialities}
-        tag_ids = {row.get("id") for row in ds.tags}
-        tags_per_speciality = Counter(
-            link.get("speciality_id")
-            for link in ds.speciality_tags
-            # Both ends must resolve, matching integrity.py's dangling-link
-            # check - otherwise a link to a nonexistent tag still counts as
-            # a real tag here, inflating the branching-factor baseline.
-            if link.get("speciality_id") in speciality_ids and link.get("tag_id") in tag_ids
-        )
-        speciality_counts = [tags_per_speciality.get(row.get("id"), 0) for row in ds.specialities]
+        speciality_counts = list(speciality_tag_counts(ds).values())
 
         details = {
             "category_to_speciality": _stats(category_counts),

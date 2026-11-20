@@ -12,7 +12,7 @@ from typing import Any
 from rapidfuzz import fuzz, process
 
 from ..matching.names import normalize
-from ..models import MetricResult
+from ..models import Measure, MetricResult, Unit
 from ..taxonomy.base import LoadedDataset
 from .base import Metric
 
@@ -52,6 +52,37 @@ def _fuzzy_duplicate_pairs(rows: list[dict[str, Any]], threshold: float) -> list
     return pairs
 
 
+_LEVELS = (("categories", "Categories", "category"), ("specialities", "Specialities", "speciality"),
+           ("tags", "Tags", "tag"))
+
+
+def _cluster_rows(clusters: list[dict[str, Any]] | None) -> int | None:
+    """Rows in a level's exact-duplicate clusters; None for a level the result has no entry for."""
+    return None if clusters is None else sum(len(cluster["ids"]) for cluster in clusters)
+
+
+# (details section, key, label, unit) for each orphan and dead-end measure. A "number" entry is
+# a list of defective rows, measured by its length, except `dangling_speciality_tag_links`,
+# which the result stores as a count already; a "rate" is stored as the fraction.
+_DEFECTS = (
+    ("orphans", "categories_without_service", "Categories without a service", "number"),
+    ("orphans", "specialities_without_category", "Specialities without a category", "number"),
+    ("orphans", "tags_unused_by_any_speciality", "Tags no speciality uses", "number"),
+    ("orphans", "dangling_speciality_tag_links", "Dangling speciality-tag links", "number"),
+    ("dead_ends", "categories_with_zero_specialities", "Dead-end categories", "number"),
+    ("dead_ends", "specialities_with_zero_tags", "Dead-end specialities", "number"),
+    ("dead_ends", "category_dead_end_rate", "Dead-end category rate", "rate"),
+    ("dead_ends", "speciality_dead_end_rate", "Dead-end speciality rate", "rate"),
+)
+
+
+def _defect(key: str, label: str, value: Any, unit: Unit = "number") -> Measure:
+    """A defect measure, lower is better. A list of defective rows counts as its length; None is a
+    check the run skipped (recorded as None, not an empty list)."""
+    return Measure(key=key, label=label, value=len(value) if isinstance(value, list) else value,
+                   better="lower", unit=unit)
+
+
 class IntegrityMetric(Metric):
     id = "integrity"
     subject_param = "dataset"
@@ -60,6 +91,26 @@ class IntegrityMetric(Metric):
         "categories -> specialities -> tags for one dataset."
     )
     default_params = {"dataset": None, "fuzzy_threshold": 85.0}
+
+    def measures(self, result: MetricResult) -> list[Measure]:
+        """Every defect count, lower is better. Counts, not rates, so they grow with the taxonomy: an
+        enrichment that adds rows can add defects too, and that is what a reviewer needs to see (size-independent
+        duplication rates are future work). A check the run skipped (no services table) has no value."""
+        details = result.details
+        exact, fuzzy = details.get("exact_duplicates") or {}, details.get("fuzzy_duplicates") or {}
+        measures = [
+            _defect(f"exact_duplicate_rows.{level}", f"{label} in exact-duplicate clusters",
+                    _cluster_rows(exact.get(level)))
+            for level, label, _ in _LEVELS
+        ]
+        measures += [
+            _defect(f"fuzzy_duplicate_pairs.{level}", f"Fuzzy-duplicate {singular} pairs", fuzzy.get(level))
+            for level, _, singular in _LEVELS
+        ]
+        return [*measures, *(
+            _defect(f"{section}.{key}", label, (details.get(section) or {}).get(key), unit)
+            for section, key, label, unit in _DEFECTS
+        )]
 
     def run(self, datasets: dict[str, LoadedDataset], params: dict[str, Any]) -> MetricResult:
         p = self.resolve_params(params)

@@ -1,12 +1,17 @@
 from __future__ import annotations
 
+import csv
 import json
+import sqlite3
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
 import yaml
 
+from taxonomy_pipeline.audit import ChangeEvent, ChangeQuery, read_changes
 from taxonomy_pipeline.cli import main
+from taxonomy_pipeline.enrichment import audit
 from taxonomy_pipeline.quality.definitions import METRIC_DEFINITIONS_VERSION
 from tests.conftest import FIXTURES
 
@@ -73,6 +78,54 @@ def test_merge_preview_applies_and_logs_hierarchy_decisions(tmp_path: Path) -> N
     before = log_path.read_bytes(), (output / "resolution.json").read_bytes()
     assert main([*command, "--decisions", str(decisions)]) == 1
     assert before == (log_path.read_bytes(), (output / "resolution.json").read_bytes())
+
+
+@pytest.mark.parametrize("delivery_error", [
+    sqlite3.OperationalError("database unavailable"),
+    PermissionError("database parent access denied"),
+    ValueError("Conflicting audit event ID: example"),
+])
+# Saved previews must remain successful and recover through sync without rewriting their artifacts.
+def test_merge_preview_warns_and_recovers_when_audit_delivery_fails(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch,
+    delivery_error: Exception,
+) -> None:
+    config = _write_stage_config(tmp_path)
+    producer = tmp_path / "producer.json"
+    producer.write_text(json.dumps([{
+        "source_dataset": "skillsfuture", "tag_id": "9001", "tag": "Campaign planning",
+        "original_classification": "classified", "service": "Industry", "category": "Marketing",
+        "speciality": "Brand Strategy", "confidence": 0.8, "reason": "Known placement",
+    }]), encoding="utf-8")
+    decisions = tmp_path / "decisions.json"
+    decisions.write_text(json.dumps([{
+        "members": [{"source_dataset": "skillsfuture", "tag_id": "9001"}],
+        "action": "create", "reason": "Reviewed new skill", "approved_speciality_ids": [10],
+    }]), encoding="utf-8")
+    output = tmp_path / "merge with spaces"
+
+    # Fail only database delivery, after the run has saved its durable evidence.
+    def unavailable(events: list[ChangeEvent]) -> int:
+        raise delivery_error
+
+    with monkeypatch.context() as patch:
+        patch.setattr(audit, "log_changes", unavailable)
+        assert main(["merge-preview", "--config", str(config), "--input", str(producer),
+                     "--out-dir", str(output), "--decisions", str(decisions), "--actor", "Reviewer"]) == 0
+    printed = capsys.readouterr()
+    assert "[COMPLETE]" in printed.err and "[WARN]" in printed.err and "[FAILED]" not in printed.err
+    assert "records without saturation_run_id" in printed.err  # Existing warnings are retained.
+    assert str(delivery_error) in printed.err
+    assert f'sync-changes --events "{output / "audit_events.json"}"' in printed.err
+    assert read_changes(ChangeQuery()).total == 0
+    saved = {path.name: path.read_bytes() for path in output.iterdir()}
+    assert {"run.json", "preview.csv", "change_log.jsonl", "audit_events.json"} <= saved.keys()
+    assert main(["sync-changes", "--events", str(output / "audit_events.json")]) == 0
+    events = read_changes(ChangeQuery()).changes
+    assert len(events) == 1 and events[0].actor == "Reviewer"
+    assert main(["sync-changes", "--events", str(output / "audit_events.json")]) == 0
+    assert "recorded 0 new audit events" in capsys.readouterr().out
+    assert saved == {path.name: path.read_bytes() for path in output.iterdir()}
 
 
 @pytest.mark.parametrize(("flag", "value"), [("--screening-lexical", "1.1"), ("--screening-semantic", "nan")])
@@ -178,6 +231,123 @@ def test_case_a_then_merge_preview_run_end_to_end_from_the_cli(tmp_path, saturat
     assert main(["run", "--config", str(snapshot / "enriched.yaml"), "--no-save"]) == 0
 
 
+# Carry repeated names from producer outputs through saved preview, integration replay and comparable scoring.
+def test_repeated_name_warnings_work_through_the_cli_pipeline(
+    tmp_path: Path, saturation_report: Callable[..., Path], capsys: pytest.CaptureFixture[str],
+) -> None:
+    config_path = _write_stage_config(tmp_path)
+    with (tmp_path / "baseline.sql").open("a", encoding="utf-8") as stream:
+        stream.write("\nINSERT INTO services (id,name) VALUES (2,'Subject');\n"
+                     "INSERT INTO categories (id,name,service_id) VALUES (2,'Marine',1);\n")
+    with (tmp_path / "incoming.sql").open("a", encoding="utf-8") as stream:
+        stream.write("\nINSERT INTO categories (id,name,service_id) VALUES (502,'Marine',1);\n"
+                     "INSERT INTO specialities (id,name,category_id) VALUES (602,'Deck Officer',502);\n"
+                     "INSERT INTO speciality_tags (id,speciality_id,tag_id) VALUES (702,602,9001);\n")
+    config = yaml.safe_load(config_path.read_text())
+    config["datasets"] = config["datasets"][:2]
+    config["metric_definitions_version"] = METRIC_DEFINITIONS_VERSION
+    config["metrics"] = [{"id": metric, "params": {"dataset": "original"}} for metric in ("integrity", "depth")]
+    config_path.write_text(yaml.safe_dump(config), encoding="utf-8")
+    report = saturation_report([
+        {"recommended_action": "ADD_CANDIDATE", "parent_status": "HAS_PARENT", "incoming_ids": [9001]},
+    ])
+    case_a = tmp_path / "case_a.json"
+    assert main(["case-a", "--config", str(config_path), "--report", str(report), "--semantic-model", "",
+                 "--output", str(case_a)]) == 0
+    assert len(json.loads(case_a.read_text(encoding="utf-8"))) == 2
+    # Synthetic Case B contract records avoid a paid model call while exercising the same downstream intake.
+    case_b = tmp_path / "case_b.json"
+    case_b.write_text(json.dumps([
+        {"source_dataset": "skillsfuture", "tag_id": str(index), "tag": tag,
+         "original_classification": "classified", "service": service, "category": "Beauty & Personal Care",
+         "speciality": speciality, "confidence": 0.8, "reason": "Synthetic producer placement",
+         "saturation_run_id": "run-1"}
+        for index, tag, service, speciality in [
+            (9100, "Anatomy", "Industry", "Skin treatments"), (9101, "Ergonomics", "Subject", "Massage"),
+        ]
+    ]), encoding="utf-8")
+    merge_run = tmp_path / "merge"
+    assert main(["merge-preview", "--config", str(config_path), "--input", str(case_a), "--input", str(case_b),
+                 "--out-dir", str(merge_run)]) == 0
+    printed = capsys.readouterr()
+    assert "[WARN] warning.repeated_category_name" in printed.err
+    assert "[WARN] warning.repeated_speciality_name" in printed.err
+    assert "2 warnings" in printed.err
+    info = json.loads((merge_run / "run.json").read_text(encoding="utf-8"))
+    assert info["warning_count"] == 2
+    with (merge_run / "preview.csv").open(encoding="utf-8-sig", newline="") as stream:
+        rows = list(csv.DictReader(stream))
+    warnings = [row for row in rows if row["row_type"] == "check" and row["status"].startswith("warning.repeated_")]
+    assert {row["status"] for row in warnings} == {
+        "warning.repeated_category_name", "warning.repeated_speciality_name",
+    }
+    placements = [row for row in rows if row["row_type"] == "placement"]
+    assert len(placements) == 4
+    assert all(row["status"] == "proposed" and "warning.repeated_" in row["note"] for row in placements)
+    saved = json.loads((merge_run / "resolution.json").read_text(encoding="utf-8"))
+    assert {item["code"] for item in saved["effective_screening"]["repeated_names"]} == {
+        item["status"] for item in warnings
+    }
+    assert saved["counts"]["pending_sources"] == 0 and saved["decisions"] == []
+    snapshot = tmp_path / "snapshot"
+    assert main(["integrate", "--config", str(config_path), "--merge-run", str(merge_run),
+                 "--out-dir", str(snapshot)]) == 0
+    manifest = json.loads((snapshot / "manifest.json").read_text(encoding="utf-8"))
+    assert manifest["counts"] == {"categories": 2, "specialities": 4, "tags": 3, "speciality_tags": 4}
+    assert manifest["exact_duplicate_rows"]["categories"] == {"baseline": 0, "enriched": 2}
+    assert manifest["exact_duplicate_rows"]["specialities"] == {"baseline": 0, "enriched": 2}
+    before, after = tmp_path / "before.json", tmp_path / "after.json"
+    assert main(["run", "--config", str(config_path), "--output", str(before), "--no-save"]) == 0
+    assert main(["run", "--config", str(snapshot / "enriched.yaml"), "--output", str(after), "--no-save"]) == 0
+    assert main(["check-comparable", str(before), str(after)]) == 0
+
+
+@pytest.mark.parametrize("delivery_error", [
+    sqlite3.OperationalError("database unavailable"),
+    PermissionError("database parent access denied"),
+    ValueError("Conflicting audit event ID: example"),
+])
+# Published snapshots remain successful CLI results with actionable audit recovery warnings.
+def test_integrate_reports_success_and_recovers_audit_delivery_without_reintegration(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch,
+    delivery_error: Exception,
+) -> None:
+    config_path = _write_stage_config(tmp_path)
+    producer = tmp_path / "producer.json"
+    producer.write_text(json.dumps([{
+        "source_dataset": "skillsfuture", "tag_id": "9001", "tag": "campaign planning",
+        "original_classification": "classified", "service": "Industry", "category": "Marketing",
+        "speciality": "Brand Strategy", "confidence": 0.95, "reason": "Known placement",
+    }]), encoding="utf-8")
+    merge_run = tmp_path / "merge"
+    assert main(["merge-preview", "--config", str(config_path), "--input", str(producer),
+                 "--out-dir", str(merge_run)]) == 0
+    capsys.readouterr()
+
+    # Simulate a delivery failure only after merge preparation has completed.
+    def unavailable(events: list[ChangeEvent]) -> int:
+        raise delivery_error
+
+    snapshot = tmp_path / "snapshot with spaces"
+    with monkeypatch.context() as patch:
+        patch.setattr(audit, "log_changes", unavailable)
+        assert main(["integrate", "--config", str(config_path), "--merge-run", str(merge_run),
+                     "--out-dir", str(snapshot)]) == 0
+    output = capsys.readouterr()
+    assert "[OK]" in output.err and "[WARN]" in output.err and "[FAILED]" not in output.err
+    assert str(delivery_error) in output.err
+    assert f'sync-changes --events "{snapshot / "audit_events.json"}"' in output.err
+    assert f"wrote {snapshot}/" in output.out
+    assert read_changes(ChangeQuery(action="add")).total == 0
+    saved = {path.relative_to(snapshot): path.read_bytes() for path in snapshot.rglob("*") if path.is_file()}
+    assert main(["sync-changes", "--events", str(snapshot / "audit_events.json")]) == 0
+    assert read_changes(ChangeQuery(action="add")).total == 2
+    capsys.readouterr()
+    assert main(["sync-changes", "--events", str(snapshot / "audit_events.json")]) == 0
+    assert "recorded 0 new audit events" in capsys.readouterr().out
+    assert saved == {path.relative_to(snapshot): path.read_bytes() for path in snapshot.rglob("*") if path.is_file()}
+
+
 def test_integrate_refuses_a_merge_run_with_nothing_to_add(tmp_path, capsys):
     from tests.conftest import PRODUCER_FILES
 
@@ -212,7 +382,8 @@ def test_case_a_fails_cleanly_without_a_saturation_report(tmp_path, capsys):
 def test_case_b_fails_cleanly_for_an_unknown_dataset(tmp_path, capsys):
     config_path = _write_stage_config(tmp_path)
 
-    code = main(["case-b", "--config", str(config_path), "--incoming", "nope", "--report", "r.json"])
+    code = main(["case-b", "--config", str(config_path), "--incoming", "nope", "--report", "r.json",
+                 "--context", "context.json"])
 
     assert code == 1
     assert "no taxonomy dataset named 'nope'" in capsys.readouterr().err
@@ -221,10 +392,18 @@ def test_case_b_fails_cleanly_for_an_unknown_dataset(tmp_path, capsys):
 def test_case_b_fails_cleanly_for_an_unknown_provider(tmp_path, capsys):
     config_path = _write_stage_config(tmp_path)
 
-    code = main(["case-b", "--config", str(config_path), "--provider", "nope", "--report", "r.json"])
+    code = main(["case-b", "--config", str(config_path), "--provider", "nope", "--report", "r.json",
+                 "--context", "context.json"])
 
     assert code == 1
     assert "No source provider 'nope'" in capsys.readouterr().err
+
+
+def test_case_b_requires_context_during_argument_parsing(capsys):
+    with pytest.raises(SystemExit) as error:
+        main(["case-b", "--config", "missing.yaml", "--report", "missing.json"])
+    assert error.value.code == 2
+    assert "--context" in capsys.readouterr().err
 
 
 def test_merge_preview_rejects_outputs_from_different_saturation_runs(tmp_path, capsys):
@@ -462,3 +641,149 @@ def test_library_logs_print_to_stdout_as_bare_lines_without_repeating(capsys):
     cli._show_library_logs(logging.DEBUG)
     logger.debug("Raw model response")
     assert capsys.readouterr().out == "Raw model response\n"
+
+
+def _baseline_and_enriched(tmp_path, **edits):
+    from taxonomy_pipeline.app.scoring import write_report
+    from tests.conftest import BASELINE_OF_RECORD, enriched_report
+
+    enriched = tmp_path / "enriched.json"
+    write_report(enriched_report(**edits), enriched)
+    return str(BASELINE_OF_RECORD), str(enriched)
+
+
+def test_compare_prints_a_markdown_report_of_what_changed(tmp_path, capsys):
+    before, after = _baseline_and_enriched(tmp_path, **{"breadth__occupational.matched_count": 24})
+
+    assert main(["compare", before, after]) == 0
+
+    out = capsys.readouterr().out
+    assert out.startswith("# Taxonomy quality comparison")
+    assert "| SSOC occupational nodes covered | 16 | 24 | +8 | +50.0% | improved |" in out
+
+
+@pytest.mark.parametrize(("name", "check"), [
+    ("comparison.csv", lambda text: text.startswith("metric_id,result,measure_key")),
+    ("comparison.json", lambda text: json.loads(text)["comparability"]["comparable"] is True),
+    ("comparison.md", lambda text: text.startswith("# Taxonomy quality comparison")),
+])
+def test_compare_writes_the_format_its_output_files_suffix_names(tmp_path, capsys, name, check):
+    before, after = _baseline_and_enriched(tmp_path)
+
+    assert main(["compare", before, after, "--output", str(tmp_path / name)]) == 0
+
+    assert check((tmp_path / name).read_text(encoding="utf-8"))
+    assert f"to {tmp_path / name}" in capsys.readouterr().err
+
+
+def test_compare_still_writes_the_report_but_fails_when_the_runs_are_not_comparable(tmp_path, capsys):
+    from taxonomy_pipeline.app.scoring import read_report, write_report
+
+    before, after = _baseline_and_enriched(tmp_path)
+    report = read_report(after)
+    report.metric_definitions_version = None
+    write_report(report, after)
+
+    assert main(["compare", before, after, "--format", "csv"]) == 1
+
+    out = capsys.readouterr()
+    assert "not_compared" in out.out
+    assert "[FLAGGED] NOT comparable" in out.err
+    assert "  - " in out.err and "definitions" in out.err  # says why, not just that it isn't
+
+
+def test_compare_refuses_an_output_suffix_it_cant_read_a_format_from(tmp_path, capsys):
+    before, after = _baseline_and_enriched(tmp_path)
+
+    assert main(["compare", before, after, "--output", str(tmp_path / "cmp.json.gz")]) == 1
+
+    assert "can't tell the format" in capsys.readouterr().err
+    assert not (tmp_path / "cmp.json.gz").exists()
+
+
+def test_compare_fails_cleanly_for_an_unknown_report(tmp_path, isolated_db, capsys):
+    assert main(["compare", str(tmp_path / "missing.json"), "no-such-run"]) == 1
+    assert "[FAILED] compare:" in capsys.readouterr().err
+
+
+def test_import_source_writes_the_dump_and_prints_the_next_round_commands(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str],
+) -> None:
+    (tmp_path / "flat.csv").write_text("Sector,Role,Skill\nICT,Data Analyst,SQL\n", encoding="utf-8")
+    (tmp_path / "mapping.yaml").write_text(yaml.safe_dump({
+        "name": "demo", "display_name": "Demo", "source": "flat.csv", "service_id": 1,
+        "columns": {"category": "Sector", "speciality": "Role", "tag": "Skill"},
+    }), encoding="utf-8")
+    snapshot = tmp_path / "snapshot"
+    snapshot.mkdir()
+    (snapshot / "enriched.yaml").write_text(yaml.safe_dump({
+        "datasets": [{"name": "enriched", "paths": [str(FIXTURES / "mini_original.sql")]}], "metrics": [],
+    }), encoding="utf-8")
+    round_config = tmp_path / "round.yaml"
+
+    assert main(["import-source", "--mapping", str(tmp_path / "mapping.yaml"), "--baseline-snapshot",
+                 str(snapshot), "--round-config", str(round_config)]) == 0
+    out, err = capsys.readouterr()
+    assert "[OK] 1 categories, 1 specialities, 1 tags, 1 links" in err
+    assert (tmp_path / "demo_taxonomy.sql").exists() and round_config.exists()
+    assert "--provider tag_context --context" in out and "--incoming demo" in out
+
+
+def test_import_source_fails_cleanly_for_a_missing_column(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    (tmp_path / "flat.csv").write_text("Sector,Role\nICT,Data Analyst\n", encoding="utf-8")
+    (tmp_path / "mapping.yaml").write_text(yaml.safe_dump({
+        "name": "demo", "display_name": "Demo", "source": "flat.csv", "service_id": 1,
+        "columns": {"category": "Sector", "speciality": "Role", "tag": "Skill"},
+    }), encoding="utf-8")
+    assert main(["import-source", "--mapping", str(tmp_path / "mapping.yaml")]) == 1
+    assert "[FAILED] import-source:" in capsys.readouterr().err
+
+
+def test_lookup_prints_the_same_result_as_the_api_and_exits_zero_either_way(
+    tmp_path: Path, integration_round, capsys,
+) -> None:
+    baseline = (FIXTURES / "mini_original.sql").read_text(encoding="utf-8")
+    integration_round("r1", {"mini.sql": baseline}, "INSERT INTO `tags` (`id`, `name`) VALUES (200, 'Payroll');\n")
+    root = str(tmp_path / "integrations")
+
+    assert main(["lookup", "PAYROLL", "--integrations-root", root]) == 0
+    found = json.loads(capsys.readouterr().out)
+    assert (found["snapshot"], found["exists"], found["exact"][0]["id"]) == ("r1", True, 200)
+
+    assert main(["lookup", "Underwater Welding", "--integrations-root", root, "--level", "tags"]) == 0
+    assert json.loads(capsys.readouterr().out)["exists"] is False
+
+
+def test_lookup_fails_clearly_when_there_is_nothing_to_check_against(tmp_path: Path, capsys) -> None:
+    assert main(["lookup", "tax", "--integrations-root", str(tmp_path / "none")]) == 1
+    assert "[FAILED] lookup" in capsys.readouterr().err
+
+
+def test_case_a_passes_its_placement_options_through_and_refuses_scoped_search_without_a_model(
+    tmp_path, saturation_report, capsys,
+):
+    config_path = _write_stage_config(tmp_path)
+    report = saturation_report([
+        {"recommended_action": "ADD_CANDIDATE", "parent_status": "HAS_PARENT", "incoming_ids": [9001]},
+    ])
+    output = tmp_path / "case_a_output.json"
+
+    assert main(["case-a", "--config", str(config_path), "--report", str(report), "--semantic-model", "",
+                 "--one-category-per-tag", "--output", str(output)]) == 0
+    assert [record["speciality"] for record in json.loads(output.read_text())] == ["campaign planning"]
+
+    assert main(["case-a", "--config", str(config_path), "--report", str(report), "--semantic-model", "",
+                 "--category-scoped-semantic-threshold", "0.55", "--output", str(output)]) == 1
+    assert "needs a semantic_model" in capsys.readouterr().err
+
+    assert main(["case-a", "--config", str(config_path), "--report", str(report), "--semantic-model", "",
+                 "--flag-single-tag-specialities", "--output", str(output)]) == 0
+    assert [record["needs_review"] for record in json.loads(output.read_text())] == [True]
+
+    assert main(["case-a", "--config", str(config_path), "--report", str(report), "--semantic-model", "",
+                 "--group-new-specialities-threshold", "0.6", "--output", str(output)]) == 1
+    assert "group_new_specialities_threshold needs a semantic_model" in capsys.readouterr().err
+
+    assert main(["case-a", "--config", str(config_path), "--report", str(report), "--semantic-model", "",
+                 "--group-name-model", "gpt-test", "--output", str(output)]) == 1
+    assert "set group_new_specialities_threshold too" in capsys.readouterr().err

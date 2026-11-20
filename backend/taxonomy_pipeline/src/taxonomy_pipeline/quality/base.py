@@ -9,7 +9,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import Any
 
-from ..models import MetricResult
+from ..models import Measure, MetricResult
 from ..taxonomy.base import LoadedDataset, TaxonomyDataset
 
 
@@ -38,6 +38,14 @@ class Metric(ABC):
         those. For a metric with a `subject_param`, this is part of the metric
         definitions version (`quality/definitions.py`), so changing it means a bump."""
         return {"default_params": dict(self.default_params)}
+
+    def measures(self, result: MetricResult) -> list[Measure]:
+        """The headline numbers in one of this metric's `ok` results, for a
+        version-to-version comparison (`quality/comparison.py`). Override in a
+        scoring metric to name what matters and which way is better; the
+        default, none, keeps a metric out of comparisons. Read only `details`,
+        so a stored report compares without rerunning anything."""
+        return []
 
     def resolve_params(self, params: dict[str, Any]) -> dict[str, Any]:
         merged = dict(self.default_params)

@@ -1,9 +1,10 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 
-import { Badge } from "@/components/ui/badge";
+import { Notice } from "@/components/layout/page-header";
+import { LevelTag } from "@/components/level-tag";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -11,24 +12,14 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import type { TaxonomySource } from "@/lib/api/client";
-import { hasOlderRuns, RUNS_PAGE_SIZE, useLoadOlderRuns, useRun, useRuns, useTaxonomySearch } from "@/lib/api/queries";
+import { hasOlderRuns, RUNS_PAGE_SIZE, useLoadOlderRuns, useRuns, useRunSummary, useTaxonomySearch } from "@/lib/api/queries";
 import { type ConceptLevel, isTaxonomyDataset } from "@/lib/api/schemas";
+import { formatDateTime, shortRunId } from "@/lib/format";
+import { useDebouncedValue } from "@/lib/use-debounced-value";
 
 const LEVELS: ConceptLevel[] = ["services", "categories", "specialities", "tags"];
 const ALL_LEVELS = "all" as const;
 const SEARCH_DEBOUNCE_MS = 300;
-
-/** Delays reacting to a fast-changing value (typing) until it's been still
- * for `delayMs` - avoids firing a new search, and a new backend dataset
- * reload, on every keystroke. */
-function useDebouncedValue<T>(value: T, delayMs: number): T {
-  const [debounced, setDebounced] = useState(value);
-  useEffect(() => {
-    const timer = setTimeout(() => setDebounced(value), delayMs);
-    return () => clearTimeout(timer);
-  }, [value, delayMs]);
-  return debounced;
-}
 
 /** Picks a finished run and a dataset within it - the (run_id, dataset) pair
  * every /taxonomy endpoint needs, since nothing keeps a dataset loaded
@@ -39,7 +30,8 @@ function useSourcePicker() {
   const loadOlder = useLoadOlderRuns(setLimit);
   const doneRuns = useMemo(() => (runs ?? []).filter((run) => run.status === "done"), [runs]);
   const [runId, setRunId] = useState<string>("");
-  const { data: run } = useRun(runId);
+  // Only the dataset list is needed, so skip result details (megabytes for a saturation run).
+  const { data: run } = useRunSummary(runId);
   const taxonomyDatasets = useMemo(() => (run?.datasets ?? []).filter(isTaxonomyDataset), [run]);
   const [dataset, setDataset] = useState<string>("");
 
@@ -75,9 +67,9 @@ export function TaxonomySearch() {
 
   return (
     <div className="flex flex-col gap-6">
-      <div className="flex flex-wrap items-end gap-4">
+      <div className="flex flex-wrap items-end gap-4 rounded-md border border-border bg-muted/50 p-4">
         <div className="flex flex-col gap-1.5">
-          <Label htmlFor="taxonomy-run">Run</Label>
+          <Label className="label-caps" htmlFor="taxonomy-run">Run</Label>
           <Select value={runId} onValueChange={selectRun}>
             <SelectTrigger id="taxonomy-run" className="w-56">
               <SelectValue placeholder="Pick a finished run" />
@@ -85,7 +77,7 @@ export function TaxonomySearch() {
             <SelectContent>
               {doneRuns.map((r) => (
                 <SelectItem key={r.run_id} value={r.run_id}>
-                  {r.run_id.slice(0, 8)} - {new Date(r.created_at).toLocaleString()}
+                  {shortRunId(r.run_id)} · {formatDateTime(r.created_at)}
                 </SelectItem>
               ))}
             </SelectContent>
@@ -99,7 +91,7 @@ export function TaxonomySearch() {
           )}
         </div>
         <div className="flex flex-col gap-1.5">
-          <Label htmlFor="taxonomy-dataset">Dataset</Label>
+          <Label className="label-caps" htmlFor="taxonomy-dataset">Dataset</Label>
           <Select value={dataset} onValueChange={(value) => setDataset(value ?? "")} disabled={!runId}>
             <SelectTrigger id="taxonomy-dataset" className="w-48">
               <SelectValue placeholder="Pick a dataset" />
@@ -114,18 +106,18 @@ export function TaxonomySearch() {
           </Select>
         </div>
         <div className="flex flex-col gap-1.5">
-          <Label htmlFor="taxonomy-q">Name</Label>
+          <Label className="label-caps" htmlFor="taxonomy-q">Name</Label>
           <Input
             id="taxonomy-q"
             className="w-56"
-            placeholder="Search by name..."
+            placeholder="Search by name…"
             value={qInput}
             onChange={(e) => setQInput(e.target.value)}
             disabled={!source}
           />
         </div>
         <div className="flex flex-col gap-1.5">
-          <Label htmlFor="taxonomy-level">Level</Label>
+          <Label className="label-caps" htmlFor="taxonomy-level">Level</Label>
           <Select
             value={level || ALL_LEVELS}
             onValueChange={(value) => setLevel(!value || value === ALL_LEVELS ? "" : (value as ConceptLevel))}
@@ -146,9 +138,17 @@ export function TaxonomySearch() {
         </div>
       </div>
 
-      {!source && <p className="text-sm text-muted-foreground">Pick a run and a dataset to search its taxonomy.</p>}
+      {!source && (
+        <Notice title="Choose a run and a dataset">
+          The taxonomy is read from a finished validation run, so pick one above to start searching.
+        </Notice>
+      )}
       {source && isPending && <Skeleton className="h-40 w-full" />}
-      {source && error && <p className="text-sm text-destructive">Could not search: {error.message}</p>}
+      {source && error && (
+        <Notice title="Could not search" tone="error">
+          {error.message}
+        </Notice>
+      )}
       {source && results && (
         <SearchResults results={results} source={source} />
       )}
@@ -163,7 +163,7 @@ function SearchResults({
   results: { id: string | number; name: string; level: ConceptLevel }[];
   source: TaxonomySource;
 }) {
-  if (results.length === 0) return <p className="text-sm text-muted-foreground">No matching concepts.</p>;
+  if (results.length === 0) return <Notice title="No matching concepts">Try a shorter name or another level.</Notice>;
   return (
     <Table>
       <TableHeader>
@@ -178,13 +178,13 @@ function SearchResults({
             <TableCell>
               <Link
                 href={`/taxonomy/${concept.level}/${encodeURIComponent(String(concept.id))}?run_id=${encodeURIComponent(source.runId)}&dataset=${encodeURIComponent(source.dataset)}`}
-                className="hover:underline"
+                className="underline-offset-4 hover:text-primary hover:underline"
               >
                 {concept.name}
               </Link>
             </TableCell>
             <TableCell>
-              <Badge variant="outline">{concept.level}</Badge>
+              <LevelTag level={concept.level} />
             </TableCell>
           </TableRow>
         ))}

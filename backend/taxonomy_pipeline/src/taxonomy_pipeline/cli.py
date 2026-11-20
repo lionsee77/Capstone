@@ -1,8 +1,12 @@
-"""`taxonomy-pipeline run|check-comparable|serve|case-a|case-b|merge-preview|review-proposals|bulk-decide|integrate`
+"""`taxonomy-pipeline run|check-comparable|compare|serve|import-source|case-a|case-b|merge-preview|
+review-proposals|bulk-decide|integrate|lookup|synonyms|synonym-add|synonym-remove|synonym-check|synonym-resolve|
+synonym-suggest|synonym-review`
 
 A thin adapter over `app/`: each command parses its flags, calls the one use
-case behind it (`app.scoring` for `run` and `check-comparable`,
-`app.enrichment` for the classification commands) and turns the result into
+case behind it (`app.scoring` for `run` and `check-comparable`, `app.comparison` for `compare`,
+`app.sources` for `import-source`, `app.enrichment` for the classification commands, `app.lookup` for `lookup`,
+`app.synonyms` for the synonym commands)
+and turns the result into
 printed text and an exit code. `run` calls the same `run_pipeline` the FastAPI
 `/runs` route calls. Anything else a command does - loading, checks, writing
 outputs - belongs in its use case, not here.
@@ -11,11 +15,21 @@ from __future__ import annotations
 
 import argparse
 import logging
+import sqlite3
 import sys
 from pathlib import Path
 
+from .app import comparison as comparisons
 from .app import enrichment as use_cases
+from .app import lookup as lookups
+from .app import synonyms as synonym_cases
+from .app.changes import changes, sync_changes
 from .app.scoring import check_runs, result_labels, run_config, write_report
+from .app.sources import import_source
+from .audit.models import ChangeQuery
+from .matching.lookup import DEFAULT_MIN_SCORE
+from .synonyms import SynonymCreate, SynonymQuery
+from .synonyms.sources import SOURCES as SYNONYM_SOURCES
 
 
 def _cmd_run(args: argparse.Namespace) -> int:
@@ -69,6 +83,29 @@ def _cmd_check_comparable(args: argparse.Namespace) -> int:
     return 0 if check.comparable else 1
 
 
+def _cmd_compare(args: argparse.Namespace) -> int:
+    try:
+        fmt = comparisons.output_format(args.output, args.format)
+        comparison = comparisons.compare_runs(
+            args.before, args.after, before_subject=args.before_subject, after_subject=args.after_subject,
+        )
+        if args.output:
+            comparisons.write_comparison(comparison, args.output, fmt)
+            print(f"wrote {fmt} comparison to {args.output}", file=sys.stderr)
+        else:
+            print(comparisons.render(comparison, fmt), end="")
+    except (OSError, ValueError) as exc:
+        print(f"[FAILED] compare: {exc}", file=sys.stderr)
+        return 1
+    # Like check-comparable, a comparison that isn't like for like fails, so a script can't miss it.
+    if not comparison.comparable:
+        print("[FLAGGED] NOT comparable: changes are only shown for results scored alike. Why:", file=sys.stderr)
+        for reason in comparisons.not_comparable_reasons(comparison):
+            print(f"  - {reason}", file=sys.stderr)
+        return 1
+    return 0
+
+
 def _cmd_serve(args: argparse.Namespace) -> int:
     import uvicorn
 
@@ -81,11 +118,45 @@ def _cmd_serve(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_import_source(args: argparse.Namespace) -> int:
+    try:
+        result = import_source(
+            args.mapping, out_dir=args.out_dir, baseline_snapshot=args.baseline_snapshot,
+            template_config=args.template, round_config=args.round_config,
+        )
+    except (OSError, ValueError) as exc:
+        print(f"[FAILED] import-source: {exc}", file=sys.stderr)
+        return 1
+    for warning in result.warnings:
+        print(f"[WARN] {warning}", file=sys.stderr)
+    counts = result.counts
+    print(
+        f"[OK] {counts['categories']} categories, {counts['specialities']} specialities, {counts['tags']} tags, "
+        f"{counts['speciality_tags']} links",
+        file=sys.stderr,
+    )
+    print(f"wrote {result.sql_path} and {result.context_path}")
+    if result.round_config:
+        names = f"--config {result.round_config} --baseline round_baseline --incoming {result.name}"
+        print(f"wrote {result.round_config}; next:")
+        print(f"  taxonomy-pipeline run --config {result.round_config} --output judged_report_{result.name}.json")
+        print(f"  taxonomy-pipeline case-a {names} --report judged_report_{result.name}.json "
+              f"--output case_a_{result.name}.json")
+        print(f"  taxonomy-pipeline case-b {names} --report judged_report_{result.name}.json "
+              f"--provider tag_context --context {result.context_path} --output case_b_{result.name}.json")
+    return 0
+
+
 def _cmd_case_a(args: argparse.Namespace) -> int:
     try:
         records = use_cases.case_a(
             args.config, args.report, baseline=args.baseline, incoming=args.incoming, output=args.output,
             semantic_model=args.semantic_model,
+            category_scoped_semantic_threshold=args.category_scoped_semantic_threshold,
+            one_category_per_tag=args.one_category_per_tag,
+            group_new_specialities_threshold=args.group_new_specialities_threshold,
+            flag_single_tag_specialities=args.flag_single_tag_specialities,
+            group_name_model=args.group_name_model, group_name_cache=args.group_name_cache,
         )
     except (OSError, ValueError, RuntimeError) as exc:
         print(f"[FAILED] case-a: {exc}", file=sys.stderr)
@@ -113,9 +184,10 @@ def _cmd_merge_preview(args: argparse.Namespace) -> int:
         run = use_cases.merge_preview(
             args.config, args.input, baseline=args.baseline, out_dir=args.out_dir, decisions=args.decisions,
             semantic_model=args.semantic_model, screening_lexical=args.screening_lexical,
-            screening_semantic=args.screening_semantic, change_log=args.change_log,
+            screening_semantic=args.screening_semantic, change_log=args.change_log, actor=args.actor,
+            synonyms=args.synonyms,
         )
-    except (OSError, ValueError) as exc:
+    except (OSError, ValueError, sqlite3.Error) as exc:
         print(f"[FAILED] merge-preview: {exc}", file=sys.stderr)
         return 1
 
@@ -129,7 +201,8 @@ def _cmd_merge_preview(args: argparse.Namespace) -> int:
         f"[{status.upper()}] {counts.added_tags} new tags, {counts.reused_tags} reused, "
         f"{counts.added_links} new links, "
         f"{counts.added_categories} new categories, {counts.added_specialities} new specialities; "
-        f"{counts.pending_sources} sources pending review, {counts.omitted_records} records omitted",
+        f"{counts.pending_sources} sources pending review, {counts.omitted_records} records omitted, "
+        f"{len(run.warnings)} warnings",
         file=sys.stderr,
     )
     print(f"wrote {run.out_dir}/preview.csv (plus validation, deduplication and resolution JSON)")
@@ -174,7 +247,9 @@ def _cmd_bulk_decide(args: argparse.Namespace) -> int:
 
 def _cmd_integrate(args: argparse.Namespace) -> int:
     try:
-        outcome = use_cases.integrate(args.config, args.merge_run, baseline=args.baseline, out_dir=args.out_dir)
+        outcome = use_cases.integrate(
+            args.config, args.merge_run, baseline=args.baseline, out_dir=args.out_dir, actor=args.actor,
+        )
     except (OSError, ValueError) as exc:
         print(f"[FAILED] integrate: {exc}", file=sys.stderr)
         return 1
@@ -198,6 +273,156 @@ def _add_dataset_args(parser: argparse.ArgumentParser, *, incoming: bool = True)
         parser.add_argument("--incoming", default="skillsfuture", help="taxonomy dataset the new tags come from")
 
 
+# Print filtered audit history through the same use case as GET /changes.
+def _cmd_changes(args: argparse.Namespace) -> int:
+    try:
+        query = ChangeQuery(**{key: getattr(args, key) for key in ChangeQuery.model_fields})
+        print(changes(query).model_dump_json(indent=2))
+    except (OSError, ValueError, sqlite3.Error) as exc:
+        print(f"[FAILED] changes: {exc}", file=sys.stderr)
+        return 1
+    return 0
+
+
+# Retry delivery from saved audit events without changing taxonomy artifacts.
+def _cmd_sync_changes(args: argparse.Namespace) -> int:
+    try:
+        count = sync_changes(args.events)
+    except (OSError, ValueError, sqlite3.Error) as exc:
+        print(f"[FAILED] sync-changes: {exc}", file=sys.stderr)
+        return 1
+    print(f"recorded {count} new audit events")
+    return 0
+
+
+# Print synonyms through the same use case as GET /synonyms, or freeze them into a synonym_set file.
+def _cmd_synonyms(args: argparse.Namespace) -> int:
+    try:
+        if args.export:
+            if not args.dataset:
+                raise ValueError("--export needs --dataset: a synonym set holds one dataset's synonyms")
+            ignored = [flag for flag, value in (("--level", args.level), ("--concept-id", args.concept_id),
+                                                ("--term", args.term), ("--include-removed", args.include_removed))
+                       if value]
+            if ignored:
+                raise ValueError(f"--export writes every approved synonym of --dataset; drop {', '.join(ignored)}")
+            exported = synonym_cases.export_synonyms(args.dataset, args.export)
+            print(f"[OK] wrote {len(exported.synonyms)} approved synonyms of {exported.dataset} to {args.export}")
+            return 0
+        query = SynonymQuery(
+            dataset=args.dataset, concept_level=args.level, concept_id=args.concept_id, term=args.term,
+            include_removed=args.include_removed, offset=args.offset, limit=args.limit, status=args.status,
+        )
+        print(synonym_cases.list_synonyms(query).model_dump_json(indent=2))
+    except (OSError, ValueError, sqlite3.Error) as exc:
+        print(f"[FAILED] synonyms: {exc}", file=sys.stderr)
+        return 1
+    return 0
+
+
+# Approve one synonym through the same use case as POST /synonyms.
+def _cmd_synonym_add(args: argparse.Namespace) -> int:
+    try:
+        request = SynonymCreate(
+            dataset=args.dataset, concept_level=args.level, concept_id=args.concept_id, term=args.term,
+            reason=args.reason, actor=args.actor, scope_level=args.scope_level, scope_id=args.scope_id,
+        )
+        synonym = synonym_cases.add_synonym(request, config_path=args.config)
+    except (OSError, ValueError, sqlite3.Error) as exc:
+        print(f"[FAILED] synonym-add: {exc}", file=sys.stderr)
+        return 1
+    scope = f" within {synonym.scope_level} {synonym.scope_id}" if synonym.scope else ""
+    print(f"[OK] {synonym.term!r} -> {synonym.concept_name!r} ({synonym.concept_level} {synonym.concept_id}){scope}, "
+          f"synonym {synonym.synonym_id}")
+    return 0
+
+
+# List stored synonyms that don't resolve as recorded, through the same use case as GET /synonyms/problems.
+def _cmd_synonym_check(args: argparse.Namespace) -> int:
+    try:
+        problems = synonym_cases.synonym_problems(args.dataset, config_path=args.config)
+    except (OSError, ValueError, sqlite3.Error) as exc:
+        print(f"[FAILED] synonym-check: {exc}", file=sys.stderr)
+        return 1
+    for problem in problems:
+        print(f"[WARN] {problem.term!r} -> {problem.concept_name!r} ({problem.concept_level} {problem.concept_id}, "
+              f"synonym {problem.synonym_id}): {problem.problem}")
+    print(f"[{'OK' if not problems else 'FLAGGED'}] {len(problems)} synonym problem(s) in {args.dataset}")
+    return 1 if problems else 0
+
+
+# Say what a term means through the same use case as GET /synonyms/resolve.
+def _cmd_synonym_resolve(args: argparse.Namespace) -> int:
+    try:
+        resolution = synonym_cases.resolve_term(
+            args.term, dataset=args.dataset, config_path=args.config, level=args.level,
+            within_level=args.within_level, within_id=args.within_id,
+        )
+        print(resolution.model_dump_json(indent=2))
+    except (OSError, ValueError, sqlite3.Error) as exc:
+        print(f"[FAILED] synonym-resolve: {exc}", file=sys.stderr)
+        return 1
+    return 0
+
+
+# Store a source's suggestions as proposed synonyms, through the same use case as POST /synonyms/suggest.
+def _cmd_synonym_suggest(args: argparse.Namespace) -> int:
+    try:
+        report = synonym_cases.suggest_synonyms(
+            args.source, dataset=args.dataset, config_path=args.config, path=args.file, actor=args.actor,
+        )
+    except (OSError, ValueError, sqlite3.Error) as exc:
+        print(f"[FAILED] synonym-suggest: {exc}", file=sys.stderr)
+        return 1
+    skipped = ", ".join(f"{count} {why.replace('_', ' ')}" for why, count in sorted(report.skipped.items()))
+    print(f"[OK] {report.source}: proposed {len(report.proposed)} synonyms for review"
+          + (f" (skipped {skipped})" if skipped else "")
+          + "; list them with `taxonomy-pipeline synonyms --status proposed`")
+    return 0
+
+
+# Approve or reject one proposed synonym, through the same use case as POST /synonyms/{id}/approve|reject.
+def _cmd_synonym_review(args: argparse.Namespace) -> int:
+    try:
+        synonym = synonym_cases.review_synonym(
+            args.synonym_id, approve=args.approve, reason=args.reason, actor=args.actor, config_path=args.config,
+        )
+    except (OSError, ValueError, sqlite3.Error) as exc:
+        print(f"[FAILED] synonym-review: {exc}", file=sys.stderr)
+        return 1
+    print(f"[OK] {synonym.status} {synonym.term!r} -> {synonym.concept_name!r}")
+    return 0
+
+
+# Remove one synonym through the same use case as POST /synonyms/{id}/remove.
+def _cmd_synonym_remove(args: argparse.Namespace) -> int:
+    try:
+        synonym = synonym_cases.remove_synonym(args.synonym_id, reason=args.reason, actor=args.actor)
+    except (OSError, ValueError, sqlite3.Error) as exc:
+        print(f"[FAILED] synonym-remove: {exc}", file=sys.stderr)
+        return 1
+    print(f"[OK] removed {synonym.term!r} -> {synonym.concept_name!r}")
+    return 0
+
+
+# Print exact and near matches for a term through the same use case as GET /lookup.
+def _cmd_lookup(args: argparse.Namespace) -> int:
+    try:
+        result = lookups.lookup_term(
+            args.term, Path(args.integrations_root), snapshot=args.snapshot, level=args.level, limit=args.limit,
+            min_score=args.min_score, semantic=args.semantic, synonym_dataset=args.synonym_dataset or None,
+        )
+    except (
+        OSError, ValueError, sqlite3.Error, lookups.NoSnapshots, lookups.SnapshotNotFound,
+        lookups.SemanticUnavailable,
+    ) as exc:
+        print(f"[FAILED] lookup: {exc}", file=sys.stderr)
+        return 1
+    print(result.model_dump_json(indent=2))
+    return 0
+
+
+# Configure the CLI adapters and their shared use-case inputs.
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="taxonomy_pipeline")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -218,11 +443,34 @@ def build_parser() -> argparse.ArgumentParser:
     check.add_argument("--after-subject", help="taxonomy the after run scores (needed if it scores several)")
     check.set_defaults(func=_cmd_check_comparable)
 
+    compare = subparsers.add_parser(
+        "compare", help="compare two runs metric by metric: values, changes and improved/deteriorated verdicts",
+    )
+    compare.add_argument("before", help=f"the earlier run, e.g. the baseline of record: {report_source}")
+    compare.add_argument("after", help=f"the later run, e.g. the enriched snapshot's: {report_source}")
+    compare.add_argument("--before-subject", help="taxonomy the before run scores (needed if it scores several)")
+    compare.add_argument("--after-subject", help="taxonomy the after run scores (needed if it scores several)")
+    compare.add_argument("--output", help="write the comparison here instead of stdout")
+    compare.add_argument("--format", choices=comparisons.FORMATS,
+                         help="markdown, csv or json (default: from --output's suffix, else markdown)")
+    compare.set_defaults(func=_cmd_compare)
+
     serve_parser = subparsers.add_parser("serve", help="run the FastAPI app")
     serve_parser.add_argument("--host", default="127.0.0.1")
     serve_parser.add_argument("--port", type=int, default=8000)
     serve_parser.add_argument("--reload", action="store_true")
     serve_parser.set_defaults(func=_cmd_serve)
+
+    source = subparsers.add_parser("import-source", help="turn a flat CSV/xlsx source into a taxonomy SQL dump")
+    source.add_argument("--mapping", required=True, help="source mapping YAML: file, columns, service, filters")
+    source.add_argument("--out-dir", help="where to write <name>_taxonomy.sql and <name>_tag_context.json "
+                        "(default: the mapping's folder)")
+    source.add_argument("--baseline-snapshot",
+                        help="previous round's integrate snapshot (integrations/<name>); also writes a round config")
+    source.add_argument("--round-config", help="round config to write (default: configs/<snapshot>_vs_<name>.yaml)")
+    source.add_argument("--template", help="round config whose metrics to copy "
+                        "(default: configs/original_vs_skillsfuture.yaml)")
+    source.set_defaults(func=_cmd_import_source)
 
     report_help = "saved `run` report whose saturation result decides which tags are new"
     case_a = subparsers.add_parser("case-a", help="place new tags that have their own source category")
@@ -230,14 +478,28 @@ def build_parser() -> argparse.ArgumentParser:
     case_a.add_argument("--report", default="report.json", help=report_help)
     case_a.add_argument("--semantic-model", default="all-MiniLM-L6-v2", help="sentence model; '' for lexical only")
     case_a.add_argument("--output", default="case_a_output.json")
+    case_a.add_argument("--category-scoped-semantic-threshold", type=float, default=None,
+                        help="before proposing a new speciality under a matched category, join the category's "
+                             "closest existing speciality at or above this cosine score (off by default)")
+    case_a.add_argument("--one-category-per-tag", action="store_true",
+                        help="place a tag via its best-evidenced source category only, not one per category")
+    case_a.add_argument("--group-new-specialities-threshold", type=float, default=None,
+                        help="group tags proposed as new specialities under one category when within this cosine "
+                             "score of the group's most central tag, which names it (off by default)")
+    case_a.add_argument("--group-name-model",
+                        help="name each grouped speciality from all its tags with this OpenAI chat model, held for "
+                             "review (needs --group-new-specialities-threshold and OPENAI_API_KEY)")
+    case_a.add_argument("--group-name-cache", help="JSON file caching generated names, so a rerun doesn't pay again")
+    case_a.add_argument("--flag-single-tag-specialities", action="store_true",
+                        help="flag for review every new speciality left holding only its own tag")
     case_a.set_defaults(func=_cmd_case_a)
 
     case_b = subparsers.add_parser("case-b", help="propose placements for parentless new tags with an LLM")
     _add_dataset_args(case_b)
     case_b.add_argument("--report", default="report.json", help=report_help)
-    case_b.add_argument("--provider", help="source provider adding each tag's context (default: the --incoming name)")
-    case_b.add_argument("--context", "--unique", dest="context",
-                        help="the provider's context file (default: its own, e.g. the unique-skills workbook)")
+    case_b.add_argument("--provider", help="source provider adding each tag's context (default: tag_context)")
+    case_b.add_argument("--context", "--unique", dest="context", required=True,
+                        help="JSON from the SkillsFuture generator or import-source (required)")
     case_b.add_argument("--output", default="case_b_output.json", help="JSON output; a CSV is written next to it")
     case_b.add_argument("--checkpoint", help="checkpoint file for resuming after a failed run")
     case_b.add_argument("--batch-size", type=int, default=5)
@@ -257,6 +519,9 @@ def build_parser() -> argparse.ArgumentParser:
     merge.add_argument("--screening-semantic", type=float, default=screening_defaults.semantic_threshold,
                        help="hierarchy semantic review threshold, 0-1 (default: %(default)s; needs --semantic-model)")
     merge.add_argument("--out-dir", help="where to write the reports (default: merge_runs/<timestamp>)")
+    merge.add_argument("--actor", default="unspecified", help="self-reported reviewer identity for new audit events")
+    merge.add_argument("--synonyms", action="store_true",
+                       help="treat the baseline's approved synonyms as exact matches in hierarchy screening")
     merge.add_argument("--change-log", help="review change log to append new decisions to, shared across runs "
                        "(default: <out-dir>/change_log.jsonl); decisions it already holds aren't logged again")
     merge.set_defaults(func=_cmd_merge_preview)
@@ -285,7 +550,94 @@ def build_parser() -> argparse.ArgumentParser:
     _add_dataset_args(integrate, incoming=False)
     integrate.add_argument("--merge-run", required=True, help="merge-preview output folder (merge_runs/<timestamp>)")
     integrate.add_argument("--out-dir", help="where to write the snapshot (default: integrations/<timestamp>)")
+    integrate.add_argument("--actor", default="unspecified", help="self-reported operator identity for audit events")
     integrate.set_defaults(func=_cmd_integrate)
+
+    history = subparsers.add_parser("changes", help="read audit history without changing the taxonomy")
+    for field in ChangeQuery.model_fields:
+        if field not in {"limit", "offset"}:
+            history.add_argument("--" + field.replace("_", "-"))
+    history.add_argument("--offset", type=int, default=0)
+    history.add_argument("--limit", type=int, default=50, help="page size, 1-200")
+    history.set_defaults(func=_cmd_changes)
+    sync = subparsers.add_parser("sync-changes", help="retry SQLite delivery of a saved audit_events.json file")
+    sync.add_argument("--events", required=True)
+    sync.set_defaults(func=_cmd_sync_changes)
+
+    levels = ["categories", "specialities", "tags"]
+    synonym_list = subparsers.add_parser("synonyms", help="list approved synonyms (and removed ones on request)")
+    synonym_list.add_argument("--dataset")
+    synonym_list.add_argument("--level", choices=levels)
+    synonym_list.add_argument("--concept-id")
+    synonym_list.add_argument("--term", help="match this term after normalising it")
+    synonym_list.add_argument("--include-removed", action="store_true")
+    synonym_list.add_argument("--status", choices=["proposed", "approved", "rejected", "removed"],
+                              help="only this status, e.g. proposed for the review queue")
+    synonym_list.add_argument("--offset", type=int, default=0)
+    synonym_list.add_argument("--limit", type=int, default=50, help="page size, 1-200")
+    synonym_list.add_argument("--export", metavar="PATH",
+                              help="write --dataset's approved synonyms to a new synonym_set file instead")
+    synonym_list.set_defaults(func=_cmd_synonyms)
+    synonym_add = subparsers.add_parser("synonym-add", help="approve another name for an existing concept")
+    synonym_add.add_argument("--config", default="configs/baseline_v1.yaml", help="config declaring --dataset")
+    synonym_add.add_argument("--dataset", default="original", help="taxonomy dataset the concept belongs to")
+    synonym_add.add_argument("--level", choices=levels, required=True)
+    synonym_add.add_argument("--concept-id", required=True, help="ID of the canonical concept")
+    synonym_add.add_argument("--term", required=True, help="the other name, e.g. JS for JavaScript")
+    synonym_add.add_argument("--reason", required=True, help="why this is a synonym (kept in the audit log)")
+    synonym_add.add_argument("--actor", default="unspecified", help="self-reported identity for the audit log")
+    synonym_add.add_argument("--scope-level", choices=["categories", "specialities"],
+                             help="limit the synonym to one branch the concept sits in (with --scope-id)")
+    synonym_add.add_argument("--scope-id", help="ID of that category or speciality")
+    synonym_add.set_defaults(func=_cmd_synonym_add)
+    synonym_remove = subparsers.add_parser("synonym-remove", help="remove an approved synonym (history is kept)")
+    synonym_remove.add_argument("synonym_id")
+    synonym_remove.add_argument("--reason", required=True, help="why it is removed (kept in the audit log)")
+    synonym_remove.add_argument("--actor", default="unspecified", help="self-reported identity for the audit log")
+    synonym_remove.set_defaults(func=_cmd_synonym_remove)
+    synonym_check = subparsers.add_parser("synonym-check", help="list synonyms that are stale, shadowed or ambiguous")
+    synonym_check.add_argument("--config", default="configs/baseline_v1.yaml", help="config declaring --dataset")
+    synonym_check.add_argument("--dataset", default="original")
+    synonym_check.set_defaults(func=_cmd_synonym_check)
+    synonym_resolve = subparsers.add_parser("synonym-resolve", help="say what a term means: names and synonyms")
+    synonym_resolve.add_argument("term")
+    synonym_resolve.add_argument("--config", default="configs/baseline_v1.yaml", help="config declaring --dataset")
+    synonym_resolve.add_argument("--dataset", default="original")
+    synonym_resolve.add_argument("--level", choices=levels)
+    synonym_resolve.add_argument("--within-level", choices=levels,
+                                 help="the branch the lookup is made in, so scoped synonyms apply")
+    synonym_resolve.add_argument("--within-id")
+    synonym_resolve.set_defaults(func=_cmd_synonym_resolve)
+    synonym_suggest = subparsers.add_parser("synonym-suggest", help="propose synonyms from a source for review")
+    synonym_suggest.add_argument("--source", required=True, choices=sorted(SYNONYM_SOURCES))
+    synonym_suggest.add_argument("--file", help="the downloaded file a source reads (esco, onet)")
+    synonym_suggest.add_argument("--config", default="configs/baseline_v1.yaml", help="config declaring --dataset")
+    synonym_suggest.add_argument("--dataset", default="original")
+    synonym_suggest.add_argument("--actor", default="unspecified", help="self-reported identity, kept on each row")
+    synonym_suggest.set_defaults(func=_cmd_synonym_suggest)
+    synonym_review = subparsers.add_parser("synonym-review", help="approve or reject a proposed synonym")
+    synonym_review.add_argument("synonym_id")
+    decision = synonym_review.add_mutually_exclusive_group(required=True)
+    decision.add_argument("--approve", action="store_true")
+    decision.add_argument("--reject", action="store_true")
+    synonym_review.add_argument("--reason", required=True, help="kept in the audit log")
+    synonym_review.add_argument("--actor", default="unspecified", help="self-reported identity for the audit log")
+    synonym_review.add_argument("--config", default="configs/baseline_v1.yaml",
+                                help="config declaring the synonym's dataset (approval checks it)")
+    synonym_review.set_defaults(func=_cmd_synonym_review)
+
+    # check whether a term already exists before proposing it
+    lookup = subparsers.add_parser("lookup", help="check a term against the newest integrated snapshot")
+    lookup.add_argument("term", help="the term to check")
+    lookup.add_argument("--snapshot", help="round to check instead of the newest (a folder under the root)")
+    lookup.add_argument("--integrations-root", default="integrations", help="where `integrate` wrote its rounds")
+    lookup.add_argument("--level", choices=["services", "categories", "specialities", "tags"])
+    lookup.add_argument("--limit", type=int, default=lookups.DEFAULT_LIMIT, help="most near matches to return")
+    lookup.add_argument("--min-score", type=float, default=DEFAULT_MIN_SCORE, help="spelling score for a near match")
+    lookup.add_argument("--semantic", action="store_true", help="also find names that mean the same (loads a model)")
+    lookup.add_argument("--synonym-dataset", default=lookups.DEFAULT_SYNONYM_DATASET,
+                        help="dataset whose approved synonyms count as exact matches ('' to leave them out)")
+    lookup.set_defaults(func=_cmd_lookup)
 
     return parser
 

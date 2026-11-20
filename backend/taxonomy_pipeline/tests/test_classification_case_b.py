@@ -3,12 +3,17 @@ from __future__ import annotations
 
 import asyncio
 import csv
+import hashlib
 import json
 import logging
+from collections.abc import Callable
+from datetime import UTC, datetime, timedelta
+from email.utils import format_datetime
+from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
-from openpyxl import Workbook
 
 from taxonomy_pipeline.enrichment import case_b
 from taxonomy_pipeline.enrichment.case_b import (
@@ -20,7 +25,7 @@ from taxonomy_pipeline.enrichment.case_b import (
     to_contract_records,
 )
 from taxonomy_pipeline.enrichment.models import CLASSIFICATION_OUTPUTS
-from taxonomy_pipeline.providers.skillsfuture import SkillsFutureProvider
+from taxonomy_pipeline.providers.tag_context import TagContextProvider
 from taxonomy_pipeline.taxonomy.base import TaxonomyDataset
 
 PROPOSAL = {
@@ -70,14 +75,14 @@ def _response(*proposals):
 
 @pytest.fixture
 def workbook(tmp_path):
-    book = Workbook()
-    sheet = book.active
-    sheet.title = "Unique Skills List"
-    sheet.append(["skill_id", "skill_title", "skill_description", "skill_type"])
-    sheet.append(["SK-B", "Loan Processing", "Processes loans", "Technical"])
-    sheet.append(["SK-A", "Unrelated Skill", "Not a Case B tag", "Technical"])
-    path = tmp_path / "unique.xlsx"
-    book.save(path)
+    """Generated SkillsFuture context; fixture name retained for existing run helpers."""
+    path = tmp_path / "skillsfuture_tag_context.json"
+    path.write_text(json.dumps({
+        "source": "skillsfuture", "display_name": "SkillsFuture", "tags": {
+            "3000": {"skill_id": "SK-A", "title": "Unrelated Skill", "description": "Not a Case B tag"},
+            "3001": {"skill_id": "SK-B", "title": "Loan Processing", "description": "Processes loans"},
+        },
+    }), encoding="utf-8")
     return path
 
 
@@ -86,6 +91,43 @@ def test_proposal_check_rejects_invalid_actions_and_confidence():
     assert not proposal_is_well_formed({**PROPOSAL, "action": "unknown"})
     assert not proposal_is_well_formed({**PROPOSAL, "confidence": 80})
     assert not proposal_is_well_formed({key: value for key, value in PROPOSAL.items() if key != "reason"})
+
+
+@pytest.mark.parametrize("mutation", ["source", "title"])
+def test_context_mismatches_fail_before_model_calls(tmp_path, workbook, saturation_report, mutation):
+    data = json.loads(workbook.read_text())
+    if mutation == "source":
+        data["source"] = "onet"
+    else:
+        data["tags"]["3001"]["title"] = "Another skill"
+    workbook.write_text(json.dumps(data))
+    client = StubClient()
+    with pytest.raises(CaseBError, match="does not match incoming|titles do not match"):
+        _run(saturation_report(CONCEPTS), tmp_path / "out.json", client, workbook=workbook)
+    assert client.prompts == []
+
+
+def test_empty_context_warns_before_using_tag_names_only(tmp_path, workbook, saturation_report, caplog):
+    workbook.write_text(json.dumps({"source": "skillsfuture", "tags": {}}))
+    client = StubClient(_answers(3001, 3002))
+    _run(saturation_report(CONCEPTS), tmp_path / "out.json", client, workbook=workbook)
+    assert "Missing context for 2/2" in caplog.text
+
+
+def test_changed_context_cannot_resume_paid_proposals(tmp_path, workbook, saturation_report):
+    report, output = saturation_report(SIX_TAGS), tmp_path / "out.json"
+    with pytest.raises(CaseBError):
+        _run(report, output, CrashAfter(_answers(3001, 3002, 3003)), workbook=workbook, batch_size=3)
+    saved = json.loads(output.with_name(".out.checkpoint.json").read_text())
+    assert saved["source_name"] == "SkillsFuture"
+    assert "context_sha256" in saved
+    context = json.loads(workbook.read_text())
+    context["tags"]["3001"]["description"] = "Updated description"
+    workbook.write_text(json.dumps(context))
+    client = StubClient()
+    with pytest.raises(CaseBError, match="context_sha256"):
+        _run(report, output, client, workbook=workbook)
+    assert client.prompts == []
 
 
 def test_contract_preserves_model_selected_service():
@@ -142,7 +184,7 @@ def test_run_classifies_only_case_b_tags_and_writes_contract_records(tmp_path, w
 
     records = asyncio.run(run_case_b(
         _datasets(), saturation_report(CONCEPTS, run_id="sat-9"), baseline="original", incoming="skillsfuture",
-        provider=SkillsFutureProvider(), context=workbook, output=output, client=client,
+        provider=TagContextProvider(), context=workbook, output=output, client=client,
     ))
 
     assert [record["tag_id"] for record in records] == ["3001", "3002"]
@@ -159,13 +201,15 @@ def test_run_classifies_only_case_b_tags_and_writes_contract_records(tmp_path, w
     # Like the generator, tag IDs are 3000 + position in the sorted skill_ids, so 3001 is SK-B.
     assert '"skill_id": "SK-B"' in client.prompts[0] and "Processes loans" in client.prompts[0]
     assert "Has A Parent" not in client.prompts[0]
-    assert '"Industry"' in client.prompts[0] and "Allowed Ankit services" in client.prompts[0]
+    assert '"Industry"' in client.prompts[0] and "Allowed services" in client.prompts[0]
 
 
 def _six_tag_datasets() -> dict[str, TaxonomyDataset]:
     datasets = _datasets()
     datasets["skillsfuture"] = TaxonomyDataset(
-        name="skillsfuture", tags=[{"id": 3000 + n, "name": f"Skill {n}"} for n in range(1, 7)],
+        name="skillsfuture", tags=[
+            {"id": 3000 + n, "name": "Loan Processing" if n == 1 else f"Skill {n}"} for n in range(1, 7)
+        ],
     )
     return datasets
 
@@ -181,7 +225,7 @@ def _answers(*tag_ids):
 def _run(report, output, client, **kwargs):
     return asyncio.run(run_case_b(
         _six_tag_datasets(), report, baseline="original", incoming="skillsfuture",
-        provider=SkillsFutureProvider(), context=kwargs.pop("workbook"), output=output, client=client, **kwargs,
+        provider=TagContextProvider(), context=kwargs.pop("workbook"), output=output, client=client, **kwargs,
     ))
 
 
@@ -198,10 +242,26 @@ class CrashAfter(StubClient):
 def test_run_accepts_a_registered_provider_by_name(tmp_path, workbook, saturation_report):
     records = asyncio.run(run_case_b(
         _datasets(), saturation_report(CONCEPTS), baseline="original", incoming="skillsfuture",
-        provider="skillsfuture", context=workbook, output=tmp_path / "out.json",
+        provider="tag_context", context=workbook, output=tmp_path / "out.json",
         client=StubClient(_response(PROPOSAL, {**PROPOSAL, "tag_id": "3002"})),
     ))
     assert [record["tag_id"] for record in records] == ["3001", "3002"]
+
+
+def test_run_names_an_imported_source_and_adds_its_descriptions_to_the_prompt(
+    tmp_path: Path, saturation_report: Callable[..., Path],
+) -> None:
+    context = tmp_path / "esco_tag_context.json"
+    context.write_text(json.dumps({
+        "source": "skillsfuture", "display_name": "ESCO", "tags": {"3001": {"description": "Approves loans"}},
+    }),
+                       encoding="utf-8")
+    client = StubClient(_response(PROPOSAL, {**PROPOSAL, "tag_id": "3002"}))
+    asyncio.run(run_case_b(
+        _datasets(), saturation_report(CONCEPTS), baseline="original", incoming="skillsfuture",
+        provider="tag_context", context=context, output=tmp_path / "out.json", client=client,
+    ))
+    assert "incoming ESCO skills" in client.prompts[0] and "Approves loans" in client.prompts[0]
 
 
 def test_run_refuses_an_unregistered_provider_name(tmp_path, workbook, saturation_report):
@@ -287,6 +347,9 @@ def test_refuses_a_checkpoint_without_service_before_calling_the_model(tmp_path,
     checkpoint = output.with_name(".case_b_output.checkpoint.json")
     checkpoint.write_text(json.dumps({
         "saturation_run_id": "run-1", "incoming": "skillsfuture", "model": "gpt-4o-mini",
+        "context_schema_version": case_b.CONTEXT_SCHEMA_VERSION,
+        "context_sha256": hashlib.sha256(workbook.read_bytes()).hexdigest(),
+        "source_name": "SkillsFuture", "provider": "tag_context",
         "proposals": [{key: value for key, value in PROPOSAL.items() if key != "service"}],
     }), encoding="utf-8")
     client = StubClient()
@@ -302,7 +365,7 @@ def test_run_rejects_report_tags_missing_from_the_incoming_dataset(tmp_path, wor
     with pytest.raises(CaseBError, match="exist in dataset 'skillsfuture'"):
         asyncio.run(run_case_b(
             _datasets(), saturation_report(concepts), baseline="original", incoming="skillsfuture",
-            provider=SkillsFutureProvider(), context=workbook, output=tmp_path / "out.json", client=StubClient(),
+            provider=TagContextProvider(), context=workbook, output=tmp_path / "out.json", client=StubClient(),
         ))
 
 
@@ -334,7 +397,7 @@ def test_flags_ambiguous_tags_for_review_in_the_json_and_csv(tmp_path, workbook,
 
     records = asyncio.run(run_case_b(
         _datasets(), saturation_report(concepts), baseline="original", incoming="skillsfuture",
-        provider=SkillsFutureProvider(), context=workbook, output=output, client=client,
+        provider=TagContextProvider(), context=workbook, output=output, client=client,
     ))
 
     assert "needs_review" not in records[0]
@@ -342,3 +405,189 @@ def test_flags_ambiguous_tags_for_review_in_the_json_and_csv(tmp_path, workbook,
     assert "tag 'Lighting Design' in meaning (0.61)" in records[1]["reason"]
     with output.with_suffix(".csv").open(encoding="utf-8") as stream:
         assert [row["needs_review"] for row in csv.DictReader(stream)] == ["", "True"]
+
+
+RETRY_PROPOSAL = {
+    "tag": "Skill", "tag_id": "1", "action": "assign_existing", "service": "Subject",
+    "category": "Finance", "speciality": "Analysis", "confidence": 0.8, "reason": "Matches",
+}
+
+
+class RequestFailure(Exception):
+    """Represent HTTP errors without requiring the optional OpenAI SDK."""
+
+    def __init__(self, status: int, retry_after: str | None = None, code: str | None = None) -> None:
+        self.status_code = status
+        self.code = code
+        self.response = SimpleNamespace(headers={} if retry_after is None else {"retry-after": retry_after})
+
+
+class Client:
+    """Return scripted errors and JSON, and record the SDK retry configuration."""
+
+    def __init__(self, *events: Any) -> None:
+        self.events = list(events)
+        self.calls = 0
+        self.options: dict[str, Any] = {}
+        self.chat = SimpleNamespace(completions=SimpleNamespace(create=self.create))
+
+    def with_options(self, **options: Any) -> Client:
+        self.options = options
+        return self
+
+    async def create(self, **kwargs: Any) -> Any:
+        self.calls += 1
+        event = self.events.pop(0)
+        if isinstance(event, Exception):
+            raise event
+        return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=event))])
+
+
+@pytest.fixture
+def waits(monkeypatch: pytest.MonkeyPatch) -> list[float]:
+    recorded: list[float] = []
+
+    async def sleep(delay: float) -> None:
+        recorded.append(delay)
+
+    monkeypatch.setattr(case_b.asyncio, "sleep", sleep)
+    monkeypatch.setattr(case_b.random, "uniform", lambda *_: 0)
+    return recorded
+
+
+@pytest.mark.parametrize("status", [400, 401, 403, 404, 422])
+def test_permanent_errors_are_attempted_once(status: int, waits: list[float]) -> None:
+    client = Client(RequestFailure(status))
+    with pytest.raises(case_b.CaseBError, match="not retrying"):
+        asyncio.run(case_b.classify_batch(client, "prompt", [{"tag_id": "1"}], "model"))
+    assert client.calls == 1
+    assert waits == []
+
+
+@pytest.mark.parametrize("error", [RequestFailure(429), RequestFailure(503), ConnectionError(), TimeoutError()])
+def test_transient_errors_have_three_attempts_with_backoff(error: Exception, waits: list[float]) -> None:
+    client = Client(error, error, error)
+    with pytest.raises(case_b.CaseBError, match="after 3 attempts"):
+        asyncio.run(case_b.classify_batch(client, "prompt", [{"tag_id": "1"}], "model"))
+    assert client.calls == 3
+    assert waits == [1, 2]
+    assert client.options == {}
+
+
+def test_retry_after_controls_the_delay_before_recovery(waits: list[float]) -> None:
+    client = Client(RequestFailure(429, "7"), json.dumps({"proposals": [RETRY_PROPOSAL]}))
+    assert asyncio.run(case_b.classify_batch(client, "prompt", [{"tag_id": "1"}], "model")) == [RETRY_PROPOSAL]
+    assert waits == [7]
+
+
+def test_long_retry_after_stops_without_sleeping_or_retrying(waits: list[float]) -> None:
+    client = Client(RequestFailure(429, "120"))
+    with pytest.raises(case_b.CaseBError, match="above 60 seconds"):
+        asyncio.run(case_b.classify_batch(client, "prompt", [{"tag_id": "1"}], "model"))
+    assert client.calls == 1
+    assert waits == []
+
+
+def test_retry_after_parses_http_dates() -> None:
+    date = format_datetime(datetime.now(UTC) + timedelta(seconds=30), usegmt=True)
+    assert 28 <= case_b._retry_delay(RequestFailure(429, date), 1) <= 30
+
+
+def test_quota_errors_are_not_retried(waits: list[float]) -> None:
+    client = Client(RequestFailure(429, code="insufficient_quota"))
+    with pytest.raises(case_b.CaseBError, match="not retrying"):
+        asyncio.run(case_b.classify_batch(client, "prompt", [{"tag_id": "1"}], "model"))
+    assert client.calls == 1
+    assert waits == []
+
+
+def test_partial_results_survive_malformed_json_and_transient_failures(waits: list[float]) -> None:
+    other = {**RETRY_PROPOSAL, "tag_id": "2"}
+    client = Client(
+        json.dumps({"proposals": [RETRY_PROPOSAL]}), RequestFailure(503), json.dumps({"proposals": [other]}),
+    )
+    result = asyncio.run(case_b.classify_batch(client, "prompt", [{"tag_id": "1"}, {"tag_id": "2"}], "model"))
+    assert result == [RETRY_PROPOSAL, other]
+
+
+def test_malformed_json_can_recover(waits: list[float]) -> None:
+    client = Client("[]", "not JSON", json.dumps({"proposals": [RETRY_PROPOSAL]}))
+    assert asyncio.run(case_b.classify_batch(client, "prompt", [{"tag_id": "1"}], "model")) == [RETRY_PROPOSAL]
+
+
+def test_old_context_checkpoint_is_rejected_before_model_calls(tmp_path, workbook, saturation_report):
+    output = tmp_path / "out.json"
+    checkpoint = output.with_name(".out.checkpoint.json")
+    checkpoint.write_text(json.dumps({
+        "saturation_run_id": "run-1", "incoming": "skillsfuture", "model": "test-model",
+        "proposals": [PROPOSAL],
+    }), encoding="utf-8")
+    client = StubClient()
+    with pytest.raises(CaseBError, match="context_schema_version"):
+        _run(saturation_report(CONCEPTS), output, client, workbook=workbook, model="test-model")
+    assert client.prompts == []
+
+
+def test_retry_after_milliseconds_takes_precedence(waits: list[float]) -> None:
+    error = RequestFailure(429, "1")
+    error.response.headers["retry-after-ms"] = "8000"
+    client = Client(error, json.dumps({"proposals": [RETRY_PROPOSAL]}))
+    asyncio.run(classify_batch(client, "prompt", [{"tag_id": "1"}], "model"))
+    assert waits == [8]
+
+
+@pytest.mark.parametrize("value", ["inf", "1e999"])
+def test_infinite_retry_after_stops_the_run(value: str, waits: list[float]) -> None:
+    client = Client(RequestFailure(429, value))
+    with pytest.raises(CaseBError, match="above 60 seconds"):
+        asyncio.run(classify_batch(client, "prompt", [{"tag_id": "1"}], "model"))
+    assert client.calls == 1
+    assert waits == []
+
+
+def test_server_retry_false_prevents_retry(waits: list[float]) -> None:
+    error = RequestFailure(503)
+    error.response.headers["x-should-retry"] = "false"
+    client = Client(error)
+    with pytest.raises(RequestFailure):
+        asyncio.run(classify_batch(client, "prompt", [{"tag_id": "1"}], "model"))
+    assert client.calls == 1
+    assert waits == []
+
+
+def test_programming_errors_keep_the_original_message(waits: list[float]) -> None:
+    client = Client(TypeError("unexpected argument"))
+    with pytest.raises(TypeError, match="unexpected argument"):
+        asyncio.run(classify_batch(client, "prompt", [{"tag_id": "1"}], "model"))
+    assert client.calls == 1
+
+
+def test_injected_mock_client_is_not_replaced():
+    from unittest.mock import AsyncMock, MagicMock
+
+    client = MagicMock()
+    client.chat.completions.create = AsyncMock(return_value=SimpleNamespace(
+        choices=[SimpleNamespace(message=SimpleNamespace(content=json.dumps({"proposals": [RETRY_PROPOSAL]})))],
+    ))
+    assert asyncio.run(classify_batch(client, "prompt", [{"tag_id": "1"}], "model")) == [RETRY_PROPOSAL]
+    client.with_options.assert_not_called()
+
+
+def test_server_can_request_a_retry_for_an_otherwise_unclassified_status(waits: list[float]) -> None:
+    error = RequestFailure(418)
+    error.response.headers["x-should-retry"] = "true"
+    client = Client(error, json.dumps({"proposals": [RETRY_PROPOSAL]}))
+    asyncio.run(classify_batch(client, "prompt", [{"tag_id": "1"}], "model"))
+    assert waits == [1]
+
+
+def test_sdk_response_validation_error_can_recover(waits: list[float]) -> None:
+    sdk = pytest.importorskip("openai")
+    import httpx
+
+    response = httpx.Response(200, request=httpx.Request("POST", "https://example.test"))
+    client = Client(
+        sdk.APIResponseValidationError(response=response, body={}), json.dumps({"proposals": [RETRY_PROPOSAL]}),
+    )
+    assert asyncio.run(classify_batch(client, "prompt", [{"tag_id": "1"}], "model")) == [RETRY_PROPOSAL]
+    assert waits == [1]

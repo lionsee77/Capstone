@@ -9,6 +9,7 @@ from __future__ import annotations
 from typing import Any
 
 from .category_adaptation import (
+    CATEGORY_CONTENT_BASIS,
     CONTENT_BASIS,
     INVALID_CATEGORY_NAME,
     NEW_CATEGORY,
@@ -122,7 +123,89 @@ def _evidence_reason(placement: dict[str, Any]) -> str:
         if lexical and lexical != semantic:
             hints.append(f"'{lexical}' in spelling ({placement.get('closest_speciality_score')})")
         reason += f" Closest existing speciality: {' and '.join(hints)}, below the confidence threshold."
+    return reason + _other_categories_reason(placement)
+
+
+def _other_categories_reason(placement: dict[str, Any]) -> str:
+    """The source categories `one_category_per_tag` set aside, so a reviewer still sees them."""
+    others = placement.get("other_source_categories") or []
+    if not others:
+        return ""
+    return (
+        f" Also linked to source categor{'y' if len(others) == 1 else 'ies'} {', '.join(repr(o) for o in others)};"
+        " placed via the one with the most evidence only."
+    )
+
+
+def _review_hold(placement: dict[str, Any]) -> str | None:
+    """Why only a person may decide this placement (`ClassificationOutput.review_hold`), if anything."""
+    if placement.get("placement_basis") == CATEGORY_CONTENT_BASIS:
+        return "category_scoped_match"
+    if placement.get("speciality_name_source") == "generated":
+        return "generated_name"
+    if placement.get("single_tag_speciality"):
+        return "single_tag_speciality"
+    return None
+
+
+def _speciality_group_reason(placement: dict[str, Any]) -> str:
+    """How grouping, naming and `flag_single_tag_specialities` shaped the new speciality."""
+    reason = ""
+    size = placement.get("speciality_group_size")
+    if size:
+        others = size - 1
+        central = placement.get("speciality_group_central_tag")
+        if placement.get("speciality_name_source") == "generated":
+            named = (f"named '{placement['target_speciality_name']}' by {placement.get('speciality_name_model')} "
+                     "from all its tags; check the name before approving")
+        else:
+            named = f"named after its most central tag, '{central}'"
+            if placement.get("speciality_name_fallback"):
+                named += f" ({placement['speciality_name_fallback']})"
+        if placement.get("speciality_group_leader"):
+            sample = ", ".join(repr(name) for name in placement.get("speciality_group_sample") or [])
+            more = ", ..." if others > len(placement.get("speciality_group_sample") or []) else ""
+            reason += (
+                f" Groups {size} new tags close in meaning as one speciality, {named}. This tag is the most "
+                f"central; the others include {sample}{more}."
+            )
+        else:
+            reason += (
+                f" Grouped with {others} other new tag{'' if others == 1 else 's'} close in meaning "
+                f"(semantic {placement.get('speciality_group_score')} to '{central}') under one new speciality, "
+                f"{named}."
+            )
+    if placement.get("single_tag_speciality"):
+        reason += (
+            " This new speciality would hold only this tag, so it is flagged for review: approve it, or place "
+            "the tag under another speciality."
+        )
     return reason
+
+
+def _category_content_output(placement: dict[str, Any], source_dataset: str) -> ClassificationOutput:
+    """A tag matched by meaning to an existing speciality inside its matched category."""
+    speciality, category = placement["target_speciality_name"], placement["target_category_name"]
+    score = placement["speciality_semantic_score"]
+    return ClassificationOutput(
+        source_dataset=source_dataset,
+        tag_id=str(placement["tag_id"]),
+        tag=placement["tag_name"],
+        original_classification="classified",
+        service=placement["target_service_name"],
+        category=category,
+        speciality=speciality,
+        confidence=round(float(score), 4),
+        reason=(
+            f"Source category '{placement['source_category_name']}' matches existing category '{category}' "
+            f"({placement['category_match_type']} match). Among that category's specialities the tag is closest "
+            f"in meaning to existing speciality '{speciality}' (semantic {score}), so it joins it instead of "
+            "becoming a new one-tag speciality. That is below the global match threshold, so a person checks it."
+            + _other_categories_reason(placement)
+        ),
+        needs_review=True,
+        review_hold="category_scoped_match",
+    )
 
 
 def _content_output(placement: dict[str, Any], source_dataset: str) -> ClassificationOutput:
@@ -169,9 +252,11 @@ def _review_candidate_output(placement: dict[str, Any], source_dataset: str) -> 
             + f" Review candidate {placement['candidate_rank']} of {placement['candidate_count']}: proposing "
             f"'{speciality}' as a new speciality under '{category}' "
             f"({placement['candidate_score_type']} {score}). Approve one candidate path, or exclude/defer the tag."
+            + _speciality_group_reason(placement)
             + _evidence_reason(placement)
         ),
         needs_review=True,
+        review_hold=_review_hold(placement),
     )
 
 
@@ -186,6 +271,9 @@ def build_classification_outputs(placements: list[dict[str, Any]], source_datase
             continue
         if placement.get("placement_basis") == REVIEW_CANDIDATE_BASIS:
             records.append(_review_candidate_output(placement, source_dataset))
+            continue
+        if placement.get("placement_basis") == CATEGORY_CONTENT_BASIS:
+            records.append(_category_content_output(placement, source_dataset))
             continue
         action = placement["action"]
         reason = _category_reason(placement)
@@ -210,7 +298,7 @@ def build_classification_outputs(placements: list[dict[str, Any]], source_datase
                 reason += (
                     f" No existing speciality matches the tag; proposing '{speciality}' as a new speciality "
                     f"under '{category}'."
-                )
+                ) + _speciality_group_reason(placement)
             elif service_name is None:
                 # A brand new category with nothing in this run to vote a
                 # service from - the contract requires all four or none, so
@@ -239,6 +327,10 @@ def build_classification_outputs(placements: list[dict[str, Any]], source_datase
                 speciality=speciality,
                 confidence=confidence,
                 reason=reason,
+                # The contract allows the flag only on a placement. A hold is only
+                # ever set on one; it keeps bulk-decide from settling the tag.
+                needs_review=_review_hold(placement) is not None and category is not None,
+                review_hold=_review_hold(placement) if category is not None else None,
             )
         )
     return records

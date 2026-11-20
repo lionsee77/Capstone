@@ -65,7 +65,7 @@ metrics:
       occupational_level: minor_group
       industry_service_id: 1
       matching_method: semantic
-      semantic_threshold: 0.60  # provisional and uncalibrated (#47)
+      semantic_threshold: 0.60  # provisional and uncalibrated
       top_k: 5
 
   - id: saturation

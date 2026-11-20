@@ -228,3 +228,20 @@ def test_rejects_missing_out_of_range_or_overlapping_thresholds(baseline, merge,
     report, run = merge
     with pytest.raises(ValueError):
         draft_decisions(run().preview.resolution, report, baseline, **kwargs)
+
+
+@pytest.mark.parametrize("hold", ["generated_name", "single_tag_speciality", "category_scoped_match"])
+def test_never_drafts_a_tag_its_producer_held_for_a_person(tmp_path, baseline, saturation_report, hold):
+    # A clear-cut low score would draft `create`, but nothing scores a generated name or a looser match.
+    report = load_saturation(saturation_report([_concept(11, 0.2, "Zoology", "specialities")]), "skillsfuture")
+    record = {**_record("11", "Fire Prevention", "Biology", "Zoology", 0.6), "needs_review": True,
+              "review_hold": hold}
+    path = tmp_path / "producer.json"
+    path.write_text(json.dumps(mark_ambiguous([record], report)), encoding="utf-8")
+    resolution = run_merge_preview([path], baseline, out_dir=tmp_path / "merge").preview.resolution
+    assert resolution.dispositions[0].reason_codes == ["producer_flagged", "producer_hold"]
+    assert "bulk decisions skip this tag" in resolution.dispositions[0].reason
+
+    draft = draft_decisions(resolution, report, baseline, create_below=0.5)
+
+    assert draft.drafted == [] and draft.counts["held_for_another_reason"] == 1

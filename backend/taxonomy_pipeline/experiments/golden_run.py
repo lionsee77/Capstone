@@ -1,6 +1,6 @@
 """Record every pipeline stage's output on the real data, and diff two recordings.
 
-The bounded-context refactor (#104) must not change behaviour. `record` runs
+The bounded-context refactor must not change behaviour. `record` runs
 one full classification round through the CLI, writing every stage's output
 into one folder; `compare` diffs two such folders, ignoring what legitimately
 differs between runs (run/event IDs, timestamps, the folder's own path). Record
@@ -119,17 +119,17 @@ class StubModel:
         self.chat = SimpleNamespace(completions=SimpleNamespace(create=self._create))
 
     @staticmethod
-    def _section(prompt: str, start: str, end: str) -> Any:
-        return json.loads(prompt.split(start, 1)[1].split(end, 1)[0])
+    def _section(prompt: str, start: str) -> Any:
+        return json.JSONDecoder().raw_decode(prompt.split(start, 1)[1])[0]
 
     async def _create(self, *, model: str, messages: list[dict[str, str]], temperature: float) -> SimpleNamespace:
         prompt = messages[0]["content"]
         self.prompt_hashes.append(hashlib.sha256(prompt.encode("utf-8")).hexdigest())
-        services = self._section(prompt, "Allowed Ankit services:\n", "\nAnkit categories")
-        categories = self._section(prompt, "(each includes its parent service):\n", "\nAnkit specialities")
-        specialities = self._section(prompt, "(each includes its parent service and category):\n",
-                                     "\nSkillsFuture skills:")
-        batch = self._section(prompt, "\nSkillsFuture skills:\n", "\nReturn ONLY valid JSON")
+        service_label = "Allowed Ankit services:\n" if "Allowed Ankit services:\n" in prompt else "Allowed services:\n"
+        services = self._section(prompt, service_label)
+        categories = self._section(prompt, "(each includes its parent service):\n")
+        specialities = self._section(prompt, "(each includes its parent service and category):\n")
+        batch = self._section(prompt, " skills:\n")
         proposals = [self._propose(item, services, categories, specialities) for item in batch]
         content = json.dumps({"proposals": proposals})
         return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=content))])
@@ -225,6 +225,8 @@ def record(out: Path) -> None:
         case_b._openai_client = lambda: stub
         try:
             _require(_cli(log, "case-b", "case-b", *datasets, "--report", "report.json",
+                          "--provider", "tag_context", "--context",
+                          str(BACKEND / "skillsfuture/skillsfuture_tag_context.json"),
                           "--output", "case_b_output.json", "--batch-size", "20", "--model", "stub"), "case-b", log)
         finally:
             case_b._openai_client = original_client

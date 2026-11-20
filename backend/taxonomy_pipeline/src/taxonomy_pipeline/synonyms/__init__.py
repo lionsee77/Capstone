@@ -1,0 +1,47 @@
+"""Synonym mappings (PB07): other names for existing canonical concepts, never new taxonomy rows.
+
+Sits between `quality` and `matching` in the context order (`app -> enrichment ->
+quality -> synonyms -> matching -> taxonomy`), and writes its history through the
+independent `audit` context. Matching code doesn't import this context; when lookups
+resolve through synonyms, the approved mappings are passed down to it as data.
+"""
+from __future__ import annotations
+
+from ..taxonomy.synonym_set import SynonymMapping, SynonymSet
+from .models import (
+    Resolution,
+    ResolvedConcept,
+    ScopeLevel,
+    SuggestionReport,
+    Synonym,
+    SynonymCreate,
+    SynonymLevel,
+    SynonymList,
+    SynonymQuery,
+)
+from .resolver import ConflictingSynonym, InvalidScope, SynonymIndex, SynonymProblem
+from .store import (
+    DuplicateSynonym,
+    RetiredConcept,
+    SynonymError,
+    SynonymNotFound,
+    TaxonomyUnavailable,
+    UnknownConcept,
+    UnsupportedSchema,
+    add_synonym,
+    approved_synonyms,
+    concept_name,
+    get_synonym,
+    list_synonyms,
+    propose_synonyms,
+    remove_synonym,
+    review_synonym,
+)
+
+__all__ = [
+    "ConflictingSynonym", "DuplicateSynonym", "InvalidScope", "Resolution", "ResolvedConcept", "RetiredConcept",
+    "ScopeLevel", "SuggestionReport", "Synonym", "SynonymCreate", "SynonymError", "SynonymIndex", "SynonymLevel",
+    "SynonymList", "SynonymMapping", "SynonymNotFound", "SynonymProblem", "SynonymQuery", "SynonymSet",
+    "TaxonomyUnavailable", "UnknownConcept", "UnsupportedSchema", "add_synonym", "approved_synonyms",
+    "concept_name", "get_synonym", "list_synonyms", "propose_synonyms", "remove_synonym", "review_synonym",
+]

@@ -21,6 +21,7 @@ import numpy as np
 
 from ...matching.names import lexical_scores, match_key, normalize
 from ...matching.semantic import SimilarityMatcher
+from ...synonyms import SynonymIndex
 from ...taxonomy.base import TaxonomyDataset
 from ..models import HierarchyGroup
 from .intake import collect_proposals
@@ -111,13 +112,16 @@ def is_same_parent(concept: ExistingConcept, level: str, parent_id: int | None) 
 def classify_proposal(
     proposal: ScreenedProposal, original_id: int | None, parent_blocked: bool, semantic_failed: bool,
 ) -> None:
-    exact = [match for match in proposal.matches if {"normalized_name", "match_key"} & set(match.match_types)]
+    exact = [match for match in proposal.matches
+             if {"normalized_name", "match_key", "synonym"} & set(match.match_types)]
     local = [match.concept for match in exact if match.same_parent and match.concept.reusable]
     known = [concept for concept in local if concept.id == original_id] if original_id is not None else []
     target = known[0] if len(known) == 1 else local[0] if len(local) == 1 else None
     if target is not None and not parent_blocked:
         proposal.status, proposal.existing_id = "reuse", target.id
-        proposal.reason = "Exact name or spelling variant identifies an existing concept within the same parent"
+        proposal.reason = (
+            "Exact name, spelling variant or approved synonym identifies an existing concept within the same parent"
+        )
         return
     proposal.blocks_creation = bool(exact) or parent_blocked or semantic_failed
     if proposal.matches or proposal.blocks_creation:
@@ -172,6 +176,24 @@ def hold_incoming_variants(proposals: list[ScreenedProposal]) -> set[str]:
 
 
 # Screen every hierarchy path, retaining duplicate IDs and cross-branch evidence without collapsing them.
+# Baseline concepts the proposal's name means through an approved synonym, as candidate columns.
+def _synonym_columns(
+    synonyms: SynonymIndex, proposal: ScreenedProposal, parent_id: int | None,
+    columns_by_concept: dict[tuple[str, str], set[int]],
+) -> set[int]:
+    """A speciality is looked up inside its parent category, so synonyms scoped there apply too."""
+    level = {"category": "categories", "speciality": "specialities"}[proposal.level]
+    within = ("categories", str(parent_id)) if proposal.level == "speciality" and parent_id is not None else None
+    if within is not None and within not in synonyms.concepts:
+        within = None
+    resolution = synonyms.resolve(proposal.name, level=level, within=within)
+    singular = {"categories": "category", "specialities": "speciality"}
+    return {
+        column for match in resolution.matches if match.via == "synonym"
+        for column in columns_by_concept.get((singular[match.concept_level], match.concept_id), set())
+    }
+
+
 def screen_proposals(
     groups: Sequence[HierarchyGroup], taxonomy: TaxonomyDataset, *, baseline_snapshot_id: str,
     settings: ScreeningSettings | None = None, semantic_matcher: SimilarityMatcher | None = None,
@@ -191,6 +213,10 @@ def screen_proposals(
         exact_columns[name].add(column)
         if key:
             key_columns[key].add(column)
+    synonyms = SynonymIndex(taxonomy, settings.synonyms) if settings.synonyms else None
+    columns_by_concept: dict[tuple[str, str], set[int]] = defaultdict(set)
+    for column, concept in enumerate(concepts):
+        columns_by_concept[(concept.level, str(concept.id))].add(column)
     services_by_name = service_ids_by_name(taxonomy)
     for name in sorted({normalize(proposal.path[0]) for proposal in proposals}):
         if len(services_by_name[name]) > 1:
@@ -218,6 +244,7 @@ def screen_proposals(
         parent_id = parent.existing_id if parent else service_ids[0] if len(service_ids) == 1 else None
         exact = exact_columns.get(names[index], set())
         key_matches = key_columns.get(keys[index], set())
+        synonym_matches = _synonym_columns(synonyms, proposal, parent_id, columns_by_concept) if synonyms else set()
         lexical_matches = set(np.flatnonzero(
             (lexical[index] / 100 >= settings.lexical_threshold) & valid_keys,
         )) if keys[index] else set()
@@ -227,7 +254,7 @@ def screen_proposals(
         )) if semantic is not None else {
             column for column, score in saved.items() if score is not None and score >= settings.semantic_threshold
         }
-        for column in sorted(exact | key_matches | lexical_matches | semantic_matches):
+        for column in sorted(exact | key_matches | synonym_matches | lexical_matches | semantic_matches):
             concept = concepts[column]
             score = float(lexical[index, column]) / 100
             meaning = float(semantic[index, column]) if semantic is not None else saved.get(column)
@@ -236,6 +263,8 @@ def screen_proposals(
                 kinds.append("normalized_name")
             elif column in key_matches:
                 kinds.append("match_key")
+            if column in synonym_matches and not {"normalized_name", "match_key"} & set(kinds):
+                kinds.append("synonym")
             if column in lexical_matches:
                 kinds.append("lexical")
             if column in semantic_matches:

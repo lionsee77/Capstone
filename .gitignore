@@ -89,6 +89,8 @@ docker-compose.override.yml
 
 # Generated taxonomy pipeline output
 backend/taxonomy_pipeline/report.json
+# docs/generalization-findings.md's reproduce command (~60 MB)
+backend/taxonomy_pipeline/generalization_v1.json
 judged_report.json
 # Classification stage outputs land in whichever folder the command runs from
 case_a_output.json
@@ -96,7 +98,10 @@ case_b_output.json
 case_b_output.csv
 .case_b_output.checkpoint.json
 merge_runs/
+# Snapshots that rounds create. The two shipped ones (SNAPSHOTS.md) are committed with `git add -f`:
+# git keeps tracking them, and anything new in their folders stays ignored.
 integrations/
+backend/taxonomy_pipeline/rounds/
 backend/taxonomy_pipeline/experiments/results/*.json
 backend/taxonomy_pipeline/experiments/results/*.csv
 backend/taxonomy_pipeline/experiments/results/*.checkpoint.json
@@ -105,5 +110,21 @@ backend/taxonomy_pipeline/golden_runs/
 # Generated SkillsFuture classification outputs
 backend/skillsfuture/classification_proposals*.json
 backend/skillsfuture/classification_proposals*.csv
+backend/skillsfuture/*_tag_context.json
 
 judge_cache.json
+
+# Per-source round outputs (e.g. judged_report_onet.json from a round's printed commands)
+judged_report_*.json
+case_a_*.json
+case_b_*.json
+case_b_*.csv
+.case_b_*.checkpoint.json
+judge_cache_*.json
+
+# O*NET raw download (backend/onet/README.md). The shipped Software Skills.xlsx is committed with
+# `git add -f`; other downloads stay ignored.
+backend/onet/raw/
+
+# ESCO raw download and its flattened join (backend/esco/README.md)
+backend/esco/raw/

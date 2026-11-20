@@ -11,7 +11,7 @@ import json
 from collections import Counter
 from typing import Any
 
-from ..matching.names import match_key, normalize
+from ..matching.names import match_key
 from ..models import MetricResult
 from ..quality.integrity import IntegrityMetric
 from ..taxonomy.base import CONCEPTS, TaxonomyDataset
@@ -24,8 +24,10 @@ from .models import (
     ValidationFinding,
     ValidationReport,
 )
+from .paths import placement_path
+from .proposals.models import ProposalScreeningReport
+from .repeated_names import live_placements
 from .resolution import resolve_outputs, taxonomy_snapshot_id
-from .review import apply_hierarchy_decisions
 
 
 # Serialize identifiers without conflating booleans, integers, strings, or malformed values.
@@ -109,19 +111,30 @@ def _assemble(resolution: ResolutionReport, baseline: TaxonomyDataset) -> Taxono
     return combined
 
 
+# Append presentation notes consistently before the final deterministic row sort.
+def _append_note(row: PreviewRow, text: str) -> None:
+    row.note = " ".join(filter(None, (row.note, text)))
+
+
 # Emit one row per source and normalized path while retaining evidence variants in the resolution report.
-def _placement_rows(resolution: ResolutionReport, blocked: bool, baseline: TaxonomyDataset) -> list[PreviewRow]:
+def _placement_rows(
+    resolution: ResolutionReport, blocked: bool, baseline: TaxonomyDataset, screening: ProposalScreeningReport,
+) -> list[PreviewRow]:
     nodes = {tuple(node.path): node for node in resolution.hierarchy}
     tags = {tag.id: tag for tag in resolution.tags}
     mappings = {(item.source.source_dataset, item.source.tag_id): item.canonical_tag_id for item in resolution.mappings}
     dispositions = {(item.source.source_dataset, item.source.tag_id): item for item in resolution.dispositions}
     links = {(link.speciality_id, link.tag_id): link for link in resolution.links}
-    effective = apply_hierarchy_decisions(resolution.screening, baseline, resolution.decisions)
-    screened = {tuple(item.path): item for item in effective.proposals}
+    screened = {tuple(item.path): item for item in screening.proposals}
     decisions = {
         decision.proposal_id: decision for decision in resolution.decisions if decision.proposal_id is not None
     }
     services = {row["id"]: row["name"] for row in baseline.services}
+    live = live_placements(resolution.evidence, screening, resolution.decisions)
+    notes = {}
+    for warning in screening.repeated_names:
+        for proposal_id in warning.proposal_ids:
+            notes[proposal_id] = f"{warning.code}: {warning.name!r} (see cluster check row)"
     rows = []
     for proposal in resolution.evidence.tags:
         source = proposal.source.source_dataset, proposal.source.tag_id
@@ -129,10 +142,10 @@ def _placement_rows(resolution: ResolutionReport, blocked: bool, baseline: Taxon
         tag = tags.get(mappings.get(source))
         placements: dict[tuple[str, str, str], list[ClassificationOutput]] = {}
         for placement in proposal.placements:
-            path = placement.service, normalize(placement.category), normalize(placement.speciality)
+            path = placement_path(placement)
             placements.setdefault(path, []).append(placement)
         unapproved = {
-            (item.service, normalize(item.category), normalize(item.speciality))
+            placement_path(item)
             for item in disposition.unapproved_paths
         }
         for path, variants in sorted(placements.items()):
@@ -145,7 +158,8 @@ def _placement_rows(resolution: ResolutionReport, blocked: bool, baseline: Taxon
             if approved:
                 status = "blocked" if blocked else "reused" if link.existing else "proposed"
             row = PreviewRow(
-                status=status, **placement.model_dump(exclude={"reason", "needs_review"}), reason=placement.reason,
+                status=status, **placement.model_dump(exclude={"reason", "needs_review", "review_hold"}),
+                reason=placement.reason,
                 canonical_tag_id=tag.id if tag else None, canonical_tag=tag.name if tag else "",
                 review_reason=disposition.reason,
                 # The representative may be an unflagged variant; any flagged one means review evidence exists.
@@ -159,10 +173,10 @@ def _placement_rows(resolution: ResolutionReport, blocked: bool, baseline: Taxon
                 )
             matched = [item for item in concepts if item.matches]
             if matched:
-                row.note += (" " if row.note else "") + "Hierarchy matches in resolution.screening: " + "; ".join(
+                _append_note(row, "Hierarchy matches in resolution.screening: " + "; ".join(
                     f"{item.level} {item.proposal_id} ({item.status}, {len(item.matches)} candidates)"
                     for item in matched
-                )
+                ))
             if approved:
                 row.category_id, row.speciality_id = category.id, speciality.id
                 row.category_change = "existing" if category.existing else "new"
@@ -173,12 +187,16 @@ def _placement_rows(resolution: ResolutionReport, blocked: bool, baseline: Taxon
                 supplied = [placement.service, placement.category, placement.speciality]
                 # Only a real move: a case or spelling variant of the supplied path (match_key) isn't one.
                 if [match_key(name) for name in resolved_path] != [match_key(name) for name in supplied]:
-                    row.note += (" " if row.note else "") + "Resolved placement: " + " > ".join(resolved_path)
+                    _append_note(row, "Resolved placement: " + " > ".join(resolved_path))
             reviewed = [item for item in concepts if item.proposal_id in decisions]
             if reviewed:
-                row.note += (" " if row.note else "") + "Hierarchy decisions: " + "; ".join(
+                _append_note(row, "Hierarchy decisions: " + "; ".join(
                     f"{item.level}: {item.reason}" for item in reviewed
-                )
+                ))
+            if (*source, path) in live:
+                for concept in concepts:
+                    if concept.proposal_id in notes:
+                        _append_note(row, notes[concept.proposal_id])
             rows.append(row)
     return sorted(rows, key=lambda row: _key(row.model_dump(mode="json")))
 
@@ -221,7 +239,10 @@ def build_preview(resolution: ResolutionReport, baseline: TaxonomyDataset) -> Me
     if expected.screening:
         findings.extend(ValidationFinding(code=f"screening.{name}", message=reason)
                         for name, reason in sorted(expected.screening.skipped_checks.items()))
-    rows = _placement_rows(expected, blocked, baseline)
+    screening = expected.effective_screening
+    assert screening is not None, "Resolution must return effective screening"
+    rows = _placement_rows(expected, blocked, baseline, screening)
+    findings.extend(ValidationFinding(code=item.code, message=item.message) for item in screening.repeated_names)
     linked = set() if blocked else {link.tag_id for link in expected.links}
     counts = PreviewCounts(
         added_tags=sum(not tag.existing and tag.id in linked for tag in expected.tags),
@@ -257,7 +278,7 @@ def build_preview(resolution: ResolutionReport, baseline: TaxonomyDataset) -> Me
     ) for status, count in sorted(expected.evidence.omitted_counts.items()))
     csv_rows.extend(PreviewRow(row_type="check", status=finding.code, note=finding.message) for finding in findings)
     unresolved_paths = {
-        (row.source_dataset, row.tag_id, row.service, normalize(row.category), normalize(row.speciality))
+        (row.source_dataset, row.tag_id, *placement_path(row))
         for row in rows if row.status in {"pending", "deferred", "unapproved"}
     }
     return MergePreview(
@@ -265,8 +286,7 @@ def build_preview(resolution: ResolutionReport, baseline: TaxonomyDataset) -> Me
         validation=ValidationReport(
             complete=not blocked, findings=findings, duplicate_candidates=expected.evidence.candidates,
             unresolved=[placement for tag in expected.evidence.tags for placement in tag.placements if (
-                placement.source_dataset, placement.tag_id, placement.service,
-                normalize(placement.category), normalize(placement.speciality),
+                placement.source_dataset, placement.tag_id, *placement_path(placement),
             ) in unresolved_paths],
         ),
         mappings=[item.model_copy(deep=True) for item in expected.mappings if item.canonical_tag_id in linked],

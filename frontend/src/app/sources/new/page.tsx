@@ -1,12 +1,17 @@
-export default function NewSourcePage() {
+import { PageHeader } from "@/components/layout/page-header";
+
+import { NewRoundForm } from "./new-round-form";
+
+export default async function NewRoundPage({ searchParams }: PageProps<"/sources/new">) {
+  const { round } = await searchParams;
   return (
-    <div className="flex max-w-5xl flex-col gap-2">
-      <h1 className="text-2xl font-semibold">New data source</h1>
-      {/* TODO: form backed by `useSourceDraftStore` (datasets + metrics), validated with
-          `pipelineConfigSchema`, submitted with `useCreateRun`, then redirect to /runs/[runId]. */}
-      <p className="text-sm text-muted-foreground">
-        Register a dataset and validate it against the existing taxonomy - coming next.
-      </p>
+    <div className="flex max-w-5xl flex-col gap-8">
+      <PageHeader
+        eyebrow="Enrichment"
+        title="New enrichment round"
+        description="Bring a new source into the taxonomy: add its files, say how to read them, then run the pipeline."
+      />
+      <NewRoundForm roundId={typeof round === "string" ? round : null} />
     </div>
   );
 }

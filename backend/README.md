@@ -10,12 +10,15 @@ backend/
 ├── sql-files-nus/        # Original SQL dumps
 ├── skillsfuture/         # SkillsFuture Excel sources and taxonomy generator (data prep)
 │   ├── generate_skillsfuture_taxonomy.py
+│   ├── skillsfuture_tag_context.json # generated Case B context, gitignored
 │   ├── validate_skillsfuture_taxonomy.py
-│   ├── AI_TAXONOMY_PIPELINE_PLAN.md
 │   └── *.xlsx              # SkillsFuture source workbooks
-├── audit/                # Taxonomy audit module and report notebook
+├── audit/                # Taxonomy audit module (read-only database checks)
+├── loader/               # load_snapshot.sh: rebuild a database from one pipeline snapshot
+├── onet/                # O*NET source prepared for the pipeline's import-source
+├── esco/                 # ESCO source: flatten script joining its linked CSVs, then import-source
 ├── taxonomy_pipeline/    # Quality scoring + Case A/B classification and merge preview (CLI + FastAPI) - own README, own deps
-├── compose.yaml          # MySQL, Adminer and audit services
+├── compose.yaml          # MySQL, Adminer, audit and snapshot-loader services
 ├── Dockerfile            # MySQL image and ordered imports
 ├── Dockerfile.python     # Python audit image
 └── requirements.txt      # Python deps for audit/ and skillsfuture/ data prep
@@ -35,7 +38,21 @@ pip install -r requirements.txt
 python skillsfuture/generate_skillsfuture_taxonomy.py
 ```
 
-This reads the workbooks and writes `skillsfuture/skillsfuture_taxonomy.sql`.
+This reads the workbooks and writes `skillsfuture/skillsfuture_taxonomy.sql`
+and `skillsfuture/skillsfuture_tag_context.json` together. The JSON includes
+each generated tag ID's skill ID, title, description and type, including
+skills without mapped roles. Use files from the same generation run.
+Both files are staged in their destination directories before either is
+replaced. Handled replacement failures roll back to the previous pair; if
+rollback fails, recovery backups are retained and reported. This does not
+provide a two-file atomic transaction across a process or machine crash.
+Existing output permissions are preserved, including during rollback. New
+outputs use `0644` so the MySQL container can read the generated SQL.
+The generated JSON is gitignored: a fresh clone must run the generator before
+Case B or a golden-run recording. The tracked SQL alone is not sufficient.
+The generator remains standalone and needs only the dependencies above.
+A pipeline regression test checks that the generated tag IDs and titles
+match the JSON read by Case B's generic context provider.
 It does not connect to MySQL or modify the existing database. The generated SQL
 creates parallel `sf_categories`, `sf_specialities`, `sf_tags`, and
 `sf_speciality_tags` tables, using the existing `services` table. Review the
@@ -66,6 +83,12 @@ turns the reviewed result into an enriched taxonomy snapshot - runs from there
 as `taxonomy-pipeline case-a | case-b | merge-preview | bulk-decide | integrate`; see
 [Classification workflow](taxonomy_pipeline/README.md#classification-workflow).
 Case B's OpenAI settings still go in `backend/.env` (copy `.env.example`).
+Case B now uses `--provider tag_context --context ../skillsfuture/skillsfuture_tag_context.json`
+from `backend/taxonomy_pipeline/`, just like other sources. The separate
+`skillsfuture` provider has been removed. Regenerate the files once when
+upgrading; explicit `.xlsx` context paths must be replaced with the generated JSON.
+For custom output paths, the generator accepts `--context-output PATH`; by
+default it replaces the SQL stem's `_taxonomy` suffix with `_tag_context.json`.
 
 ## Score taxonomy quality
 
@@ -121,6 +144,43 @@ source .venv/bin/activate
 python -m pip install -r requirements.txt
 python audit/taxonomy_audit.py
 ```
+
+## Load a pipeline snapshot
+
+Each classification round ends with an `integrate` snapshot in
+`taxonomy_pipeline/integrations/<name>/`. It holds everything that stage of the
+taxonomy needs: the original dumps and every earlier round's `additions.sql`
+in `baseline/`, plus that round's own `additions.sql`, in the order its
+`enriched.yaml` lists. To see a stage in MySQL:
+
+```bash
+docker compose --profile tools run --rm loader onet-1031     # original + SkillsFuture + O*NET
+docker compose --profile tools run --rm loader judged-1015   # original + SkillsFuture
+docker compose --profile tools run --rm -e TARGET_DATABASE=taxonomy_r1 loader judged-1015   # another database
+```
+
+- It **drops and rebuilds** the target database (default `taxonomy_latest`)
+  from that one folder, rather than applying `additions.sql` to whatever is
+  there. The database then always equals exactly one snapshot, a round can't be
+  applied twice or out of order, and going back a stage is loading an older
+  snapshot. Never load files from two snapshot folders into one database: the
+  later snapshot already contains the earlier one's rows.
+- `greygigz_beta` (the original import) is never a valid target, nor are
+  MySQL's own databases. It runs as root because it creates databases.
+  Snapshot names may use letters, digits, `.`, `_` and `-`; target names
+  letters, digits and `_`.
+- The whole rebuild runs in one MySQL session holding a lock on the target, so
+  a second loader started meanwhile stops without changing anything. If a file
+  fails, the output says which one and that the target is now partial.
+- It prints each table's row count (using the snapshot's own table names) and
+  records the snapshot name in a `_snapshot` table. Browse it in Adminer as user `root` (password
+  `MYSQL_ROOT_PASSWORD`, default `localrootpassword`), database
+  `taxonomy_latest`.
+- Run without a name, or with an unknown one, it lists the available snapshots.
+
+This is for local inspection. The client's live database can't be rebuilt:
+there, apply each round's `additions.sql` once, in order, and only while the
+database still matches the snapshot named in that file's header.
 
 ## Stop or reset
 

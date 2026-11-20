@@ -1,0 +1,6 @@
+# The image needs only the package; compose mounts the rest of backend/ at run time.
+*
+!pyproject.toml
+!src
+**/*.egg-info
+**/__pycache__

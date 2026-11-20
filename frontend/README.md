@@ -7,12 +7,102 @@ pipeline's FastAPI endpoints.
 
 The dashboard has no backend logic of its own. Everything it shows comes from
 the pipeline API (`GET /metrics`, `POST /runs`, `GET /runs`, `GET /runs/{id}`,
-`GET /taxonomy/search`, `GET /taxonomy/{level}/{id}`), so the CLI, the API,
-and this UI all agree on what a run is.
+`GET /runs/{before}/compare/{after}`, `GET /lineage`, `GET /lookup`,
+`GET /taxonomy/search`, `GET /taxonomy/{level}/{id}`), so the CLI, the API, and this UI all agree on
+what a run is - and no metric is computed here: every value, change and
+verdict on screen is the API's.
+
+## Pages
+
+- **New enrichment round** (`/sources/new`) - start a round on a chosen snapshot or the original
+  taxonomy, one step at a time: name, files, columns, options, import and run. A step opens once
+  what it needs exists, and `?round={id}` comes back to the first step still needing something.
+  The columns step shows the table's first rows with each chosen column marked, and how those rows
+  will read as paths, so a choice is checked against the data. It skips a leading sheet too narrow
+  to be the table, clears column choices when the file or sheet changes, and fills in the source
+  names from the file name, under "More options". A filter offers values found in its column.
+  Importing shows counts and warnings, and shows any mapping error from the API in place. Change
+  anything afterwards and it has to be imported again before it can run. LLM steps can only be
+  ticked when the server allows them, and ticking one says it will spend credits.
+- **Enrichment rounds** (`/rounds`, `/rounds/{id}`) - one new source brought into
+  the taxonomy: each stage's status, summary and error, updating while it runs, with
+  buttons to run, resume or remove the round and the generated config. Reads `/rounds`.
+  Once a merge preview exists, the stages fold away for a review panel. A bar stays on screen
+  while scrolling, with progress and the one next step: decide, apply or generate. New categories
+  and specialities come first, because tags under an unsettled one can't be placed, and only
+  offer the actions the API would accept, saying why when "Add as new" isn't one. Each tag says in
+  plain words why it was held, with its proposed placements. A reviewer adds it as new, uses an
+  existing tag, leaves it out or decides later (`create`, `reuse`, `exclude` and `defer` to the
+  API), one at a time or across a selected page, or drafts the clear-cut ones first. The pipeline's
+  own reason and closest matches are under "Details".
+  Reuse never picks a tag for the reviewer: each option says whether it matched by spelling or
+  meaning, because the closest spelling is often a different concept. An applied decision that
+  still can't be used, such as a placement under a category that was left out, appears under
+  "Still held" with what to do about it.
+  Decisions are saved at once, then applied together, because `merge-preview` rebuilds the
+  whole preview to check them (about 25 seconds for O*NET). Then "Generate enriched snapshot"
+  integrates and scores the round, and links to its before-and-after comparison. That one
+  run scores both versions, so the round also appears on the Improvement page as a two-stage
+  comparison. Earlier stages show as not scored until a whole-chain run covers them.
+  The review panel also shows advisory repeated category/speciality names from
+  effective screening, including automatically accepted proposals and affected tags. They appear
+  once, as a short list of names with how many parents each would go under (widest first, eight
+  shown until "Show all"); a name expands to its parents. The round page shows the same list
+  from the round's warnings when there is no review panel, and keeps other warnings under
+  "Worth checking". Affected proposal cards carry a short reminder. These warnings do not block
+  integration or change approvals. Apply decisions to refresh them after resolving
+  a competing path. Older cached queues need a new merge preview/apply run.
+  **To decide** counts and lists only pending tags without a saved decision.
+  Accepted tags with warnings remain under **All** for individual review;
+  they cannot be bulk-selected or included in bulk actions. Advisory proposals
+  remain visible without increasing the number of undecided proposals.
+- **Tag lookup** (`/lookup`) - check whether a term already exists before proposing
+  it. It reads `GET /lookup`, so it needs no run: the result names the snapshot it
+  checked (the newest one under `integrations/`). Shown: a verdict, then exact and
+  close matches with level, how each matched, and where it sits. Matching by meaning
+  is opt-in, because the first such search loads a language model on the server.
+  Parents are plain text rather than links, since concept pages need a run ID.
+- **Improvement** (`/improvement`) - how the taxonomy grew round by round
+  (Baseline 1 -> 2 -> 3 ...). It reads `GET /lineage` for the chain of
+  enrichment rounds and the best run that scored them (most stages, then judge
+  on, then newest; a picker offers the others), then compares each stage with
+  the next and the first with the last through `/runs/{id}/compare/{id}`.
+  Shown: a card per stage (source added, size, rows added), a like-for-like
+  banner, tiles for the biggest rate changes, and a section per metric with a
+  trend chart of its rates and a table of every measure (value per stage,
+  step changes, sparkline, verdict). Saturation gets one card per incoming
+  source, so "how much of each source is still missing" is visible per round.
+  Nothing is hard-coded: a new round, source, metric or run appears from the
+  API alone.
+- **Compare runs** (`/compare`) - any two finished runs, or two taxonomies of
+  one run, side by side with changes and verdicts. The picks live in the URL
+  (`?before=&before_subject=&after=&after_subject=`), so a comparison can be
+  linked; the Improvement page links its first-vs-latest view here.
+- **Run detail** (`/runs/{id}`) - one run as readable values: a tab per
+  taxonomy it scored, each metric's rates as meters and counts as figures.
+  Values come from comparing the taxonomy with itself, so labels, units and
+  better directions are the API's. Raw details load only on "Show raw
+  details": a judged saturation run stores every concept it reviewed (tens of
+  megabytes), so pages otherwise read runs with `?details=false`.
+
+Charts are plain SVG (`src/components/viz/`), drawn to the dataviz skill's
+rules: the validated categorical slots and the reserved good/bad status pair
+are CSS variables in `globals.css` (light and dark), lines are 2px with
+direct end labels and a legend, every chart has a hover tooltip, and a
+verdict always carries an arrow and a word, never colour alone.
 
 **Stack:** Next.js 16 (App Router) · TanStack Query (server state) · zod (API
 boundary validation) · zustand (client state) · shadcn/ui on Base UI + Tailwind v4 ·
 Vitest · bun.
+
+PB09 audit response contracts (`changeEventSchema`, `changeHistorySchema`) mirror
+the backend's `audit/models.py`, including snapshot-scoped concept IDs, proposal
+references and review-versus-snapshot scope. Additions' `linked_reviews` retain the original decision, reviewer,
+timestamp and event references separately from the integration actor. Older events
+default to an empty list; unavailable legacy reviewer/time values are null.
+The review event schema accepts the self-reported `actor` field (default `unspecified` for old records).
+Audit history is currently available through the backend `GET /changes` and CLI;
+no dashboard history screen or proxy route is added here.
 
 ## Setup
 
@@ -45,6 +135,9 @@ The browser calls `/api/pipeline/*`. A route handler
 dashboard uses to `TAXONOMY_API_URL`. Requests stay same-origin, so the FastAPI
 app needs no CORS config.
 
+`bun dev` and `bun start` listen on `127.0.0.1` only. The dashboard has no login, and
+it can start rounds that spend LLM credits, so don't open it to the network without one.
+
 ## Security
 
 The pipeline API requires a token, and `POST /runs` only reads dataset files
@@ -57,10 +150,13 @@ since the dashboard itself has no login yet:
 - Run the dashboard only on localhost or a trusted network until it has its own
   login. The API itself can now be exposed to the dashboard's server without
   being open to everyone.
-- The proxy forwards only `GET /metrics`, `GET /runs`, `GET /runs/{id}`,
+- The proxy forwards only `GET /metrics`, `GET /runs`, `GET /runs/{id}`
+  (with `details=false` only), `GET /runs/{id}/compare/{id}` (with
+  `before_subject`/`after_subject` only), `GET /lineage`, the read routes of `/rounds`,
+  `GET /lookup` (with `q`, `level` and `semantic` only),
   `GET /taxonomy/search`, `GET /taxonomy/{level}/{id}`,
   `GET /proposals`, `GET /proposals/{id}` and, when
-  `PIPELINE_ALLOW_RUN_CREATION=true`, `POST /runs`. The allowlist lives in
+  `PIPELINE_ALLOW_RUN_CREATION=true`, `POST /runs` and the routes that change a round. The allowlist lives in
   `src/lib/api/proxy.ts`. Add a route there, with a test, when the dashboard
   starts using a new endpoint. The two `/taxonomy` routes also require a
   valid `run_id` and `dataset` query param - a request missing either is
@@ -89,12 +185,18 @@ frontend/
 │   │   ├── page.tsx                  #   overview: live metric catalogue
 │   │   ├── taxonomy/                 #   search a run's dataset by name, optionally filtered by level
 │   │   │   └── [level]/[conceptId]/  #   one concept's path(s), children and tags
+│   │   ├── improvement/              #   Baseline 1 -> 2 -> 3: stages, highlights, per-metric trends (GET /lineage)
+│   │   ├── compare/                  #   any two runs (or two taxonomies of one run) side by side
 │   │   ├── runs/                     #   run history (polls while runs are active, "load older")
-│   │   │   └── [runId]/              #   one run's report; polls until done/failed
+│   │   │   └── [runId]/              #   one run as meters and figures per taxonomy; polls until done/failed
 │   │   └── sources/new/              #   new data-source integration (placeholder)
 │   ├── components/
 │   │   ├── ui/                       #   shadcn components - generated, add via the CLI
-│   │   └── layout/                   #   app shell pieces
+│   │   ├── layout/                   #   app shell: sidebar nav, API status, PageHeader / Section / Notice
+│   │   ├── viz/                      #   SVG trend chart, sparkline, meter, verdict chip
+│   │   ├── run-status-badge.tsx      #   run and metric status as a coloured dot and label
+│   │   ├── repeated-names.tsx        #   repeated-name warnings as names with parent counts
+│   │   └── level-tag.tsx             #   a concept's level as a small mono tag
 │   ├── lib/
 │   │   ├── api/
 │   │   │   ├── schemas.ts            #   zod mirrors of models.py / config.py
@@ -102,6 +204,10 @@ frontend/
 │   │   │   ├── proxy.ts              #   which pipeline endpoints the proxy forwards
 │   │   │   └── queries.ts            #   TanStack Query hooks + query keys
 │   │   ├── metric-labels.ts          #   labels repeated metrics by their differing params
+│   │   ├── improvement.ts            #   lines stage comparisons up into trend rows (no metric logic)
+│   │   ├── run-view.ts               #   which taxonomies a run scored
+│   │   ├── repeated-names.ts         #   splits repeated-name warning text into name and parents
+│   │   ├── format.ts                 #   values by unit (rate -> %, change -> pts), verdict wording, dates, short run ids
 │   │   └── utils.ts                  #   `cn` class-name helper (shadcn)
 │   └── stores/
 │       └── source-draft-store.ts     #   zustand: datasets + metrics for a new source run
@@ -119,7 +225,7 @@ decisions: tag groups use `members`, hierarchy proposals use `proposal_id`, and
 both use `create` / `exclude` / `reuse` / `defer`. `reviewDecisionEventSchema`
 mirrors the local decision-log event.
 
-For #58, `api.listProposals(mergeRun, { level, offset, limit })` and
+For proposal review, `api.listProposals(mergeRun, { level, offset, limit })` and
 `api.getProposal(mergeRun, proposalId)` read saved proposal evidence through the
 allowlisted proxy. `proposalReviewReportSchema` mirrors the shared CLI/API
 response: original proposed branches, all existing matches and scores, screening
@@ -131,7 +237,7 @@ does not establish approval or database insertion.
 saturation run ID or an arbitrary path. Lists support category/speciality filters
 and pagination (default 50, maximum 200); detail returns the same envelope with
 one item. The proxy permits reads only. No dashboard approval controls or new
-decision-submission flow are introduced; screen layout remains #54 follow-up.
+decision-submission flow are introduced; screen layout remains follow-up work.
 
 - **Server state goes through TanStack Query, client state goes in zustand.**
   Components call the hooks in `lib/api/queries.ts`. They never call `fetch`
@@ -148,7 +254,7 @@ decision-submission flow are introduced; screen layout remains #54 follow-up.
   rather than editing them heavily.
 - **Next.js 16 differs from older versions** (`params` is a Promise, global
   `PageProps`/`LayoutProps` route types, and more). Check
-  `node_modules/next/dist/docs/` before relying on memory. See `AGENTS.md`.
+  `node_modules/next/dist/docs/` before relying on memory.
 
 ## Development
 
@@ -159,7 +265,7 @@ bun run test        # vitest
 bun run build       # production build
 ```
 
-CI runs all four. See the `frontend` job in `.github/workflows/ci.yml`.
+Run all four before accepting a change.
 
 ## Known gaps
 
@@ -169,9 +275,8 @@ CI runs all four. See the `frontend` job in `.github/workflows/ci.yml`.
   from a snapshot. So it's a live view of those files, not of that run: an
   edit to a dataset file changes results for the same run immediately,
   with no new run needed - the run is only how you pick which files.
-- **New data source flow:** the store, schema, and `useCreateRun` mutation are
-  ready, but the form isn't built yet. Dataset paths must be absolute
-  *server-side* paths, so uploading a file from the browser would need a new
-  upload endpoint.
+- **Source shapes:** a round imports one flat table per source. Files from a dropped folder
+  are stored flat under their own names, so a later file with the same name replaces an earlier one.
+- **`source-draft-store`** was written for an earlier plan and isn't used by the new-round form.
 - **Run reports** render each metric's `details` as raw JSON for now. Saturation
   curves and breadth coverage still need proper charts.

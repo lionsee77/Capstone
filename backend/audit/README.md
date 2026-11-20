@@ -1,10 +1,9 @@
 # Taxonomy audit
 
 `taxonomy_audit.py` is the single source of truth for the read-only database
-inventory and taxonomy quality checks. `taxonomy_audit.ipynb` imports it and
-renders the resulting Markdown report without duplicating audit logic.
+inventory and taxonomy quality checks.
 
-From the `backend` directory, either open and run the notebook or use:
+From the `backend` directory, run it in Docker:
 
 ```bash
 docker compose --profile tools run --rm inspector

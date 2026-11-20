@@ -1,0 +1,20 @@
+# Column mapping for `taxonomy-pipeline import-source` (see README.md). O*NET's
+# Software Skills file is already one row per occupation-software link, so no
+# flatten script is needed. Paths are relative to this file.
+name: onet
+display_name: O*NET
+source: raw/Software Skills.xlsx     # first sheet
+columns:
+  # SOC major group, from the code's first two digits: 15-2051.00 -> 15 -> Computer and Mathematical.
+  category: {column: "O*NET-SOC Code", prefix: 2, labels: soc_major_groups.csv}
+  speciality: Title                  # occupation, e.g. Data Scientists
+  tag: Workplace Example             # software, e.g. Python
+  tag_description: Element Name      # e.g. Object or component oriented development software
+# SOC major groups are occupational functions, not industries, so every category
+# goes under the baseline's "Function" service (id 2). Change it if that placement is wrong.
+service_id: 2
+# In-demand ("hot") software only: 176 tags instead of 8,753, to keep the first
+# judge and Case B run small. Delete this block to import every software.
+filters:
+  Hot Technology: "Y"
+table_prefix: onet_

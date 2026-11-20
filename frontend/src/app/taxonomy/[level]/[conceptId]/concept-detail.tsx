@@ -2,8 +2,8 @@
 
 import Link from "next/link";
 
-import { Badge } from "@/components/ui/badge";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Notice, PageHeader, Section } from "@/components/layout/page-header";
+import { LevelTag } from "@/components/level-tag";
 import { Skeleton } from "@/components/ui/skeleton";
 import type { TaxonomySource } from "@/lib/api/client";
 import { useTaxonomyConcept } from "@/lib/api/queries";
@@ -26,16 +26,23 @@ function PathBreadcrumb({ path, source }: { path: TaxonomyPath; source: Taxonomy
 
   if (steps.length === 0) return <span className="text-sm text-muted-foreground">No resolvable parent.</span>;
   return (
-    <div className="flex flex-wrap items-center gap-1 text-sm">
+    <ol className="flex flex-wrap items-center gap-x-2 gap-y-1 py-2 text-sm">
       {steps.map((step, index) => (
-        <span key={step.level} className="flex items-center gap-1">
-          {index > 0 && <span className="text-muted-foreground">/</span>}
-          <Link href={sourceLink(source, step.level, step.ref.id)} className="hover:underline">
+        <li key={step.level} className="flex items-center gap-2">
+          {index > 0 && (
+            <span aria-hidden className="text-muted-foreground">
+              ›
+            </span>
+          )}
+          <Link
+            href={sourceLink(source, step.level, step.ref.id)}
+            className="underline-offset-4 hover:text-primary hover:underline"
+          >
             {step.ref.name}
           </Link>
-        </span>
+        </li>
       ))}
-    </div>
+    </ol>
   );
 }
 
@@ -44,8 +51,12 @@ function ConceptRefList({ refs, level, source }: { refs: TaxonomyConceptRef[]; l
   return (
     <div className="flex flex-wrap gap-2">
       {refs.map((ref) => (
-        <Link key={ref.id} href={sourceLink(source, level, ref.id)}>
-          <Badge variant="outline">{ref.name}</Badge>
+        <Link
+          key={ref.id}
+          href={sourceLink(source, level, ref.id)}
+          className="rounded-sm border border-rule px-2 py-1 text-sm transition-colors hover:border-primary hover:bg-accent hover:text-accent-foreground"
+        >
+          {ref.name}
         </Link>
       ))}
     </div>
@@ -75,58 +86,54 @@ export function ConceptDetail({
 
   if (!source) {
     return (
-      <p className="text-sm text-destructive">
-        Missing run_id/dataset - open this page via search results, not directly.
-      </p>
+      <Notice title="Missing run or dataset" tone="error">
+        Open this page from the taxonomy search results, not directly.
+      </Notice>
     );
   }
   if (isPending) return <Skeleton className="h-64 w-full max-w-5xl" />;
-  if (error) return <p className="text-sm text-destructive">Could not load concept: {error.message}</p>;
+  if (error) {
+    return (
+      <Notice title="Could not load concept" tone="error">
+        {error.message}
+      </Notice>
+    );
+  }
 
   const childLevel = CHILD_LEVEL[concept.level];
 
   return (
-    <div className="flex max-w-5xl flex-col gap-6">
-      <header className="flex items-center gap-3">
-        <h1 className="text-2xl font-semibold">{concept.name}</h1>
-        <Badge variant="outline">{concept.level}</Badge>
-      </header>
-      <Link href="/taxonomy" className="text-sm text-muted-foreground hover:underline">
-        &larr; Back to search
-      </Link>
+    <div className="flex max-w-5xl flex-col gap-10">
+      <div className="flex flex-col gap-4">
+        <Link href="/taxonomy" className="text-sm text-muted-foreground hover:text-foreground">
+          &larr; Back to search
+        </Link>
+        <PageHeader
+          eyebrow={`${source.dataset} · ${concept.level}`}
+          title={concept.name}
+          actions={<LevelTag level={concept.level} />}
+        />
+      </div>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>{concept.paths.length > 1 ? "Paths" : "Path"}</CardTitle>
-        </CardHeader>
-        <CardContent className="flex flex-col gap-2">
-          {concept.paths.length === 0 && <p className="text-sm text-muted-foreground">No linked parent.</p>}
+      <Section title={concept.paths.length > 1 ? "Paths" : "Path"}>
+        {concept.paths.length === 0 && <p className="text-sm text-muted-foreground">No linked parent.</p>}
+        <div className="divide-y divide-border">
           {concept.paths.map((path, index) => (
             <PathBreadcrumb key={index} path={path} source={source} />
           ))}
-        </CardContent>
-      </Card>
+        </div>
+      </Section>
 
       {childLevel && (
-        <Card>
-          <CardHeader>
-            <CardTitle>{childLevel}</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <ConceptRefList refs={concept.children} level={childLevel} source={source} />
-          </CardContent>
-        </Card>
+        <Section title={<span className="capitalize">{childLevel}</span>} aside={<span className="label-caps">{concept.children.length}</span>}>
+          <ConceptRefList refs={concept.children} level={childLevel} source={source} />
+        </Section>
       )}
 
       {concept.level === "specialities" && (
-        <Card>
-          <CardHeader>
-            <CardTitle>Tags</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <ConceptRefList refs={concept.tags} level="tags" source={source} />
-          </CardContent>
-        </Card>
+        <Section title="Tags" aside={<span className="label-caps">{concept.tags.length}</span>}>
+          <ConceptRefList refs={concept.tags} level="tags" source={source} />
+        </Section>
       )}
     </div>
   );

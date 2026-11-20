@@ -275,3 +275,13 @@ def test_placement_target_supports_proposed_additions(category_id: int | None, s
 def test_existing_speciality_requires_existing_parent() -> None:
     with pytest.raises(ValidationError, match="existing speciality requires an existing category"):
         PlacementTarget(service_id=1, category_id=None, speciality_id=120)
+
+
+def test_review_hold_needs_needs_review_and_is_serialized_only_when_set(placement: dict[str, object]) -> None:
+    held = ClassificationOutput.model_validate({**placement, "needs_review": True, "review_hold": "generated_name"})
+    assert held.model_dump()["review_hold"] == "generated_name"
+    assert "review_hold" not in ClassificationOutput.model_validate(placement).model_dump()
+    with pytest.raises(ValidationError, match="review_hold requires needs_review"):
+        ClassificationOutput.model_validate({**placement, "review_hold": "generated_name"})
+    with pytest.raises(ValidationError):
+        ClassificationOutput.model_validate({**placement, "needs_review": True, "review_hold": "because"})

@@ -1,13 +1,63 @@
 from __future__ import annotations
 
 import os
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
 
+from taxonomy_pipeline.audit import ChangeEvent
+
 FIXTURES = Path(__file__).parent / "fixtures"
 CLASSIFICATION_FIXTURES = FIXTURES / "classification"
 PRODUCER_FILES = [CLASSIFICATION_FIXTURES / "case_a.json", CLASSIFICATION_FIXTURES / "case_b.json"]
+BASELINE_OF_RECORD = Path(__file__).resolve().parents[1] / "baselines" / "baseline_v1.json.gz"
+_baseline_cache: dict[str, object] = {}
+
+
+def baseline_of_record():
+    """A fresh copy of the stored baseline of record (v1): real results for every scoring metric.
+    Parsed once per session (it lists every saturation concept, so it is megabytes of JSON)."""
+    from taxonomy_pipeline.app.scoring import read_report
+
+    if "report" not in _baseline_cache:
+        _baseline_cache["report"] = read_report(BASELINE_OF_RECORD)
+    return _baseline_cache["report"].model_copy(deep=True)
+
+
+def enriched_report(**edits):
+    """The baseline of record re-labelled as a run scoring "enriched", with `edits` applied to its details.
+
+    Each edit is `<metric_id>__<dotted.path>=value`, e.g. `breadth__occupational.matched_count=24`.
+    """
+    report = baseline_of_record().model_copy(deep=True)
+    report.run_id = "enriched-run"
+    for result in report.results:
+        for param in ("dataset", "target", "baseline"):
+            if result.params and result.params.get(param) == "original":
+                result.params[param] = "enriched"
+    for dataset in report.datasets:
+        if dataset.name == "original":
+            dataset.name = "enriched"
+    for name, value in edits.items():
+        metric_id, path = name.split("__")
+        details = next(result.details for result in report.results if result.metric_id == metric_id)
+        *parents, leaf = path.split(".")
+        for parent in parents:
+            details = details[parent]
+        details[leaf] = value
+    return report
+
+
+@pytest.fixture
+# Provide one fully attributed audit event for store, CLI and API behavior tests.
+def audit_event() -> ChangeEvent:
+    return ChangeEvent(
+        event_id="event-1", operation_id="operation-1", dataset="baseline", snapshot_id="snapshot",
+        concept_level="category", concept_id="1", concept_ref="category:1", concept_name="Computing",
+        action="add", after={"id": 1, "name": "Computing"}, reason="Approved by reviewer", actor="reviewer",
+        occurred_at="2026-10-30T00:00:00Z", proposal_ids=["p1"], decision_ids=["d1"], scope="snapshot",
+    )
 
 
 @pytest.fixture(autouse=True)
@@ -98,7 +148,7 @@ def classification_paths(tmp_path):
     return paths
 
 
-@pytest.fixture
+@pytest.fixture(autouse=True)
 def isolated_db(tmp_path, monkeypatch):
     """Point taxonomy_pipeline.db at a throwaway SQLite file for this test."""
     from taxonomy_pipeline import db
@@ -201,3 +251,39 @@ def approve_data_analytics():
         members=[{"source_dataset": "case-a", "tag_id": "9"}], action="create", reason="Reviewed",
         approved_paths=[PlacementPath(service="Subject", category="Data analytics", speciality="Fire Prevention")],
     )
+
+
+@pytest.fixture
+def integration_round(tmp_path: Path) -> Callable[..., Path]:
+    """Write an `integrate`-shaped round: `integrations/<name>/` with `baseline/` copies, `additions.sql`
+    and `manifest.json`, plus its merge run's `resolution.json` with one added tag from `source`.
+
+    Call it with the round name, the baseline files' contents and the rows it added; returns the round's
+    directory. Roots are `tmp_path/integrations` and `tmp_path/merge_runs`.
+    """
+    import json
+
+    def write(
+        name: str, baseline: dict[str, str], additions: str, *, source: str | None = "skillsfuture",
+        created_at: str = "2026-10-15T10:00:00+00:00", dataset: str = "original", counts: dict[str, int] | None = None,
+    ) -> Path:
+        directory = tmp_path / "integrations" / name
+        (directory / "baseline").mkdir(parents=True)
+        files = []
+        for file_name, text in baseline.items():
+            (directory / "baseline" / file_name).write_text(text, encoding="utf-8")
+            files.append(f"baseline/{file_name}")
+        (directory / "additions.sql").write_text(additions, encoding="utf-8")
+        merge_run = tmp_path / "merge_runs" / f"{name}-reviewed"
+        merge_run.mkdir(parents=True)
+        tags = [{"id": "new:tag:1", "existing": False, "members": [{"source_dataset": source, "tag_id": "1"}]}]
+        (merge_run / "resolution.json").write_text(json.dumps({"tags": tags if source else []}), encoding="utf-8")
+        manifest = {
+            "created_at": created_at, "baseline": {"dataset": dataset, "files": files},
+            "merge_run": {"merge_run": f"merge_runs/{name}-reviewed"},
+            "counts": counts or {"tags": 1},
+        }
+        (directory / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+        return directory
+
+    return write

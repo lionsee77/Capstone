@@ -8,16 +8,28 @@
  */
 import type { z } from "zod";
 
+import type { DecisionInput } from "@/lib/review";
+
 import {
+  bulkDraftResultSchema,
   type ConceptLevel,
   createRunResponseSchema,
   metricCatalogueSchema,
   type PipelineConfig,
   proposalReviewReportSchema,
+  reviewQueueSchema,
+  roundConfigTextSchema,
+  roundFileSchema,
+  roundOptionsSchema,
+  type RoundSettings,
+  roundStateSchema,
+  runComparisonSchema,
   runReportSchema,
   runSummarySchema,
+  tagLookupResultSchema,
   taxonomyConceptDetailSchema,
   taxonomyConceptSummarySchema,
+  taxonomyLineageSchema,
 } from "./schemas";
 
 export const API_BASE = "/api/pipeline";
@@ -68,7 +80,68 @@ async function request<T>(path: string, schema: z.ZodType<T>, init?: RequestInit
 /** Identifies which loaded dataset to read: a past run, and a dataset name within its config. */
 export type TaxonomySource = { runId: string; dataset: string };
 
+/** One side of a comparison: a stored run, and which of its taxonomies (dataset name) when it scored several. */
+export type RunSubject = { runId: string; subject?: string | null };
+
+export type ReviewQuery = { state: "undecided" | "decided" | "held" | "all"; q?: string; offset: number; limit: number };
+
+export type DecisionSubmission = {
+  reviewer: string;
+  decisions: DecisionInput[];
+  clear_tags?: { source_dataset: string; tag_id: string }[];
+  clear_proposals?: string[];
+};
+
+/** A request whose success has no body (204), so there is nothing to validate. */
+async function requestNoContent(path: string, init: RequestInit): Promise<void> {
+  const response = await fetch(`${API_BASE}${path}`, init);
+  if (!response.ok) {
+    const body: unknown = await response.json().catch(() => null);
+    throw new ApiError(response.status, body && typeof body === "object" && "detail" in body ? body.detail : body);
+  }
+}
+
+const roundPath = (roundId: string) => `/rounds/${encodeURIComponent(roundId)}`;
+
 export const api = {
+  getRoundOptions: () => request("/rounds/options", roundOptionsSchema),
+  listRounds: () => request("/rounds", roundStateSchema.array()),
+  getRound: (roundId: string) => request(roundPath(roundId), roundStateSchema),
+  getRoundConfigText: (roundId: string) => request(`${roundPath(roundId)}/config`, roundConfigTextSchema),
+  runRound: (roundId: string) => request(`${roundPath(roundId)}/run`, roundStateSchema, { method: "POST" }),
+  deleteRound: (roundId: string) => requestNoContent(roundPath(roundId), { method: "DELETE" }),
+  createRound: (body: { round_id: string; baseline_snapshot: string }) =>
+    request("/rounds", roundStateSchema, { method: "POST", body: JSON.stringify(body) }),
+  listRoundFiles: (roundId: string) => request(`${roundPath(roundId)}/files`, roundFileSchema.array()),
+  getRoundFile: (roundId: string, name: string, sheet: string | null) => {
+    const query = sheet ? `?${new URLSearchParams({ sheet })}` : "";
+    return request(`${roundPath(roundId)}/files/${encodeURIComponent(name)}${query}`, roundFileSchema);
+  },
+  /** The file's bytes as the whole body, so the proxy and API receive it unchanged. */
+  uploadRoundFile: (roundId: string, file: File) => request(
+    `${roundPath(roundId)}/files/${encodeURIComponent(file.name)}`, roundFileSchema,
+    { method: "PUT", body: file, headers: { "Content-Type": "application/octet-stream" } },
+  ),
+  removeRoundFile: (roundId: string, name: string) =>
+    requestNoContent(`${roundPath(roundId)}/files/${encodeURIComponent(name)}`, { method: "DELETE" }),
+  configureRound: (roundId: string, body: { mapping: Record<string, unknown>; settings: RoundSettings }) => request(
+    `${roundPath(roundId)}/config`, roundStateSchema, { method: "PUT", body: JSON.stringify(body) },
+  ),
+  getReview: (roundId: string, options: ReviewQuery) => {
+    const params = new URLSearchParams({
+      state: options.state, offset: String(options.offset), limit: String(options.limit),
+    });
+    if (options.q) params.set("q", options.q);
+    return request(`${roundPath(roundId)}/review?${params}`, reviewQueueSchema);
+  },
+  saveDecisions: (roundId: string, body: DecisionSubmission) => request(
+    `${roundPath(roundId)}/decisions`, roundStateSchema, { method: "POST", body: JSON.stringify(body) },
+  ),
+  draftDecisions: (roundId: string, body: { reviewer: string; create_below: number; reuse_above: number }) => request(
+    `${roundPath(roundId)}/bulk-decide`, bulkDraftResultSchema, { method: "POST", body: JSON.stringify(body) },
+  ),
+  applyDecisions: (roundId: string) => request(`${roundPath(roundId)}/apply`, roundStateSchema, { method: "POST" }),
+  integrateRound: (roundId: string) => request(`${roundPath(roundId)}/integrate`, roundStateSchema, { method: "POST" }),
   // Fetch saved screening evidence through the same validated boundary as other dashboard data.
   listProposals: (mergeRun: string, options: { level?: "category" | "speciality"; offset?: number; limit?: number } = {}) => {
     const params = new URLSearchParams({ merge_run: mergeRun });
@@ -84,7 +157,21 @@ export const api = {
   ),
   listMetrics: () => request("/metrics", metricCatalogueSchema),
   listRuns: (limit = 50) => request(`/runs?limit=${limit}`, runSummarySchema.array()),
-  getRun: (runId: string) => request(`/runs/${encodeURIComponent(runId)}`, runReportSchema),
+  /** A run's report; `details: false` leaves out each result's (possibly megabytes of) details. */
+  getRun: (runId: string, options: { details?: boolean } = {}) =>
+    request(`/runs/${encodeURIComponent(runId)}${options.details === false ? "?details=false" : ""}`, runReportSchema),
+  /** Compare two stored runs; a run that scored several taxonomies needs its subject (dataset name). */
+  compareRuns: (before: RunSubject, after: RunSubject) => {
+    const params = new URLSearchParams();
+    if (before.subject) params.set("before_subject", before.subject);
+    if (after.subject) params.set("after_subject", after.subject);
+    const query = params.size > 0 ? `?${params}` : "";
+    return request(
+      `/runs/${encodeURIComponent(before.runId)}/compare/${encodeURIComponent(after.runId)}${query}`,
+      runComparisonSchema,
+    );
+  },
+  getLineage: () => request("/lineage", taxonomyLineageSchema),
   createRun: (config: PipelineConfig) =>
     request("/runs", createRunResponseSchema, { method: "POST", body: JSON.stringify(config) }),
   searchTaxonomy: (source: TaxonomySource, options: { q?: string; level?: ConceptLevel; limit?: number } = {}) => {
@@ -93,6 +180,12 @@ export const api = {
     if (options.level) params.set("level", options.level);
     if (options.limit) params.set("limit", String(options.limit));
     return request(`/taxonomy/search?${params}`, taxonomyConceptSummarySchema.array());
+  },
+  lookupTerm: (q: string, options: { level?: ConceptLevel; semantic?: boolean } = {}) => {
+    const params = new URLSearchParams({ q });
+    if (options.level) params.set("level", options.level);
+    if (options.semantic) params.set("semantic", "true");
+    return request(`/lookup?${params}`, tagLookupResultSchema);
   },
   getTaxonomyConcept: (source: TaxonomySource, level: ConceptLevel, conceptId: string) => {
     const params = new URLSearchParams({ run_id: source.runId, dataset: source.dataset });

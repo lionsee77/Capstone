@@ -439,3 +439,66 @@ def test_saved_screening_rejects_inconsistent_evidence(baseline: TaxonomyDataset
         proposal.existing_id = 999
     with pytest.raises(ValueError, match="Screening evidence changed"):
         build_preview(loaded, baseline)
+
+
+def _mapping(term: str, level: str, concept_id: str, name: str, scope: tuple[str, str] | None = None):
+    from taxonomy_pipeline.matching.names import match_key, normalize
+    from taxonomy_pipeline.synonyms import SynonymMapping
+
+    return SynonymMapping(
+        synonym_id=f"syn-{term}", term=term, normalized_term=normalize(term), term_key=match_key(term),
+        concept_level=level,
+        concept_id=concept_id, concept_name=name, scope_level=scope[0] if scope else None,
+        scope_id=scope[1] if scope else None,
+    )
+
+
+@pytest.mark.parametrize("scope", [None, ("categories", "37")])
+# An approved synonym (global, or scoped to the parent) identifies the existing concept, so it is reused.
+def test_an_approved_synonym_reuses_the_existing_concept(baseline: TaxonomyDataset, scope) -> None:
+    report = proposal_report(baseline, speciality="Dataviz")
+    settings = ScreeningSettings(synonyms=[_mapping("Dataviz", "specialities", "93", "Data visualization", scope)])
+    proposal = screened(resolve_outputs(report, baseline, screening_settings=settings))
+    assert (proposal.status, proposal.existing_id) == ("reuse", 93)
+    assert proposal.matches[0].match_types[0] == "synonym"
+
+
+# Without synonyms in the settings the same name is a new concept, as before.
+def test_synonyms_only_apply_when_the_settings_carry_them(baseline: TaxonomyDataset) -> None:
+    proposal = screened(resolve_outputs(proposal_report(baseline, speciality="Dataviz"), baseline))
+    assert proposal.status != "reuse"
+    assert all("synonym" not in match.match_types for match in proposal.matches)
+
+
+# A synonym scoped to another branch doesn't apply under this parent.
+def test_a_synonym_scoped_elsewhere_does_not_apply(baseline: TaxonomyDataset) -> None:
+    other = baseline.model_copy(update={
+        "categories": [*baseline.categories, {"id": 38, "name": "Design", "service_id": 11}],
+        "specialities": [*baseline.specialities, {"id": 94, "name": "Infographics", "category_id": 38}],
+    })
+    elsewhere = _mapping("Dataviz", "specialities", "94", "Infographics", ("categories", "38"))
+    settings = ScreeningSettings(synonyms=[elsewhere])
+    report = proposal_report(other, speciality="Dataviz")
+    proposal = screened(resolve_outputs(report, other, screening_settings=settings))
+    assert all("synonym" not in match.match_types for match in proposal.matches)
+
+
+# The synonyms are saved with the screening, so the saved report replays without reading the store.
+def test_screening_synonyms_survive_a_replay(baseline: TaxonomyDataset) -> None:
+    report = proposal_report(baseline, speciality="Dataviz")
+    settings = ScreeningSettings(synonyms=[_mapping("Dataviz", "specialities", "93", "Data visualization")])
+    first = resolve_outputs(report, baseline, screening_settings=settings)
+    saved = ResolutionReport.model_validate_json(first.model_dump_json())
+    assert saved.screening.settings.synonyms == settings.synonyms
+    again = resolve_outputs(report, baseline, screening=saved.screening)
+    assert screened(again).status == "reuse"
+
+
+# A synonym recorded for a concept that now has another name (a refreshed dump) is not applied.
+def test_a_synonym_whose_concept_has_another_name_now_is_not_applied(baseline: TaxonomyDataset) -> None:
+    stale = _mapping("Dataviz", "specialities", "93", "Data visualisation tools")
+    settings = ScreeningSettings(synonyms=[stale])
+    proposal = screened(resolve_outputs(proposal_report(baseline, speciality="Dataviz"), baseline,
+                                        screening_settings=settings))
+    assert proposal.status != "reuse"
+    assert all("synonym" not in match.match_types for match in proposal.matches)

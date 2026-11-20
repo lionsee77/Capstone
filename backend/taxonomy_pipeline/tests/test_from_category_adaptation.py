@@ -278,3 +278,95 @@ def test_output_validates_against_the_shared_contract():
     validated = CLASSIFICATION_OUTPUTS.validate_json(CLASSIFICATION_OUTPUTS.dump_json(records))
     assert len(validated) == 3
     assert [record.needs_review for record in validated] == [False, False, True]
+
+
+def test_category_scoped_match_is_held_for_a_person_in_the_existing_speciality():
+    placement = _base(
+        placement_basis="category_content",
+        speciality_action="SKIP_CATEGORY_SCOPED_MATCH",
+        target_speciality_id=3,
+        target_speciality_name="Loan Servicing",
+        speciality_semantic_score=0.61,
+    )
+
+    [record] = build_classification_outputs([placement], source_dataset="skillsfuture")
+
+    assert (record.service, record.category, record.speciality) == ("Industry", "Banking", "Loan Servicing")
+    assert record.confidence == 0.61
+    assert (record.needs_review, record.review_hold) == (True, "category_scoped_match")
+    assert "closest in meaning to existing speciality 'Loan Servicing' (semantic 0.61)" in record.reason
+    CLASSIFICATION_OUTPUTS.validate_python(
+        CLASSIFICATION_OUTPUTS.dump_python([record], mode="json")
+    )
+
+
+def test_source_categories_set_aside_by_one_category_per_tag_are_named_in_the_reason():
+    placement = _base(
+        speciality_action="NEW_SPECIALITY",
+        target_speciality_id="skillsfuture:tag:9001",
+        target_speciality_name="loan processing",
+        other_source_categories=["Insurance", "Wealth"],
+    )
+
+    [record] = build_classification_outputs([placement], source_dataset="skillsfuture")
+
+    assert record.speciality == "loan processing"
+    assert "Also linked to source categories 'Insurance', 'Wealth'; placed via the one with the most evidence only." \
+        in record.reason
+
+
+def _new_speciality(**overrides):
+    return _base(**{"placement_basis": "source_category", "speciality_action": "NEW_SPECIALITY",
+                    "target_speciality_id": "skillsfuture:tag:9001", "target_speciality_name": "loan processing",
+                    **overrides})
+
+
+def test_grouped_tag_joins_the_group_speciality_and_says_which_tag_names_it():
+    group = {"target_speciality_name": "loan approval", "speciality_group_size": 3,
+             "speciality_group_central_tag": "loan approval", "speciality_name_source": "central_tag"}
+    member = _new_speciality(**group, speciality_group_leader=False, speciality_group_score=0.72)
+    leader = _new_speciality(**group, tag_id=9004, tag_name="loan approval", speciality_group_leader=True,
+                             speciality_group_sample=["loan processing", "loan review"])
+
+    member_record, leader_record = build_classification_outputs([member, leader], source_dataset="skillsfuture")
+
+    assert member_record.speciality == "loan approval" and member_record.needs_review is False
+    assert member_record.review_hold is None
+    assert "Grouped with 2 other new tags close in meaning (semantic 0.72 to 'loan approval')" in member_record.reason
+    assert "named after its most central tag, 'loan approval'" in member_record.reason
+    assert "Groups 3 new tags" in leader_record.reason and "'loan review'" in leader_record.reason
+
+
+def test_generated_group_name_is_held_for_review_and_credits_the_model():
+    record, = build_classification_outputs([_new_speciality(
+        target_speciality_name="Loan Origination", speciality_group_size=2,
+        speciality_group_central_tag="loan approval",
+        speciality_name_source="generated", speciality_name_model="gpt-test", speciality_group_leader=False,
+        speciality_group_score=0.7, needs_review=True,
+    )], source_dataset="skillsfuture")
+
+    assert record.speciality == "Loan Origination" and record.needs_review is True
+    assert record.review_hold == "generated_name"
+    assert "named 'Loan Origination' by gpt-test from all its tags; check the name" in record.reason
+
+
+def test_says_why_a_group_fell_back_to_its_central_tag_name():
+    record, = build_classification_outputs([_new_speciality(
+        target_speciality_name="loan approval", speciality_group_size=2, speciality_group_central_tag="loan approval",
+        speciality_name_source="central_tag", speciality_name_fallback="the generated name 'Retail Banking' already "
+        "exists", speciality_group_leader=False, speciality_group_score=0.7,
+    )], source_dataset="skillsfuture")
+
+    assert record.needs_review is False
+    assert "(the generated name 'Retail Banking' already exists)" in record.reason
+
+
+def test_single_tag_speciality_flag_holds_the_record_for_review():
+    record, = build_classification_outputs(
+        [_new_speciality(needs_review=True, single_tag_speciality=True)], source_dataset="skillsfuture",
+    )
+
+    assert record.needs_review is True and record.speciality == "loan processing"
+    assert record.review_hold == "single_tag_speciality"
+    assert "would hold only this tag, so it is flagged for review" in record.reason
+    CLASSIFICATION_OUTPUTS.validate_python([record.model_dump()])

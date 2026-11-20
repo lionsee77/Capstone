@@ -37,7 +37,8 @@ class SemanticMatcher:
                 "semantic matching requires the optional dependency; install with "
                 '`pip install -e ".[dev,semantic]"`'
             ) from exc
-        self.model = SentenceTransformer(model_name, revision=revision)
+        with embeddings.MODEL_LOCK:
+            self.model = SentenceTransformer(model_name, revision=revision)
         self._cache: dict[str, np.ndarray] = {}
 
     def similarity(self, queries: list[str], choices: list[str]) -> np.ndarray:
@@ -45,11 +46,20 @@ class SemanticMatcher:
         encoded once per run, since the same parent names recur constantly."""
         missing = [name for name in dict.fromkeys(queries + choices) if name not in self._cache]
         if missing:
-            for name, vector in zip(missing, self.model.encode(missing, normalize_embeddings=True), strict=True):
+            with embeddings.MODEL_LOCK:
+                vectors = self.model.encode(missing, normalize_embeddings=True)
+            for name, vector in zip(missing, vectors, strict=True):
                 self._cache[name] = np.asarray(vector)
         if not queries or not choices:
             return np.zeros((len(queries), len(choices)))
         return np.stack([self._cache[q] for q in queries]) @ np.stack([self._cache[c] for c in choices]).T
+
+    def retain(self, names: list[str]) -> None:
+        """Forget every embedding except `names`'. A batch run needs no such thing; a long-running
+        service does, or each distinct query it is ever asked stays in memory."""
+        keep = set(names)
+        for name in [name for name in self._cache if name not in keep]:
+            del self._cache[name]
 
     def best_matches(self, queries: list[str], choices: list[str]) -> list[tuple[str | None, float | None]]:
         if not queries or not choices:

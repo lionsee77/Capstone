@@ -898,3 +898,96 @@ def test_a_judge_that_cannot_run_reports_an_error(monkeypatch):
     monkeypatch.setattr(saturation, "DecisionsJudge", no_key)
     result = _run(_pair(_JUDGE_BASE, _JUDGE_INCOMING), semantic_model="m", judge={})
     assert result.status == "error" and "OPENAI_API_KEY" in result.summary
+
+
+def test_measures_read_the_last_curve_point_with_fewer_new_concepts_as_better():
+    from tests.conftest import baseline_of_record
+
+    result = next(r for r in baseline_of_record().results if r.metric_id == "saturation")
+    measures = {m.key: m for m in SaturationMetric().measures(result)}
+
+    assert (measures["add_candidates"].value, measures["add_candidates"].better) == (665, "lower")
+    assert (measures["new_rate_max"].value, measures["new_rate_max"].better) == (0.835, "lower")
+    assert (measures["reviewed"].value, measures["reviewed"].better) == (4308, None)
+
+
+def test_a_result_without_a_curve_has_no_measure_values():
+    from taxonomy_pipeline.models import MetricResult
+
+    measures = SaturationMetric().measures(MetricResult(metric_id="saturation", summary="", details={}))
+
+    assert {m.value for m in measures} == {None}
+
+
+def _synonym_set(*mappings: tuple[str, str, str, str], scope: tuple[str, str] | None = None):
+    from taxonomy_pipeline.taxonomy.synonym_set import SynonymMapping, SynonymSet
+
+    return SynonymSet(name="synonyms_v1", dataset="original", synonyms=[
+        SynonymMapping(synonym_id=f"s{i}", term=term, normalized_term=names.normalize(term),
+                       term_key=names.match_key(term), concept_level=level,
+                       concept_id=cid, concept_name=name, scope_level=scope[0] if scope else None,
+                       scope_id=scope[1] if scope else None)
+        for i, (term, level, cid, name) in enumerate(mappings)
+    ])
+
+
+def test_a_synonym_set_makes_an_incoming_synonym_an_exact_match_of_its_concept():
+    datasets = {**_datasets(), "synonyms_v1": _synonym_set(("Carbon Accounting", "specialities", "10",
+                                                           "Payroll Processing"))}
+    without = SaturationMetric().run(_datasets(), {"baseline": "original", "incoming": "skillsfuture"})
+    result = SaturationMetric().run(datasets, {"baseline": "original", "incoming": "skillsfuture",
+                                               "synonyms": "synonyms_v1"})
+
+    assert result.status == "ok"
+    before = without.details["by_concept_level"]["specialities"]["exact_matches"]
+    levels = result.details["by_concept_level"]["specialities"]
+    assert levels["exact_matches"] == before + 1
+    match = next(m for m in levels["exact_match_details"] if m["incoming_name"] == "Carbon Accounting")
+    assert (match["baseline_id"], match["baseline_name"]) == (10, "Payroll Processing")
+    assert result.details["synonyms"] == {
+        "dataset": "synonyms_v1", "exported_from": "original", "global_synonyms_applied": 1, "dropped": [],
+    }
+    assert "Synonyms (synonyms_v1): 1 applied." in result.summary
+
+
+def test_scoped_synonyms_and_unknown_concepts_are_not_applied_and_names_keep_their_meaning():
+    datasets = {**_datasets(), "synonyms_v1": _synonym_set(
+        ("Carbon Accounting", "specialities", "10", "Payroll Processing"), scope=("categories", "1"),
+    )}
+    scoped = SaturationMetric().run(datasets, {"baseline": "original", "incoming": "skillsfuture",
+                                               "synonyms": "synonyms_v1"})
+    assert scoped.details["synonyms"]["global_synonyms_applied"] == 0
+    datasets["synonyms_v1"] = _synonym_set(("Accounting", "tags", "100", "accounting"),
+                                           ("Marine Services", "tags", "999", "not in the baseline"))
+    other = SaturationMetric().run(datasets, {"baseline": "original", "incoming": "skillsfuture",
+                                              "synonyms": "synonyms_v1"})
+    assert other.details["synonyms"]["global_synonyms_applied"] == 0
+    assert [d["concept_id"] for d in other.details["synonyms"]["dropped"]] == ["999"]
+    assert "1 dropped" in other.summary
+
+
+def test_a_synonym_whose_id_names_another_concept_in_this_baseline_is_dropped():
+    # Exported from a dataset where specialities/77 was "Payroll Processing"; here that name is ID 10.
+    datasets = {**_datasets(), "synonyms_v1": _synonym_set(("Carbon Accounting", "specialities", "77",
+                                                           "Payroll Processing"))}
+    result = SaturationMetric().run(datasets, {"baseline": "original", "incoming": "skillsfuture",
+                                               "synonyms": "synonyms_v1"})
+    assert result.details["synonyms"]["global_synonyms_applied"] == 0
+    assert [d["concept_id"] for d in result.details["synonyms"]["dropped"]] == ["77"]
+
+
+def test_without_the_synonyms_param_results_are_unchanged_and_record_no_synonyms():
+    params = {"baseline": "original", "incoming": "skillsfuture"}
+    plain = SaturationMetric().run(_datasets(), params)
+    with_set = SaturationMetric().run({**_datasets(), "synonyms_v1": _synonym_set()}, params)
+    assert "synonyms" not in plain.details
+    assert plain.details["overall"] == with_set.details["overall"]
+
+
+def test_the_synonyms_param_must_name_a_loaded_synonym_set():
+    missing = SaturationMetric().run(_datasets(), {"baseline": "original", "incoming": "skillsfuture",
+                                                   "synonyms": "synonyms_v1"})
+    assert missing.status == "error" and "not loaded" in missing.summary
+    wrong = SaturationMetric().run(_datasets(), {"baseline": "original", "incoming": "skillsfuture",
+                                                 "synonyms": "original"})
+    assert wrong.status == "error" and "must be SynonymSet" in wrong.summary

@@ -16,21 +16,27 @@ responses at DEBUG), never printed. The OpenAI client comes from `llm.py`; the S
 """
 from __future__ import annotations
 
+import asyncio
 import csv
 import json
 import logging
+import math
 import os
+import random
+from datetime import UTC, datetime
+from email.utils import parsedate_to_datetime
 from pathlib import Path
 from typing import Any
 
 from .. import llm
-from ..providers.base import SourceProvider
+from ..providers.base import SourceProvider, require_context
 from ..providers.registry import get_provider
 from ..taxonomy.base import TaxonomyDataset
 from .models import CLASSIFICATION_OUTPUTS
 from .routing import RUN_ID_FIELD, case_b_tag_ids, load_saturation, mark_ambiguous
 
 logger = logging.getLogger(__name__)
+CONTEXT_SCHEMA_VERSION = 2
 ACTIONS = ["assign_existing", "propose_new_speciality", "propose_new_category"]
 VALID_ACTIONS = set(ACTIONS)
 PROPOSAL_FIELDS = ("tag", "tag_id", "action", "service", "category", "speciality", "confidence", "reason")
@@ -38,7 +44,7 @@ CSV_FIELDS = [
     "action", "source_dataset", "tag_id", "tag", "original_classification", "service", "category",
     "speciality", "confidence", "reason", "needs_review", RUN_ID_FIELD,
 ]
-# The response shape the model is asked to return, embedded verbatim in the prompt.
+# The response shape embedded verbatim in the prompt.
 RESPONSE_SCHEMA = {
     "type": "object",
     "properties": {"proposals": {"type": "array", "items": {"type": "object", "properties": {
@@ -63,18 +69,16 @@ def parse_json(text: str) -> dict[str, Any]:
         text = text.split("\n", 1)[1].rsplit("```", 1)[0].strip()
     return json.loads(text)
 
-
 def proposal_is_well_formed(proposal: dict[str, Any]) -> bool:
     if not set(PROPOSAL_FIELDS).issubset(proposal) or proposal.get("action") not in VALID_ACTIONS:
         return False
     confidence = proposal.get("confidence")
     return isinstance(confidence, int | float) and not isinstance(confidence, bool) and 0 <= confidence <= 1
 
-
 async def classify_batch(
     client: Any, prompt: str, batch: list[dict[str, Any]], model: str,
 ) -> list[dict[str, Any]]:
-    """Call the model, retrying when it omits or invents tag IDs."""
+    """Bound API attempts while retaining accepted proposals across response retries."""
     expected = {item["tag_id"] for item in batch}
     collected: dict[str, dict[str, Any]] = {}
     for attempt in range(1, 4):
@@ -82,9 +86,30 @@ async def classify_batch(
             response = await client.chat.completions.create(
                 model=model, messages=[{"role": "user", "content": prompt}], temperature=0,
             )
+        except Exception as exc:
+            if not _transient_error(exc):
+                status = getattr(exc, "status_code", None)
+                if status not in {400, 401, 403, 404, 422} and getattr(exc, "code", None) not in {
+                    "insufficient_quota", "billing_hard_limit_reached",
+                }:
+                    raise
+                raise CaseBError(
+                    f"Case B request failed ({type(exc).__name__}, HTTP {status}); not retrying. "
+                    "Check credentials, permissions, model, request settings and quota."
+                ) from exc
+            if attempt == 3:
+                raise CaseBError("Case B request failed after 3 attempts; resume using the checkpoint.") from exc
+            delay = _retry_delay(exc, attempt)
+            logger.info("Temporary API failure (%s); retrying in %.2fs", type(exc).__name__, delay)
+            await asyncio.sleep(delay)
+            continue
+        try:
             raw = response.choices[0].message.content or ""
             logger.debug("  Raw model response:\n%s", raw[:4000] if raw else "  <empty response>")
-            proposals = parse_json(raw).get("proposals", [])
+            payload = parse_json(raw)
+            if not isinstance(payload, dict) or not isinstance(payload.get("proposals"), list):
+                raise ValueError("Expected a JSON object with a proposals array")
+            proposals = payload["proposals"]
             for proposal in proposals:
                 if isinstance(proposal, dict) and proposal.get("tag_id") in expected and proposal_is_well_formed(
                     proposal
@@ -98,9 +123,66 @@ async def classify_batch(
                 f"values: {missing}. Do not include any other tag IDs."
             )
             logger.info("  Incomplete response; retrying (%d/3), missing %d", attempt, len(missing))
-        except Exception as exc:  # noqa: BLE001 - retry transient API and response errors
+        except (ValueError, TypeError, AttributeError, IndexError) as exc:
             logger.info("  Invalid model response; retrying (%d/3): %s", attempt, exc)
     raise CaseBError(f"Model failed to return one valid proposal for every tag in batch: {sorted(expected)}")
+
+def _transient_error(exc: Exception) -> bool:
+    """Retry temporary HTTP/transport failures, excluding exhausted billing quota."""
+    if getattr(exc, "code", None) in {"insufficient_quota", "billing_hard_limit_reached"}:
+        return False
+    status = getattr(exc, "status_code", None)
+    if status in {400, 401, 403, 404, 422}:
+        return False
+    retry_hint = getattr(getattr(exc, "response", None), "headers", {}).get("x-should-retry")
+    if retry_hint == "false":
+        return False
+    if retry_hint == "true":
+        return True
+    try:
+        from openai import APIResponseValidationError
+    except ImportError:
+        pass
+    else:
+        if isinstance(exc, APIResponseValidationError):
+            return True
+    if status is not None:
+        return status in {408, 409, 429} or 500 <= status < 600
+    if isinstance(exc, (ConnectionError, TimeoutError)):
+        return True
+    try:
+        from openai import APIConnectionError
+    except ImportError:
+        return False
+    return isinstance(exc, APIConnectionError)
+
+def _retry_delay(exc: Exception, attempt: int) -> float:
+    """Honor Retry-After without retrying earlier than a long server-requested wait."""
+    headers = getattr(getattr(exc, "response", None), "headers", {})
+    retry_after = headers.get("retry-after-ms")
+    delay = None
+    if retry_after is not None:
+        try:
+            delay = float(retry_after) / 1000
+        except (ValueError, TypeError):
+            pass
+    if delay is not None and (math.isnan(delay) or delay < 0):
+        delay = None
+    retry_after = headers.get("retry-after")
+    if delay is None and retry_after is not None:
+        try:
+            delay = float(retry_after)
+        except (ValueError, TypeError):
+            try:
+                date = parsedate_to_datetime(retry_after)
+                delay = (date - datetime.now(UTC)).total_seconds()
+            except (ValueError, TypeError, OverflowError):
+                pass
+    if delay is not None and delay > 60:
+        raise CaseBError("Server requested a wait above 60 seconds; resume later using the checkpoint.") from exc
+    if delay is not None and math.isfinite(delay) and delay >= 0:
+        return delay
+    return min(2 ** (attempt - 1) + random.uniform(0, 0.5), 60.0)
 
 
 def baseline_hierarchy(
@@ -134,13 +216,18 @@ def incoming_tags(incoming: TaxonomyDataset) -> dict[str, str]:
     return {str(row["id"]): str(row["name"]) for row in incoming.tags}
 
 
+def validate_context_argument(context: str | Path | None) -> None:
+    """Expose early argument validation to the use case without coupling it to providers."""
+    require_context(context)
+
+
 def build_prompt(
     services: list[str], categories: list[dict[str, str]], specialities: list[dict[str, str]],
     batch: list[dict[str, Any]], *, source_name: str,
 ) -> str:
-    """The classification prompt for one batch; `source_name` is the provider's `display_name`."""
+    """The classification prompt for one batch; `source_name` is the provider's `source_name()`."""
     return (
-        f"You are classifying incoming {source_name} skills into Ankit's taxonomy. Follow this decision procedure "
+        f"You are classifying incoming {source_name} skills into our current taxonomy. Follow this decision procedure "
         "for every tag. First, inspect the supplied service/category/speciality hierarchy and choose the single "
         "best existing placement. If a suitable existing category and speciality exist under the same service, "
         "you MUST use action=assign_existing and copy both names exactly. Use action=propose_new_speciality "
@@ -150,14 +237,13 @@ def build_prompt(
         "whose name already appears in the supplied hierarchy under the relevant parent. The service, category, "
         "and speciality must form one consistent parent-child path. Do not choose a category from one service "
         f"and a speciality from another. The source tag remains a {source_name} tag, while the placement targets "
-        "Ankit's taxonomy. Copy the original skill title into the tag field exactly. Return exactly one proposal "
-        "per tag_id and no commentary outside JSON.\n\nAllowed Ankit services:\n" + json.dumps(services)
-        + "\nAnkit categories (each includes its parent service):\n" + json.dumps(categories)
-        + "\nAnkit specialities (each includes its parent service and category):\n" + json.dumps(specialities)
+        "our current taxonomy. Copy the original skill title into the tag field exactly. Return exactly one proposal "
+        "per tag_id and no commentary outside JSON.\n\nAllowed services:\n" + json.dumps(services)
+        + "\ncategories (each includes its parent service):\n" + json.dumps(categories)
+        + "\nspecialities (each includes its parent service and category):\n" + json.dumps(specialities)
         + f"\n{source_name} skills:\n" + json.dumps(batch)
         + "\nReturn ONLY valid JSON matching this shape (no Markdown): " + json.dumps(RESPONSE_SCHEMA)
     )
-
 
 def to_contract_records(
     proposals: list[dict[str, Any]], tags: dict[str, str], *, source_dataset: str, run_id: str | None,
@@ -182,7 +268,6 @@ def to_contract_records(
     CLASSIFICATION_OUTPUTS.validate_python(records)
     return records
 
-
 def write_outputs(records: list[dict[str, Any]], output: Path) -> None:
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(json.dumps(records, indent=2, ensure_ascii=False), encoding="utf-8")
@@ -194,7 +279,7 @@ def write_outputs(records: list[dict[str, Any]], output: Path) -> None:
 
 def _openai_client() -> Any:
     try:
-        client = llm.openai_client("Case B", async_client=True)
+        client = llm.openai_client("Case B", async_client=True, max_retries=0)
     except llm.LLMError as exc:
         raise CaseBError(str(exc)) from exc
     logger.debug("OpenAI endpoint: %s\nAPI key loaded: yes", llm.base_url())
@@ -222,14 +307,14 @@ def _load_checkpoint(path: Path, provenance: dict[str, Any]) -> dict[str, dict[s
             label = "saturation run" if field == "saturation_run_id" else field
             raise CaseBError(
                 f"Checkpoint {path} was written for a different {label} ({field} {saved.get(field)!r}, "
-                f"this run {expected!r}). Rerun against the matching report and model, or delete the checkpoint."
+                f"this run {expected!r}). Use the matching report, model and context, or choose a new checkpoint."
             )
     proposals = saved.get("proposals")
     if not isinstance(proposals, list):
         raise CaseBError(f"Checkpoint {path} has invalid proposals; delete it to start this run from scratch.")
     required_fields = {"tag_id", "action", "service", "category", "speciality", "confidence", "reason"}
     incompatible = [
-        str(proposal.get("tag_id", "<unknown>"))
+        str(proposal.get("tag_id", "<unknown>")) if isinstance(proposal, dict) else "<unknown>"
         for proposal in proposals
         if not isinstance(proposal, dict) or not required_fields.issubset(proposal)
     ]
@@ -268,14 +353,16 @@ async def run_case_b(
     """Classify every Case B tag and write `output` (JSON) plus a CSV next to it.
 
     `provider` (a `SourceProvider`, or a name registered in `providers/registry.py`)
-    adds each tag's source context to the prompt, read from `context` (default: the
-    provider's own default file).
+    adds each tag's source context from the required `context` file. Source and
+    known titles are validated before API calls; missing coverage is reported.
 
     Completed batches are checkpointed, so an interrupted run resumes where it
     stopped, with any batch size; a successful run removes the checkpoint. The
     checkpoint records the saturation run, source and model it was written for,
     and a mismatched one is refused instead of reused.
     """
+
+    validate_context_argument(context)
     for name in (baseline, incoming):
         if not isinstance(datasets.get(name), TaxonomyDataset):
             raise CaseBError(f"Dataset {name!r} is not a taxonomy loaded by this config")
@@ -295,26 +382,52 @@ async def run_case_b(
         "Using %d Case B tag(s) from %s (NO_PARENT; %d need review)", len(input_tag_ids), report_path, ambiguous,
     )
 
-    contexts = provider.load_tag_context(context)
+    try:
+        snapshot = provider.load_context(context, incoming)
+    except ValueError as exc:
+        raise CaseBError(str(exc)) from exc
+    contexts, source_name = snapshot.tags, snapshot.display_name
+    mismatches = [
+        tag_id for tag_id, item in contexts.items()
+        if tag_id in tags and "title" in item
+        and (not isinstance(item["title"], str)
+             or " ".join(item["title"].split()).casefold() != " ".join(tags[tag_id].split()).casefold())
+    ]
+    if mismatches:
+        raise CaseBError(
+            f"Context titles do not match incoming tags {mismatches[:10]}; regenerate SQL and JSON together."
+        )
+    missing = [tag_id for tag_id in input_tag_ids if not contexts.get(tag_id)]
+    if missing:
+        logger.warning("Missing context for %d/%d Case B tags; using tag names only. IDs: %s",
+                       len(missing), len(input_tag_ids), missing[:10])
+    untitled = [tag_id for tag_id in input_tag_ids if contexts.get(tag_id) and "title" not in contexts[tag_id]]
+    if untitled:
+        logger.warning("Cannot verify context titles for %d Case B tags; context file has no titles", len(untitled))
     services, categories, specialities = baseline_hierarchy(datasets[baseline])
-    if client is None:
-        client = _openai_client()
+
     logger.debug("Model: %s", model)
 
-    provenance = {"saturation_run_id": saturation.run_id, "incoming": incoming, "model": model}
+    provenance = {
+        "saturation_run_id": saturation.run_id, "incoming": incoming, "model": model,
+        "context_schema_version": CONTEXT_SCHEMA_VERSION,
+        "context_sha256": snapshot.sha256, "source_name": source_name, "provider": provider.name,
+    }
     wanted = set(input_tag_ids)
     proposals = {
         tag_id: proposal for tag_id, proposal in _load_checkpoint(checkpoint, provenance).items() if tag_id in wanted
     }
-    # Batch only what is still missing, so resuming with a different --batch-size never resends finished tags.
+    # Batch only what is still missing, so resuming with a different --batch-size never resends finished tags
     pending = [tag_id for tag_id in input_tag_ids if tag_id not in proposals]
+    if client is None:
+        client = _openai_client()
     if proposals:
         logger.info("Resuming from %s: %d/%d already classified", checkpoint, len(proposals), len(input_tag_ids))
     for start in range(0, len(pending), batch_size):
         batch = []
         for tag_id in pending[start:start + batch_size]:
-            batch.append({"tag_id": tag_id, "title": tags[tag_id], **provider.context_for(contexts, tag_id)})
-        prompt = build_prompt(services, categories, specialities, batch, source_name=provider.display_name)
+            batch.append({**provider.context_for(contexts, tag_id), "tag_id": tag_id, "title": tags[tag_id]})
+        prompt = build_prompt(services, categories, specialities, batch, source_name=source_name)
         for proposal in await classify_batch(client, prompt, batch, model):
             proposals[proposal["tag_id"]] = proposal
         _save_checkpoint(checkpoint, provenance, proposals)

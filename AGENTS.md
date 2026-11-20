@@ -25,9 +25,10 @@ new work should follow the same shape unless there's a good reason not to.
   `taxonomy/`, `matching/`, `quality/`, `providers/`, `enrichment/`). Each
   context exposes public names; never import another context's `_private`
   names, and import only contexts below yours (taxonomy_pipeline:
-  `app -> enrichment -> quality -> matching -> taxonomy`, with `providers` used
-  by `enrichment` only). Code specific to one external source lives in
-  `providers/`, not in generic modules. Where each old module went is
+  `app -> enrichment -> quality -> synonyms -> matching -> taxonomy`, with
+  `providers` used by `enrichment` only, and `audit` importing none of
+  them). Code specific to one external source lives in `providers/`, not
+  in generic modules. Where each old module went is
   listed under "Moved in the bounded-context refactor" in
   `backend/taxonomy_pipeline/README.md`.
 - The CLI and API are adapters: each command or route calls one use-case

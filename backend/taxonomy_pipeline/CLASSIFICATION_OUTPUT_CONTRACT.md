@@ -36,7 +36,7 @@ The payload's `tag_id` is the source dataset's ID, not Ankit's `tags.id`.
 
 ## Fields
 
-All nine fields are required; `needs_review` is the one optional field. Extra fields do not cause validation failure, but are
+All nine fields are required; `needs_review` and `review_hold` are the optional fields. Extra fields do not cause validation failure, but are
 excluded from `ClassificationOutput` and its serialized output. Batch intake retains
 the original input, including extras, in each record's `raw` evidence. Required fields
 still undergo strict validation; extras cannot replace missing required fields.
@@ -53,6 +53,7 @@ still undergo strict validation; extras cannot replace missing required fields.
 | `confidence`              | number or null | Confidence in this placement, from `0` to `1` inclusive                                 |
 | `reason`                  | string         | Short placement explanation, or why no placement was found                              |
 | `needs_review` (optional) | boolean        | `true` when this placement needs a human decision before it is accepted; omitted when false |
+| `review_hold` (optional)  | string or null | Why a *person*, not `bulk-decide`, must decide: `generated_name`, `single_tag_speciality` or `category_scoped_match`; needs `needs_review: true`; omitted when null |
 
 `needs_review: true` requires a full placement (a reviewer needs a path to approve).
 A producer that cannot decide between several placements emits one record per
@@ -63,6 +64,14 @@ baseline category. Both cases also set it on every placement of a tag that satur
 marked `REVIEW_AMBIGUOUS` (moderately close to an existing concept), with the close
 concept named in `reason`; the reviewer then decides whether the tag is new (`create`),
 an existing tag (`reuse`), or neither (`exclude`/`defer`).
+
+`needs_review` alone can still be settled in bulk: `bulk-decide` drafts decisions for
+ambiguous tags held only by their producer's flag, because a clear-cut similarity
+score decides them. `review_hold` marks a placement no score checks, so a person must
+look at it: a speciality name a model generated, a new speciality holding only this
+tag, or a match to an existing speciality looser than the usual threshold (all from
+Case A's opt-in grouping options). Resolution adds the `producer_hold` reason code for it, and
+`bulk-decide` leaves the tag pending.
 
 `original_classification` describes the tag **in its source dataset**, before Case
 A/B processing. `tag` preserves the source text and supplies the database tag name.
@@ -293,7 +302,7 @@ whose only exact matches are specialities under other categories. A category
 `reuse` must target a category in the proposal's own service. Near matches may be
 approved as distinct, but failed semantic checks and unresolved incoming variant
 clusters cannot be bypassed. Excluding a competing variant allows the retained
-proposal to be considered again. Synonym evidence depends on #56/PB07.
+proposal to be considered again. Synonym evidence depends on PB07.
 
 Hierarchy rejection/deferral blocks its placements; it does not implicitly reject
 the source tag. Tag decisions remain separate entries in the **same list**.
@@ -356,8 +365,8 @@ resolution = resolve_outputs(deduplication, taxonomy, [decision])
   unique links, source dispositions, counts, decisions, and the full deduplication
   evidence. Each disposition's `reason` explains in words why the tag was held or
   flagged, and `reason_codes` lists the same reasons, in order, as codes to branch on:
-  `hierarchy_review`, `baseline_name_match`, `producer_flagged`, `hierarchy_blocked`
-  and `duplicate_candidate` (empty when nothing flagged it). Hierarchy nodes without approved links are omitted. Unapproved placements
+  `hierarchy_review`, `baseline_name_match`, `producer_flagged`, `producer_hold`,
+  `hierarchy_blocked` and `duplicate_candidate` (empty when nothing flagged it). Hierarchy nodes without approved links are omitted. Unapproved placements
   remain visible; repeated links are collapsed and baseline links marked `existing`.
 - Path reuse is rechecked against the supplied baseline. Changed or ambiguous targets
   require revalidation. A content fingerprint identifies the baseline used for resolution.

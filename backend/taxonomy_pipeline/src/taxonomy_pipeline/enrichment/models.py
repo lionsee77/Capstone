@@ -22,7 +22,7 @@ from ..models import MetricResult
 from ..models import NonBlankText as NonBlankText
 from ..models import TaxonomyId as TaxonomyId
 from ..taxonomy.base import TaxonomyDataset
-from .proposals.models import ProposalScreeningReport, ScreenedProposal, ScreeningSettings
+from .proposals.models import ProposalScreeningReport, RepeatedNameWarning, ScreenedProposal, ScreeningSettings
 
 Confidence = Annotated[float, Field(ge=0, le=1, allow_inf_nan=False)]
 CanonicalTagId = TaxonomyId | NonBlankText
@@ -53,6 +53,10 @@ class HierarchyGroup(BaseModel):
     existing_id: TaxonomyId | None
     members: list[SourceTagRef]
     origins: list[InputLocation]
+
+
+# Why a producer needs a person, not bulk-decide, to settle a placement (see `ClassificationOutput.review_hold`).
+ReviewHold = Literal["generated_name", "single_tag_speciality", "category_scoped_match"]
 
 
 class ClassificationOutput(BaseModel):
@@ -91,6 +95,13 @@ class ClassificationOutput(BaseModel):
         "propose, or a tag saturation could not confirm as new. The tag stays pending until a reviewer "
         "decides. Omitted when false."
     ))
+    # Why only a person may decide this placement. `needs_review` alone can be settled by
+    # bulk-decide (a tag saturation couldn't confirm is often clear-cut by score); a hold
+    # marks what no score checks - a generated name, a one-tag speciality, a looser match.
+    review_hold: ReviewHold | None = Field(default=None, description=(
+        "Optional, with needs_review. Why a person, not bulk-decide, must decide this placement: "
+        "generated_name, single_tag_speciality or category_scoped_match. Omitted when null."
+    ))
 
     @model_validator(mode="after")
     # Require either a complete placement or an explicitly unresolved record.
@@ -100,6 +111,8 @@ class ClassificationOutput(BaseModel):
             raise ValueError("service, category, speciality, and confidence must be all present or all null")
         if self.needs_review and self.category is None:
             raise ValueError("needs_review requires a proposed placement for a reviewer to approve")
+        if self.review_hold is not None and not self.needs_review:
+            raise ValueError("review_hold requires needs_review: a hold only says why a placement is held")
         return self
 
     @model_serializer(mode="wrap")
@@ -108,6 +121,8 @@ class ClassificationOutput(BaseModel):
         data = handler(self)
         if not self.needs_review:
             data.pop("needs_review", None)
+        if self.review_hold is None:
+            data.pop("review_hold", None)
         return data
 
 
@@ -244,7 +259,7 @@ class ReviewDecision(BaseModel):
 
 
 class ReviewDecisionEvent(BaseModel):
-    """Local PB09 handoff: one validated submission, not a taxonomy database mutation."""
+    """Compatible JSONL submission envelope, translated into PB09 events rather than taxonomy mutations."""
 
     model_config = ConfigDict(strict=True, extra="forbid")
 
@@ -252,6 +267,7 @@ class ReviewDecisionEvent(BaseModel):
     submission_id: NonBlankText
     recorded_at: datetime
     baseline_snapshot_id: NonBlankText
+    actor: NonBlankText = "unspecified"
     event_type: Literal["review_decision"] = "review_decision"
     decision: ReviewDecision
 
@@ -319,6 +335,7 @@ ReasonCode = Literal[
     "hierarchy_review",     # hierarchy screening wants a reviewer to look at a proposed path
     "baseline_name_match",  # the tag's normalized name matches an existing baseline tag
     "producer_flagged",     # the producer marked a placement needs_review
+    "producer_hold",        # ...and gave a review_hold: a person must decide, bulk-decide never does
     "hierarchy_blocked",    # hierarchy screening blocked a path the decision approved
     "duplicate_candidate",  # deduplication paired the tag with another incoming tag
 ]
@@ -354,6 +371,7 @@ class MergeRunInfo(BaseModel):
     baseline_snapshot_id: str | None = None
     blocked: bool = False
     pending_sources: int = 0
+    warning_count: int = 0
 
 
 class ResolutionReport(BaseModel):
@@ -370,6 +388,107 @@ class ResolutionReport(BaseModel):
     counts: dict[str, int]
     partial: bool
     screening: ProposalScreeningReport | None = None
+    effective_screening: ProposalScreeningReport | None = None
+
+
+class ReviewQueuePlacement(BaseModel):
+    """One path proposed for a held tag, as a reviewer can approve it."""
+
+    service: str
+    category: str
+    speciality: str
+    confidence: float | None = None
+    reason: str
+
+
+class ReviewQueueMatch(BaseModel):
+    """What a held tag resembles in the baseline. `tag_id` is set when it is one baseline tag a reviewer can reuse."""
+
+    score: float
+    basis: str
+    name: str | None = None
+    level: str | None = None
+    tag_id: int | None = None
+
+
+class ReviewQueueDuplicate(BaseModel):
+    """Another incoming tag this one may duplicate."""
+
+    source: SourceTagRef
+    tag: str
+    reason: str
+    similarity: float | None = None
+
+
+class ReviewQueueTag(BaseModel):
+    """One tag a reviewer has to, or did, decide: its status, why, and the evidence. `decision` is the saved one."""
+
+    source: SourceTagRef
+    tag: str
+    status: Literal["accepted", "excluded", "deferred", "pending"]
+    reason: str
+    reason_codes: list[ReasonCode] = Field(default_factory=list)
+    placements: list[ReviewQueuePlacement] = Field(default_factory=list)
+    closest: list[ReviewQueueMatch] = Field(default_factory=list)
+    duplicates: list[ReviewQueueDuplicate] = Field(default_factory=list)
+    decision: ReviewDecision | None = None
+
+
+class ReviewQueueProposalMatch(BaseModel):
+    """An existing category or speciality a proposal resembles; `id` is what a `reuse` decision points at."""
+
+    id: int | str | None
+    name: str
+    level: str
+    path: list[str]
+    reusable: bool
+    same_parent: bool
+    match_types: list[str]
+    lexical_score: float
+    semantic_score: float | None = None
+
+
+class ReviewQueueProposal(BaseModel):
+    """A held, advised, or previously decided hierarchy proposal; only holds prevent creation."""
+
+    proposal_id: str
+    level: Literal["category", "speciality"]
+    name: str
+    path: list[str]
+    status: Literal["new", "reuse", "review"]
+    reason: str
+    blocks_creation: bool
+    source_tags: int
+    # Why `create` would be refused right now, in words for the reviewer; None when it would be accepted.
+    create_blocked_reason: str | None = None
+    matches: list[ReviewQueueProposalMatch] = Field(default_factory=list)
+    decision: ReviewDecision | None = None
+
+
+class ReviewQueueEvidence(BaseModel):
+    """Saved after each merge preview, so the queue can be paged without re-reading the merge run's reports."""
+
+    tags: list[ReviewQueueTag] = Field(default_factory=list)
+    proposals: list[ReviewQueueProposal] = Field(default_factory=list)
+    repeated_names: list[RepeatedNameWarning] = Field(default_factory=list)
+    # Decisions this preview applied whose tags stayed pending. Kept here because saving any later decision makes the
+    # round "not applied", and these must stay visible while a reviewer works through them.
+    held_decisions: list[ReviewDecision] = Field(default_factory=list)
+
+
+class ReviewQueue(BaseModel):
+    """`GET /rounds/{id}/review`: one page of tags, every proposal, and how much of the queue is left."""
+
+    tags: list[ReviewQueueTag] = Field(default_factory=list)
+    proposals: list[ReviewQueueProposal] = Field(default_factory=list)
+    repeated_names: list[RepeatedNameWarning] = Field(default_factory=list)
+    total: int = 0
+    offset: int = 0
+    limit: int = 50
+    undecided: int = 0
+    decided: int = 0
+    held: int = 0
+    proposals_undecided: int = 0
 
 
 class ProposalReviewItem(BaseModel):
