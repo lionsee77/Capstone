@@ -1,0 +1,69 @@
+# Pipeline API + dashboard in Docker. From the repository root:
+#
+#   cp backend/.env.example backend/.env    # then set TAXONOMY_API_TOKEN (and OPENAI_API_KEY for LLM steps)
+#   docker compose up --build               # dashboard http://localhost:3000, API http://localhost:8000/docs
+#   docker compose --profile test run --rm backend-tests
+#   docker compose --profile test run --rm dashboard-tests
+#   docker compose run --rm api taxonomy-pipeline run --config configs/baseline_v1.yaml
+#
+# MySQL (optional, for inspecting snapshots) is separate: see backend/compose.yaml and backend/README.md.
+
+name: taxonomy-pipeline
+
+x-api: &api
+  build: ./backend/taxonomy_pipeline
+  image: taxonomy-pipeline-api
+  # backend/ is mounted, not copied: backend/.env, the source dumps, snapshots, rounds and the run
+  # database (taxonomy_pipeline.sqlite3) live on the host exactly as in the non-Docker setup.
+  volumes:
+    - ./backend:/app/backend
+  working_dir: /app/backend/taxonomy_pipeline
+  # Run as the host user so what the API writes into backend/ (rounds, snapshots, the run database) isn't
+  # root-owned on a Linux host. Set HOST_UID/HOST_GID in a root .env when `id -u` / `id -g` aren't 1000.
+  user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
+  environment:
+    HOME: /tmp
+
+services:
+  api:
+    <<: *api
+    env_file: backend/.env
+    ports:
+      - "127.0.0.1:${API_PORT:-8000}:8000"
+    healthcheck:
+      # Every endpoint needs the token, so check the port is accepting connections.
+      test: ["CMD", "python", "-c", "import socket; socket.create_connection(('localhost', 8000), 2)"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 20s
+    restart: unless-stopped
+
+  dashboard:
+    build:
+      context: ./frontend
+      target: runtime
+    image: taxonomy-pipeline-dashboard
+    # Same TAXONOMY_API_TOKEN as the API. Put PIPELINE_ALLOW_RUN_CREATION=true in backend/.env to let
+    # the dashboard start and change rounds. The dashboard has no login, so the port stays on localhost.
+    env_file: backend/.env
+    environment:
+      TAXONOMY_API_URL: http://api:8000
+    ports:
+      - "127.0.0.1:${DASHBOARD_PORT:-3000}:3000"
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+
+  backend-tests:
+    <<: *api
+    profiles: ["test"]
+    command: ["python", "-m", "pytest", "-q", "-p", "no:cacheprovider"]
+
+  dashboard-tests:
+    build:
+      context: ./frontend
+      target: test
+    image: taxonomy-pipeline-dashboard-test
+    profiles: ["test"]

@@ -15,6 +15,7 @@ detail; see [Where to read next](#where-to-read-next).
 .
 ├── backend/
 │   ├── taxonomy_pipeline/   # the pipeline: Python package, CLI and FastAPI service (own README)
+│   │   └── Dockerfile       # pipeline API image (built by the root compose.yaml)
 │   ├── sql-files-nus/       # the original SenseiGigs taxonomy dumps (confidential)
 │   ├── skillsfuture/        # SkillsFuture workbooks and their generator script
 │   ├── onet/, esco/         # further sources, each with a mapping for import-source
@@ -22,7 +23,9 @@ detail; see [Where to read next](#where-to-read-next).
 │   ├── loader/, compose.yaml, Dockerfile   # optional local MySQL and snapshot loader
 │   └── .env.example         # pipeline API settings (copy to backend/.env)
 ├── frontend/                # Next.js admin dashboard over the pipeline API (own README)
+│   ├── Dockerfile           # dashboard image (built by the root compose.yaml)
 │   └── .env.example         # dashboard settings (copy to frontend/.env.local)
+├── compose.yaml             # API + dashboard in Docker (see "Run with Docker instead")
 └── .github/workflows/ci.yml # lint and tests for both parts
 ```
 
@@ -130,6 +133,41 @@ bun run typecheck
 bun run test
 bun run build
 ```
+
+## Run with Docker instead
+
+This needs only Docker Desktop: no Python, bun or virtual environment. It works the same on macOS,
+Windows and Linux. Run from the repository root:
+
+```bash
+cp backend/.env.example backend/.env   # set TAXONOMY_API_TOKEN; OPENAI_API_KEY only for LLM steps
+docker compose up --build              # dashboard http://localhost:3000, API http://localhost:8000/docs
+```
+
+The dashboard gets the token from `backend/.env` too, so `frontend/.env.local` isn't used. To let
+the dashboard start and change rounds, add `PIPELINE_ALLOW_RUN_CREATION=true` to `backend/.env`.
+Both ports listen on localhost only.
+
+`backend/` is mounted into the API container, so snapshots, rounds and saved runs are the same files
+the non-Docker setup uses. The sentence model is built into the image, so nothing downloads at run time.
+Paths saved by a run inside the container start with `/app/backend`, so use either Docker or a local
+install for a given round, not both.
+
+The API runs as user and group 1000, so on Linux the files it writes into `backend/` belong to you rather
+than root. If `id -u` or `id -g` prints something else, set them once in a `.env` file at the repository root:
+`printf 'HOST_UID=%s\nHOST_GID=%s\n' "$(id -u)" "$(id -g)" > .env`. Docker Desktop on macOS and Windows
+doesn't need this.
+
+```bash
+docker compose --profile test run --rm backend-tests     # pytest
+docker compose --profile test run --rm dashboard-tests   # vitest
+docker compose run --rm api taxonomy-pipeline run --config configs/baseline_v1.yaml   # any CLI command
+docker compose down                                      # stop
+```
+
+The first build takes a few minutes and uses about 2.5 GB. Python changes take effect after
+`docker compose restart api`, because the source is mounted. Dashboard changes, or new Python
+dependencies, need `docker compose up --build`. MySQL is separate and optional: see [backend/README.md](backend/README.md).
 
 ## Where to read next
 
