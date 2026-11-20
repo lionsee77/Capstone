@@ -4,14 +4,14 @@ Behind `GET /lookup` and `taxonomy-pipeline lookup`, for consumers such as Team 
 who should check a term before proposing it. They have no run ID and shouldn't need
 one, so unlike `browse.py` this reads an integrated snapshot directly: the newest
 round under the integrations root unless one is named. There is no promotion step
-yet (#49), so "newest" is the closest thing to a current taxonomy; the result names
+yet, so "newest" is the closest thing to a current taxonomy; the result names
 the snapshot so a caller can see which version answered.
 
 A lookup runs on every keystroke of the dashboard's form, so a snapshot's parsed rows
 and name folds are kept between calls. They are keyed by file contents, so a new
 round, or an edited one, is picked up without a restart.
 
-Approved global synonyms count as exact matches (`match_type: "synonym"`, #60). They
+Approved global synonyms count as exact matches (`match_type: "synonym"`). They
 are read live from the synonym store for `synonym_dataset` (default `original`, the
 taxonomy synonyms are recorded against), only those whose term key (`match_key`, as
 for names) is the query's, through the store's index, so each keystroke reads a few rows.

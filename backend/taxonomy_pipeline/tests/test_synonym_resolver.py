@@ -185,7 +185,7 @@ def test_an_unnamed_speciality_is_still_a_branch_and_repeated_ids_use_their_last
 
 
 def test_problems_lists_shadowed_ambiguous_and_stale_synonyms() -> None:
-    # Synonyms stored before #61's checks: one equals another concept's name, one term on two concepts.
+    # Synonyms stored before these checks existed: one equals another concept's name, one term on two concepts.
     index = SynonymIndex(TAXONOMY, [
         synonym("Pitch", "tags", "100"), synonym("Field", "tags", "200"), synonym("Field", "tags", "201"),
         synonym("Soccer", "specialities", "20"),

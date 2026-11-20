@@ -15,18 +15,16 @@ detail; see [Where to read next](#where-to-read-next).
 .
 ├── backend/
 │   ├── taxonomy_pipeline/   # the pipeline: Python package, CLI and FastAPI service (own README)
-│   │   └── Dockerfile       # pipeline API image (built by the root compose.yaml)
+│   │   └── integrations/    # snapshots judged-1015 (+ SkillsFuture) and onet-1031 (+ O*NET); see SNAPSHOTS.md
 │   ├── sql-files-nus/       # the original SenseiGigs taxonomy dumps (confidential)
 │   ├── skillsfuture/        # SkillsFuture workbooks and their generator script
 │   ├── onet/, esco/         # further sources, each with a mapping for import-source
+│   │                        # (onet/raw/Software Skills.xlsx is the O*NET file to upload)
 │   ├── reference_data/      # SSIC 2025 and SSOC 2024, used by the breadth metric
 │   ├── loader/, compose.yaml, Dockerfile   # optional local MySQL and snapshot loader
 │   └── .env.example         # pipeline API settings (copy to backend/.env)
-├── frontend/                # Next.js admin dashboard over the pipeline API (own README)
-│   ├── Dockerfile           # dashboard image (built by the root compose.yaml)
-│   └── .env.example         # dashboard settings (copy to frontend/.env.local)
-├── compose.yaml             # API + dashboard in Docker (see "Run with Docker instead")
-└── .github/workflows/ci.yml # lint and tests for both parts
+└── frontend/                # Next.js admin dashboard over the pipeline API (own README)
+    └── .env.example         # dashboard settings (copy to frontend/.env.local)
 ```
 
 The dashboard has no logic of its own. Every number it shows comes from the
@@ -108,8 +106,11 @@ reference is at http://localhost:8000/docs (use **Authorize** to supply the toke
 The dashboard listens on `127.0.0.1` only. It has no login and can start rounds
 that spend LLM credits, so keep both parts off shared networks.
 
-A fresh copy has no run history or snapshots, so the run and Improvement pages
-stay empty until a first scoring run or round completes. To produce one:
+The package includes two enriched snapshots, `judged-1015` (the original plus
+SkillsFuture) and `onet-1031` (plus O\*NET), so new rounds can build on them and
+tag lookup works straight away; [`SNAPSHOTS.md`](SNAPSHOTS.md) explains each one and how to
+load it into MySQL. It has no run history, so the run and
+Improvement pages stay empty until a first scoring run completes. To produce one:
 
 ```bash
 cd backend/taxonomy_pipeline
@@ -118,7 +119,7 @@ taxonomy-pipeline run --config configs/baseline_v1.yaml --output baseline.json.g
 
 ## Run the checks
 
-These are the checks CI runs on every pull request. Run them before opening one.
+Run these before accepting any change.
 
 ```bash
 # Pipeline
@@ -167,7 +168,7 @@ docker compose down                                      # stop
 
 The first build takes a few minutes and uses about 2.5 GB. Python changes take effect after
 `docker compose restart api`, because the source is mounted. Dashboard changes, or new Python
-dependencies, need `docker compose up --build`. MySQL is separate and optional: see [backend/README.md](backend/README.md).
+dependencies, need `docker compose up --build`. MySQL is separate and optional: see [SNAPSHOTS.md](SNAPSHOTS.md).
 
 ## Where to read next
 
@@ -175,6 +176,6 @@ dependencies, need `docker compose up --build`. MySQL is separate and optional: 
 |---|---|
 | [`backend/taxonomy_pipeline/README.md`](backend/taxonomy_pipeline/README.md) | Every command, metric, setting and API route: start with "Project structure", "Setup", "Run it as a service" and "Classification workflow" |
 | [`frontend/README.md`](frontend/README.md) | Dashboard pages, settings, security and conventions |
+| [`SNAPSHOTS.md`](SNAPSHOTS.md) | What `judged-1015` and `onet-1031` contain, and loading them into MySQL |
 | [`backend/README.md`](backend/README.md) | Local MySQL, SkillsFuture generation and loading a snapshot into MySQL |
 | [`backend/onet/README.md`](backend/onet/README.md), [`backend/esco/README.md`](backend/esco/README.md) | Worked examples of preparing a new source |
-| [`AGENTS.md`](AGENTS.md) | Engineering conventions: layout, style, tests, branches and commits |

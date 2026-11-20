@@ -23,7 +23,7 @@ from .proposals.screening import (
     service_ids_by_name,
 )
 
-# An approved synonym identifies an existing concept as surely as its name does (#60).
+# An approved synonym identifies an existing concept as surely as its name does.
 EXACT_MATCH_TYPES = {"normalized_name", "match_key", "synonym"}
 
 

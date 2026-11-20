@@ -2,7 +2,7 @@
 whether two runs were scored alike.
 
 A run's numbers depend on how each metric scores as much as on the taxonomy:
-switching breadth to semantic matching (#79) moved the original taxonomy's
+switching breadth to semantic matching moved the original taxonomy's
 industry coverage from 0% to 22% with the taxonomy unchanged. A before/after
 comparison (PB11) therefore only means something between runs scored the same
 way, and this module makes that checkable:

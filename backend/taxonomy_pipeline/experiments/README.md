@@ -43,7 +43,7 @@ probability. Never reuse a checkpoint after changing a prompt.
 
 ## Golden run
 
-`golden_run.py` checks that a refactor doesn't change behaviour (#104). It runs
+`golden_run.py` checks that a refactor doesn't change behaviour. It runs
 one full classification round on the real data through the CLI and saves every
 stage's output in one folder:
 - the scorecard;

@@ -38,7 +38,7 @@ def run_case_a(
 ) -> list[dict[str, Any]]:
     """Return contract-valid records, each stamped with the saturation run they came from.
 
-    The placement options (#132) are off by default; see `category_adaptation`.
+    The placement options are off by default; see `category_adaptation`.
     """
     saturation = load_saturation(report_path, incoming)
     params: dict[str, Any] = {

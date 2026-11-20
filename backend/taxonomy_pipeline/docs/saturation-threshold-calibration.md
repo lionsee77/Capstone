@@ -243,8 +243,8 @@ The calibration can live in a notebook at first. If it becomes routine:
   intervals.
 - **Where:** a `calibration/` module under `src/taxonomy_pipeline/` with a
   `taxonomy-pipeline calibrate` CLI command, so the CLI and API share one
-  code path, as `AGENTS.md` requires. Labelled data goes under a `data/` or
+  code path, as the project's conventions require. Labelled data goes under a `data/` or
   `calibration/` folder that's checked in, so the chosen thresholds can be
   reproduced.
 
-Each change needs tests and a README update in the same PR, per `AGENTS.md`.
+Each change needs tests and a README update.

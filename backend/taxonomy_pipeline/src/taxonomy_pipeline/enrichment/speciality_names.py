@@ -1,11 +1,11 @@
-"""Names for the new specialities Case A groups tags into (#132).
+"""Names for the new specialities Case A groups tags into.
 
 `category_adaptation`'s `group_new_specialities_threshold` groups related tags
 under one new speciality, named by default after the group's most central tag.
 That name reads well for a tight group (*Non-destructive Testing* over its
 inspection methods), but it mislabels a broad one (*Bus Electrical and Electronic
 Systems Maintenance* over *Bus Interchange Operations*). The groups loose enough
-to reach #88's depth bar are the broad ones. So the agreed rule is:
+to reach the depth bar are the broad ones. So the agreed rule is:
 
 1. A group's name is generated from all its member tags and its category, by
    the shared LLM client (`llm.py`).
@@ -13,7 +13,7 @@ to reach #88's depth bar are the broad ones. So the agreed rule is:
    checks it automatically.
 3. The central tag's name stays the fallback when there is no model, the
    answer is unusable, or the generated name repeats an existing speciality or
-   another new one. A repeated name is what #88's integrity guard rail counts,
+   another new one. A repeated name is what the integrity guard rail counts,
    so a collision falls back rather than adding a duplicate.
 
 `GroupNamer` is the small protocol `category_adaptation` depends on, so a fake

@@ -7,7 +7,7 @@ what each one answers), so "already exists" here agrees with `merge-preview`.
 
 A match is exact when `normalize` agrees, a variant when only `match_key` does, and
 otherwise near. Scores and thresholds are review evidence, not probabilities: they
-are uncalibrated (#47), so a caller should treat a near match as "look at this".
+are uncalibrated, so a caller should treat a near match as "look at this".
 """
 from __future__ import annotations
 

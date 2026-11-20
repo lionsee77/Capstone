@@ -12,9 +12,8 @@ backend/
 │   ├── generate_skillsfuture_taxonomy.py
 │   ├── skillsfuture_tag_context.json # generated Case B context, gitignored
 │   ├── validate_skillsfuture_taxonomy.py
-│   ├── AI_TAXONOMY_PIPELINE_PLAN.md
 │   └── *.xlsx              # SkillsFuture source workbooks
-├── audit/                # Taxonomy audit module and report notebook
+├── audit/                # Taxonomy audit module (read-only database checks)
 ├── loader/               # load_snapshot.sh: rebuild a database from one pipeline snapshot
 ├── onet/                # O*NET source prepared for the pipeline's import-source
 ├── esco/                 # ESCO source: flatten script joining its linked CSVs, then import-source

@@ -1,4 +1,4 @@
-"""What a term means in one taxonomy: its own concept names plus approved synonyms (#61, used by #60).
+"""What a term means in one taxonomy: its own concept names plus approved synonyms (used by lookup).
 
 A term is compared by `match_key`, like stored synonyms (`term_key`). Candidates are
 taken in tiers, most specific first, and the first tier with any candidate decides:

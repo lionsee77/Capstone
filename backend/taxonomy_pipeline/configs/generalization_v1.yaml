@@ -1,5 +1,5 @@
-# Generalisation check (#101): score the two external sources nobody tuned the
-# matching on (O*NET from #119, ESCO from backend/esco/) next to the original
+# Generalisation check: score the two external sources nobody tuned the
+# matching on (O*NET from backend/onet/, ESCO from backend/esco/) next to the original
 # taxonomy and SkillsFuture, with exactly the metric settings of the baseline of
 # record (configs/baseline_v1.yaml). Findings: docs/generalization-findings.md.
 # Paths are resolved relative to this file.
@@ -73,7 +73,7 @@ metrics:
       occupational_level: minor_group
       industry_service_id: 1
       matching_method: semantic
-      semantic_threshold: 0.60  # provisional and uncalibrated (#47)
+      semantic_threshold: 0.60  # provisional and uncalibrated
       top_k: 5
   - {id: breadth, params: {<<: *breadth, target: skillsfuture}}
   - {id: breadth, params: {<<: *breadth, target: onet}}

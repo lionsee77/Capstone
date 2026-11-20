@@ -66,7 +66,7 @@ export type MetricComparison = z.infer<typeof metricComparisonSchema>;
 
 /**
  * Mirrors `Comparability` (`quality.definitions.check_comparable`): whether two runs were scored alike. A
- * version comparison (#69) shows deltas only for pairs without issues, and none when `issues` isn't empty.
+ * version comparison shows deltas only for pairs without issues, and none when `issues` isn't empty.
  */
 export const comparabilitySchema = z.object({
   before_run_id: z.string(),
@@ -118,7 +118,7 @@ export const metricChangeSchema = z.object({
 export type MetricChange = z.infer<typeof metricChangeSchema>;
 
 /**
- * Mirrors `RunComparison` (`GET /runs/{before_id}/compare/{after_id}`, #69): each metric's measures in two runs,
+ * Mirrors `RunComparison` (`GET /runs/{before_id}/compare/{after_id}`): each metric's measures in two runs,
  * with changes and verdicts only where the results were scored alike. Read `comparable`, not
  * `comparability.comparable`: it also counts a result whose stored details couldn't be read.
  */
@@ -299,7 +299,7 @@ export const proposalScreeningReportSchema = z.object({
 });
 export type ProposalScreeningReport = z.infer<typeof proposalScreeningReportSchema>;
 
-/** One ReviewDecision contract for tag groups and hierarchy proposals (#57). */
+/** One ReviewDecision contract for tag groups and hierarchy proposals. */
 const reviewTextSchema = z.string().regex(/\S/);
 const reviewIdSchema = z.number().int().positive();
 export const reviewDecisionSchema = z.object({
@@ -357,7 +357,7 @@ export const proposalReviewItemSchema = z.object({
   resolved_node: resolvedHierarchyNodeSchema.nullable().default(null),
 });
 
-/** Saved evidence and decisions returned identically by the review CLI and API (#58). */
+/** Saved evidence and decisions returned identically by the review CLI and API. */
 export const proposalReviewReportSchema = z.object({
   baseline_snapshot_id: z.string(),
   settings: screeningSettingsSchema,
@@ -646,7 +646,7 @@ export const tagLookupResultSchema = z.object({
 });
 export type TagLookupResult = z.infer<typeof tagLookupResultSchema>;
 
-/** Mirrors models.py's SourceImport: what `import-source` wrote (#117 will return it from the API). */
+/** Mirrors models.py's SourceImport: what `import-source` wrote (the API may return it later). */
 export const sourceImportSchema = z.object({
   name: z.string(),
   sql_path: z.string(),

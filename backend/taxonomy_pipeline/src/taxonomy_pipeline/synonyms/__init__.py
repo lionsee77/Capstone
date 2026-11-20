@@ -3,7 +3,7 @@
 Sits between `quality` and `matching` in the context order (`app -> enrichment ->
 quality -> synonyms -> matching -> taxonomy`), and writes its history through the
 independent `audit` context. Matching code doesn't import this context; when lookups
-resolve through synonyms (#60), the approved mappings are passed down to it as data.
+resolve through synonyms, the approved mappings are passed down to it as data.
 """
 from __future__ import annotations
 

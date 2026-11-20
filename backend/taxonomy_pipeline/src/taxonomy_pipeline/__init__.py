@@ -1,7 +1,7 @@
 """Taxonomy validation pipeline: pluggable taxonomy datasets, pluggable
 quality metrics, run via a config-driven CLI or a FastAPI service.
 
-The package is laid out by bounded context (#104), each importing only the
+The package is laid out by bounded context, each importing only the
 public names of the contexts below it:
 
 - `taxonomy/`: the taxonomy model and the dataset source registry, with the
