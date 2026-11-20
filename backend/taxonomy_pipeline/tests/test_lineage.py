@@ -1,11 +1,17 @@
 from __future__ import annotations
 
+import hashlib
 import json
+import os
+import time
 from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+import pytest
+
+from taxonomy_pipeline.enrichment import lineage
 from taxonomy_pipeline.enrichment.lineage import file_fingerprint, read_rounds
 
 BASELINE = {"tags.sql": "INSERT INTO tags VALUES (1,'Python');\n"}
@@ -33,6 +39,33 @@ def test_fingerprint_changes_when_a_file_is_rewritten(tmp_path: Path) -> None:
     path.write_text("after!", encoding="utf-8")
 
     assert file_fingerprint([path]) != before
+
+
+def test_fingerprint_sees_a_rewrite_that_keeps_the_size_and_modification_time(tmp_path: Path) -> None:
+    # What a filesystem with coarse timestamps does to two quick writes, made deterministic.
+    path = tmp_path / "tags.sql"
+    path.write_text("before", encoding="utf-8")
+    stat = path.stat()
+    before = file_fingerprint([path])
+    path.write_text("after!", encoding="utf-8")
+    os.utime(path, ns=(stat.st_atime_ns, stat.st_mtime_ns))
+
+    assert file_fingerprint([path]) != before
+
+
+def test_fingerprint_reuses_the_digest_of_a_file_that_has_settled(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = tmp_path / "tags.sql"
+    path.write_text("before", encoding="utf-8")
+    an_hour_ago = time.time_ns() - 3_600_000_000_000
+    os.utime(path, ns=(an_hour_ago, an_hour_ago))
+    hashed: list[int] = []
+    real_sha256 = hashlib.sha256
+    monkeypatch.setattr(lineage.hashlib, "sha256", lambda: hashed.append(1) or real_sha256())
+
+    assert file_fingerprint([path]) == file_fingerprint([path])
+    assert len(hashed) == 1
 
 
 def test_reads_a_round_with_its_source_counts_and_both_fingerprints(

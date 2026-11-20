@@ -20,6 +20,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import time
 from collections import Counter
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -34,13 +35,18 @@ logger = logging.getLogger(__name__)
 FileFingerprint = tuple[str, ...]
 
 _DIGESTS: dict[tuple[str, int, int], str] = {}
+# A file modified this recently may be rewritten again within the same timestamp step (1 ms or more on some
+# filesystems, 2 s on FAT) without its size or mtime changing, so its digest isn't cached until it has settled.
+# This is git's "racily clean" rule: a rewrite after the digest is cached always lands on a later mtime.
+_RACY_WINDOW_NS = 2_000_000_000
 
 
 def file_fingerprint(paths: list[str] | list[Path]) -> FileFingerprint | None:
     """The content fingerprint of a dataset's files, or None when one is missing or unreadable.
 
     Order-independent, since a config may list a dump's tables in any order. Digests are cached by
-    path, size and modification time, so recognising runs re-reads only files that changed.
+    path, size and modification time, so recognising runs re-reads only files that changed; a file
+    modified within the last two seconds is re-read every time (see `_RACY_WINDOW_NS`).
     """
     digests = []
     for path in paths:
@@ -48,13 +54,16 @@ def file_fingerprint(paths: list[str] | list[Path]) -> FileFingerprint | None:
             resolved = Path(path).resolve()
             stat = resolved.stat()
             key = (str(resolved), stat.st_size, stat.st_mtime_ns)
-            if key not in _DIGESTS:
+            cached = _DIGESTS.get(key)
+            if cached is None:
                 digest = hashlib.sha256()
                 with resolved.open("rb") as handle:
                     for chunk in iter(lambda: handle.read(1 << 20), b""):
                         digest.update(chunk)
-                _DIGESTS[key] = digest.hexdigest()
-            digests.append(_DIGESTS[key])
+                cached = digest.hexdigest()
+                if time.time_ns() - stat.st_mtime_ns > _RACY_WINDOW_NS:
+                    _DIGESTS[key] = cached
+            digests.append(cached)
         except OSError:
             return None
     return tuple(sorted(digests))
