@@ -5,12 +5,14 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 
 import { Notice, PageHeader, Section } from "@/components/layout/page-header";
+import { RepeatedNames } from "@/components/repeated-names";
 import { StatusDot } from "@/components/run-status-badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useDeleteRound, useRound, useRoundConfigText, useRunRound } from "@/lib/api/queries";
 import type { RoundState } from "@/lib/api/schemas";
 import { hasReviewQueue, roundCompareHref, stagesWorthShowing } from "@/lib/review";
+import { splitRoundWarnings } from "@/lib/repeated-names";
 import { baselineLabel } from "@/lib/round-setup";
 import { roundStatusLabel, STAGE_LABELS } from "@/lib/rounds";
 
@@ -27,6 +29,8 @@ export function RoundDetail({ roundId }: { roundId: string }) {
       </Notice>
     );
   }
+  const showReview = hasReviewQueue(round) || (round.status === "running" && !round.decisions_applied);
+  const warnings = splitRoundWarnings(round.warnings);
   return (
     <div className="flex max-w-5xl flex-col gap-8">
       <PageHeader
@@ -36,13 +40,19 @@ export function RoundDetail({ roundId }: { roundId: string }) {
       />
       <RoundActions round={round} />
       {round.status === "complete" && <RoundResult round={round} />}
-      {round.warnings.length > 0 && (
+      {warnings.other.length > 0 && (
         <Notice title="Worth checking">
           <ul className="flex list-disc flex-col gap-1 pl-4">
-            {round.warnings.map((warning) => (
+            {warnings.other.map((warning) => (
               <li key={warning}>{warning}</li>
             ))}
           </ul>
+        </Notice>
+      )}
+      {/* The review panel lists these itself (from its queue, or these warnings until that loads), so only without it. */}
+      {!showReview && warnings.repeated.length > 0 && (
+        <Notice title="Repeated names">
+          <RepeatedNames names={warnings.repeated} />
         </Notice>
       )}
       <details key={String(stagesWorthShowing(round))} open={stagesWorthShowing(round)} className="group">
@@ -62,7 +72,7 @@ export function RoundDetail({ roundId }: { roundId: string }) {
           ))}
         </ol>
       </details>
-      {(hasReviewQueue(round) || (round.status === "running" && !round.decisions_applied)) && <ReviewPanel round={round} />}
+      {showReview && <ReviewPanel round={round} />}
       <RoundConfig round={round} />
       <RemoveRound round={round} />
     </div>

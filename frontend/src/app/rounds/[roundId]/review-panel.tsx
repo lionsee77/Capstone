@@ -3,6 +3,7 @@
 import { useState } from "react";
 
 import { Notice } from "@/components/layout/page-header";
+import { RepeatedNames } from "@/components/repeated-names";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -21,6 +22,7 @@ import {
   savedMessage,
   tagNeedsDecision,
 } from "@/lib/review";
+import { fromScreeningWarning, sortByReach, splitRoundWarnings } from "@/lib/repeated-names";
 import { useDebouncedValue } from "@/lib/use-debounced-value";
 
 import { ProposalCard, TagRow } from "./review-items";
@@ -40,6 +42,10 @@ export function ReviewPanel({ round }: { round: RoundState }) {
     state: chosenTab === null || chosenTab === "proposals" ? "undecided" : chosenTab, q: search, offset, limit: PAGE_SIZE,
   });
   const save = useSaveDecisions(round.round_id);
+  // The queue's live list once it loads; until then, or if it fails, the round's own warnings.
+  const repeatedNames = queue
+    ? sortByReach(queue.repeated_names.map(fromScreeningWarning))
+    : splitRoundWarnings(round.warnings).repeated;
   const locked = round.status === "running";
   const tab = reviewTab(chosenTab, queue);
 
@@ -139,14 +145,15 @@ export function ReviewPanel({ round }: { round: RoundState }) {
         </Notice>
       )}
 
+      {repeatedNames.length > 0 && (
+        <Notice title="Repeated names">
+          <RepeatedNames names={repeatedNames} />
+          {queue && <p className="mt-2">Automatically accepted tags are available under All for individual review.</p>}
+        </Notice>
+      )}
+
       {queue && (
         <div className="flex flex-col gap-3">
-          {queue.repeated_names.map((warning) => (
-            <Notice key={`${warning.code}:${warning.name}`} title={`Repeated name: ${warning.name}`}>
-              <p className="break-words">{warning.message}</p>
-              <p>Automatically accepted tags are available under All for individual review.</p>
-            </Notice>
-          ))}
           <div className="flex flex-wrap items-center gap-1 border-b border-rule pb-2" role="group" aria-label="Review lists">
             {tabs.map(({ id, label, count }) => (
               <Button key={id} size="sm" variant={tab === id ? "secondary" : "ghost"} aria-pressed={tab === id} onClick={() => changeTab(id)}>
